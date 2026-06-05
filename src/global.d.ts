@@ -7,6 +7,7 @@ declare global {
       savePdfDialog: (defaultPath?: string) => Promise<string | null>;
       confirmUnsaved: (documentName?: string) => Promise<"save" | "discard" | "cancel">;
       readPdf: (filePath: string) => Promise<{ path: string; name: string; bytes: number[] }>;
+      readImage: (filePath: string) => Promise<{ path: string; name: string; mimeType: string; bytes: number[] }>;
       writePdf: (filePath: string, bytes: number[]) => Promise<{ path: string; name: string }>;
       openFileInNewWindow: (filePath: string) => Promise<void>;
       setFullScreen: (enabled: boolean) => Promise<boolean>;
@@ -18,6 +19,7 @@ declare global {
       onFullScreenChange: (callback: (enabled: boolean) => void) => () => void;
       onWindowRequestClose: (callback: () => void) => () => void;
       onOpenFile: (callback: (filePath: string) => void) => () => void;
+      onOpenFiles: (callback: (filePaths: string[]) => void) => () => void;
     };
   }
 }

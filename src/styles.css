@@ -589,6 +589,31 @@ select {
   text-align: center;
 }
 
+.empty-icons {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 58px;
+  color: var(--muted);
+}
+
+.empty-icons svg:first-child {
+  position: absolute;
+  left: 4px;
+  top: 2px;
+}
+
+.empty-icons svg:last-child {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  padding: 4px;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--accent);
+}
+
 .empty-state h1 {
   margin: 6px 0 0;
   color: var(--text);
@@ -929,6 +954,7 @@ select {
 }
 
 .page-list button {
+  position: relative;
   display: grid;
   justify-items: center;
   gap: 6px;
@@ -939,6 +965,25 @@ select {
   background: var(--panel-2);
   color: var(--text);
   cursor: pointer;
+}
+
+.drag-handle {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--border), transparent 20%);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--panel), transparent 8%);
+  color: var(--muted);
+  cursor: grab;
+}
+
+.page-list button:active .drag-handle {
+  cursor: grabbing;
 }
 
 .page-list button.active {

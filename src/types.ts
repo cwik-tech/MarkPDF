@@ -60,6 +60,14 @@ export interface OcrPageText {
   lines: OcrTextLine[];
 }
 
+export interface ImagePdfSource {
+  id: string;
+  name: string;
+  path?: string;
+  bytes: Uint8Array;
+  mimeType: string;
+}
+
 export type OcrStatus = "checking" | "running" | "ready" | "skipped" | "error";
 
 export interface OcrProgress {

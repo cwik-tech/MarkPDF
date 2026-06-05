@@ -9,7 +9,9 @@ import {
   ArrowUp,
   FilePlus2,
   FileText,
+  GripVertical,
   Highlighter,
+  Image as ImageIcon,
   MessageSquarePlus,
   Maximize2,
   Minus,
@@ -41,17 +43,20 @@ import {
   detectFormFields,
   extractEditableOverlays,
   extractOutline,
+  createPdfFromImages,
   exportPdfBytes,
   findTextMatches,
   insertBlankPageAfter,
   isPasswordError,
   loadPdfDocument,
-  movePdfPage
+  movePdfPage,
+  movePdfPageTo
 } from "./pdf/document";
 import { detectOcrNeed, runDocumentOcr } from "./pdf/ocr";
 import type {
   FitMode,
   FormFieldState,
+  ImagePdfSource,
   OcrPageText,
   OverlayItem,
   PdfTab,
@@ -63,9 +68,31 @@ import type {
 } from "./types";
 
 const defaultTextColor = "#1f2937";
+const supportedImageExtensions = new Set(["gif", "jpeg", "jpg", "png", "webp"]);
 
 function newId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function extensionFromName(name: string) {
+  return name.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function isPdfPath(path: string) {
+  return extensionFromName(path) === "pdf";
+}
+
+function isImagePath(path: string) {
+  return supportedImageExtensions.has(extensionFromName(path));
+}
+
+function mimeTypeFromImageName(name: string) {
+  const extension = extensionFromName(name);
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+  if (extension === "gif") return "image/gif";
+  return "application/octet-stream";
 }
 
 function getInitialTheme(): ThemeMode {
@@ -231,7 +258,12 @@ export default function App() {
   );
 
   const addTabFromBytes = useCallback(
-    async (bytes: Uint8Array, name: string, path?: string) => {
+    async (
+      bytes: Uint8Array,
+      name: string,
+      path?: string,
+      options: { autoOcr?: boolean; dirty?: boolean } = {}
+    ) => {
       let password: string | undefined;
       let pdfDoc!: Awaited<ReturnType<typeof loadPdfDocument>>;
 
@@ -273,24 +305,45 @@ export default function App() {
         searchMatches: [],
         activeSearchMatch: -1,
         ocrPages: [],
-        ocrStatus: "checking",
-        ocrProgress: { status: "checking", message: "Checking text layer" },
+        ocrStatus: options.autoOcr === false ? undefined : "checking",
+        ocrProgress: options.autoOcr === false ? undefined : { status: "checking", message: "Checking text layer" },
         undoStack: [],
         redoStack: [],
-        dirty: false
+        dirty: options.dirty ?? false
       };
 
       setTabs((current) => [...current, tab]);
       setActiveTabId(tab.id);
-      void startAutoOcr(tab.id, pdfDoc);
+      if (options.autoOcr !== false) {
+        void startAutoOcr(tab.id, pdfDoc);
+      }
     },
     [startAutoOcr]
   );
 
-  const openPdfPaths = useCallback(
+  const addImagePdfTab = useCallback(
+    async (images: ImagePdfSource[]) => {
+      if (images.length === 0) return;
+      const bytes = await createPdfFromImages(images);
+      const name = images.length === 1 ? `${images[0].name.replace(/\.[^.]+$/, "") || "Image"}.pdf` : "Images.pdf";
+      await addTabFromBytes(Uint8Array.from(bytes), name, undefined, { autoOcr: false, dirty: true });
+      setSidebar("pages");
+    },
+    [addTabFromBytes]
+  );
+
+  const openFilePaths = useCallback(
     async (paths: string[]) => {
       if (!window.pdfReader) return;
-      for (const path of paths) {
+      const pdfPaths = paths.filter(isPdfPath);
+      const imagePaths = paths.filter(isImagePath);
+      const unsupportedPaths = paths.filter((path) => !isPdfPath(path) && !isImagePath(path));
+
+      if (unsupportedPaths.length > 0) {
+        window.alert(`Unsupported file type: ${unsupportedPaths.map(fileNameFromPath).join(", ")}`);
+      }
+
+      for (const path of pdfPaths) {
         try {
           const result = await window.pdfReader.readPdf(path);
           await addTabFromBytes(Uint8Array.from(result.bytes), result.name, result.path);
@@ -298,9 +351,35 @@ export default function App() {
           window.alert(error instanceof Error ? error.message : `Could not open "${path}".`);
         }
       }
+
+      if (imagePaths.length > 0) {
+        const images: ImagePdfSource[] = [];
+
+        for (const path of imagePaths) {
+          try {
+            const result = await window.pdfReader.readImage(path);
+            images.push({
+              id: newId("image"),
+              name: result.name,
+              path: result.path,
+              mimeType: result.mimeType,
+              bytes: Uint8Array.from(result.bytes)
+            });
+          } catch (error) {
+            window.alert(error instanceof Error ? error.message : `Could not open "${path}".`);
+          }
+        }
+
+        try {
+          await addImagePdfTab(images);
+        } catch (error) {
+          window.alert(error instanceof Error ? error.message : "Could not create PDF from images.");
+        }
+      }
+
       setRecentFiles(await window.pdfReader.listRecentFiles());
     },
-    [addTabFromBytes]
+    [addImagePdfTab, addTabFromBytes]
   );
 
   const loadRecentFiles = useCallback(async () => {
@@ -320,8 +399,13 @@ export default function App() {
 
   useEffect(() => {
     if (!window.pdfReader) return undefined;
-    return window.pdfReader.onOpenFile((filePath) => void openPdfPaths([filePath]));
-  }, [openPdfPaths]);
+    const cleanupSingle = window.pdfReader.onOpenFile((filePath) => void openFilePaths([filePath]));
+    const cleanupBatch = window.pdfReader.onOpenFiles((filePaths) => void openFilePaths(filePaths));
+    return () => {
+      cleanupSingle();
+      cleanupBatch();
+    };
+  }, [openFilePaths]);
 
   const openFromDialog = async () => {
     if (!window.pdfReader) {
@@ -330,22 +414,41 @@ export default function App() {
     }
     const paths = await window.pdfReader.openPdfDialog();
     if (paths.length > 0) {
-      await openPdfPaths(paths);
+      await openFilePaths(paths);
     }
   };
 
   const handleDrop = async (event: React.DragEvent) => {
     event.preventDefault();
-    const files = Array.from(event.dataTransfer.files).filter(
+    const files = Array.from(event.dataTransfer.files);
+    const pdfFiles = files.filter(
       (file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
     );
+    const imageFiles = files.filter((file) => file.type.startsWith("image/") || isImagePath(file.name));
 
-    for (const file of files) {
+    for (const file of pdfFiles) {
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         await addTabFromBytes(bytes, file.name);
       } catch (error) {
         window.alert(error instanceof Error ? error.message : `Could not open "${file.name}".`);
+      }
+    }
+
+    if (imageFiles.length > 0) {
+      try {
+        await addImagePdfTab(
+          await Promise.all(
+            imageFiles.map(async (file) => ({
+              id: newId("image"),
+              name: file.name,
+              mimeType: file.type || mimeTypeFromImageName(file.name),
+              bytes: new Uint8Array(await file.arrayBuffer())
+            }))
+          )
+        );
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : "Could not create PDF from images.");
       }
     }
   };
@@ -756,6 +859,25 @@ export default function App() {
     );
   };
 
+  const movePageTo = async (fromPage: number, toPage: number) => {
+    if (!activeTab || fromPage === toPage) return;
+    if (fromPage < 1 || fromPage > activeTab.pageCount || toPage < 1 || toPage > activeTab.pageCount) return;
+
+    const bytes = await movePdfPageTo(activeTab.bytes, fromPage, toPage);
+    await replaceDocumentBytes(bytes, toPage, (overlays) =>
+      overlays.map((overlay) => {
+        if (overlay.page === fromPage) return { ...overlay, page: toPage };
+        if (fromPage < toPage && overlay.page > fromPage && overlay.page <= toPage) {
+          return { ...overlay, page: overlay.page - 1 };
+        }
+        if (fromPage > toPage && overlay.page >= toPage && overlay.page < fromPage) {
+          return { ...overlay, page: overlay.page + 1 };
+        }
+        return overlay;
+      })
+    );
+  };
+
   const applySearch = useCallback(async (tab: PdfTab, query: string, navigateToFirstMatch = true) => {
     const normalizedQuery = query.trim();
     const requestId = searchRequestIdRef.current + 1;
@@ -956,7 +1078,7 @@ export default function App() {
         isFullScreen={isFullScreen}
         onToggleFullScreen={() => void toggleFullScreen()}
         recentFiles={recentFiles}
-        onOpenRecent={(path) => void openPdfPaths([path])}
+        onOpenRecent={(path) => void openFilePaths([path])}
         onClearRecent={async () => {
           if (!window.pdfReader) return;
           setRecentFiles(await window.pdfReader.clearRecentFiles());
@@ -1138,13 +1260,14 @@ export default function App() {
             signatureDataUrl={signatureDataUrl}
             recentFiles={recentFiles}
             onSelectPage={(page) => activeTab && updateTab(activeTab.id, { currentPage: page })}
-            onOpenRecent={(path) => void openPdfPaths([path])}
+            onOpenRecent={(path) => void openFilePaths([path])}
             onUpdateOverlay={updateOverlay}
             onDeleteOverlay={deleteOverlay}
             onUpdateFormField={updateFormField}
             onInsertPage={() => void insertPageAfterCurrent()}
             onDeletePage={() => void deleteCurrentPage()}
             onMovePage={(direction) => void moveCurrentPage(direction)}
+            onReorderPage={(fromPage, toPage) => void movePageTo(fromPage, toPage)}
             onSignatureText={setSignatureText}
             onSignatureDataUrl={setSignatureDataUrl}
             onModeChange={setSidebar}
@@ -1170,7 +1293,7 @@ export default function App() {
 
         <section className="document-stage" ref={workspaceRef}>
           {!activeTab ? (
-            <EmptyState onOpen={openFromDialog} recentFiles={recentFiles} onOpenRecent={(path) => void openPdfPaths([path])} />
+            <EmptyState onOpen={openFromDialog} recentFiles={recentFiles} onOpenRecent={(path) => void openFilePaths([path])} />
           ) : (
             <DocumentView
               tab={activeTab}
@@ -1500,12 +1623,15 @@ function EmptyState({
 }) {
   return (
     <div className="empty-state">
-      <FileText size={48} />
+      <div className="empty-icons">
+        <FileText size={42} />
+        <ImageIcon size={34} />
+      </div>
       <h1>Open PDF Reader</h1>
-      <p>Open or drop a PDF to start reading, annotating, filling, and signing.</p>
+      <p>Open or drop PDFs, or import images to create a PDF.</p>
       <button className="primary-button" onClick={onOpen}>
         <FilePlus2 size={18} />
-        Open PDF
+        Open Files
       </button>
       {recentFiles.length > 0 && (
         <div className="recent-empty">
@@ -2264,6 +2390,7 @@ function Sidebar({
   onInsertPage,
   onDeletePage,
   onMovePage,
+  onReorderPage,
   onSignatureText,
   onSignatureDataUrl,
   onModeChange
@@ -2282,6 +2409,7 @@ function Sidebar({
   onInsertPage: () => void;
   onDeletePage: () => void;
   onMovePage: (direction: -1 | 1) => void;
+  onReorderPage: (fromPage: number, toPage: number) => void;
   onSignatureText: (value: string) => void;
   onSignatureDataUrl: (value: string | null) => void;
   onModeChange: (mode: "pages" | "outline" | "comments" | "forms" | "signature" | null) => void;
@@ -2326,8 +2454,25 @@ function Sidebar({
                 <button
                   key={page}
                   className={page === tab.currentPage ? "active" : ""}
+                  draggable
                   onClick={() => onSelectPage(page)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", String(page));
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const fromPage = Number(event.dataTransfer.getData("text/plain"));
+                    if (Number.isFinite(fromPage)) onReorderPage(fromPage, page);
+                  }}
                 >
+                  <span className="drag-handle" title="Drag to reorder">
+                    <GripVertical size={13} />
+                  </span>
                   <PageThumbnail pdfDoc={tab.pdfDoc} pageNumber={page} active={page === tab.currentPage} />
                   <span>{page}</span>
                 </button>

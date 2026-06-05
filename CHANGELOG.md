@@ -2,6 +2,8 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Added image-to-PDF import for Finder/Open With, file dialog, and drag/drop image batches, with generated PDFs opened as unsaved tabs.
+- Added drag-and-drop page reordering in the Pages sidebar.
 - Added conditional automatic OCR for mostly textless PDFs, with toolbar progress and OCR-backed search/text-selection fallback.
 - Created the Electron, React, and TypeScript desktop app scaffold.
 - Added tabbed PDF opening from dialog, drag and drop, and OS file-open handoff.

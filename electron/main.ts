@@ -2,23 +2,50 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electro
 import type { MessageBoxOptions } from "electron";
 import Store from "electron-store";
 import { readFile, writeFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-let pendingOpenPath: string | null = null;
+let pendingOpenPaths: string[] = [];
+let openPathFlushTimer: NodeJS.Timeout | null = null;
 const confirmedCloseWindows = new WeakSet<BrowserWindow>();
 const store = new Store<{ recentFiles: string[] }>({
   defaults: {
     recentFiles: []
   }
 });
+const imageMimeTypes = new Map([
+  [".gif", "image/gif"],
+  [".jpeg", "image/jpeg"],
+  [".jpg", "image/jpeg"],
+  [".png", "image/png"],
+  [".webp", "image/webp"]
+]);
 
 function addRecentFile(filePath: string) {
   const recentFiles = store.get("recentFiles", []);
   store.set("recentFiles", [filePath, ...recentFiles.filter((item) => item !== filePath)].slice(0, 12));
 }
 
-const createWindow = async (filePath?: string) => {
+function imageMimeTypeForPath(filePath: string) {
+  return imageMimeTypes.get(extname(filePath).toLowerCase()) ?? "application/octet-stream";
+}
+
+function queueOpenPath(filePath: string) {
+  pendingOpenPaths = [...pendingOpenPaths.filter((item) => item !== filePath), filePath];
+
+  if (openPathFlushTimer) {
+    clearTimeout(openPathFlushTimer);
+  }
+
+  openPathFlushTimer = setTimeout(() => {
+    const paths = pendingOpenPaths;
+    pendingOpenPaths = [];
+    openPathFlushTimer = null;
+    void createWindow(paths);
+  }, 150);
+}
+
+const createWindow = async (filePaths: string[] = []) => {
   const window = new BrowserWindow({
     width: 1360,
     height: 900,
@@ -46,16 +73,16 @@ const createWindow = async (filePath?: string) => {
     window.webContents.send("window:request-close");
   });
 
+  if (filePaths.length > 0) {
+    window.webContents.once("did-finish-load", () => {
+      window.webContents.send("app:open-files", filePaths);
+    });
+  }
+
   if (process.env.VITE_DEV_SERVER_URL) {
     await window.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
     await window.loadFile(fileURLToPath(new URL("../dist/index.html", import.meta.url)));
-  }
-
-  if (filePath) {
-    window.webContents.once("did-finish-load", () => {
-      window.webContents.send("app:open-file", filePath);
-    });
   }
 
   window.on("enter-full-screen", () => {
@@ -72,14 +99,16 @@ const createWindow = async (filePath?: string) => {
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
   if (!app.isReady()) {
-    pendingOpenPath = filePath;
+    pendingOpenPaths = [...pendingOpenPaths.filter((item) => item !== filePath), filePath];
     return;
   }
-  void createWindow(filePath);
+  queueOpenPath(filePath);
 });
 
 app.whenReady().then(async () => {
-  await createWindow(pendingOpenPath ?? undefined);
+  const initialOpenPaths = pendingOpenPaths;
+  pendingOpenPaths = [];
+  await createWindow(initialOpenPaths);
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -96,9 +125,13 @@ app.on("window-all-closed", () => {
 
 ipcMain.handle("dialog:open-pdf", async () => {
   const result = await dialog.showOpenDialog({
-    title: "Open PDF",
+    title: "Open PDF or Images",
     properties: ["openFile", "multiSelections"],
-    filters: [{ name: "PDF files", extensions: ["pdf"] }]
+    filters: [
+      { name: "PDF and image files", extensions: ["pdf", "png", "jpg", "jpeg", "webp", "gif"] },
+      { name: "PDF files", extensions: ["pdf"] },
+      { name: "Image files", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }
+    ]
   });
 
   if (result.canceled) {
@@ -149,6 +182,16 @@ ipcMain.handle("file:read-pdf", async (_event, filePath: string) => {
   };
 });
 
+ipcMain.handle("file:read-image", async (_event, filePath: string) => {
+  const data = await readFile(filePath);
+  return {
+    path: filePath,
+    name: basename(filePath),
+    mimeType: imageMimeTypeForPath(filePath),
+    bytes: Array.from(data)
+  };
+});
+
 ipcMain.handle("file:write-pdf", async (_event, filePath: string, bytes: number[]) => {
   await writeFile(filePath, Buffer.from(bytes));
   addRecentFile(filePath);
@@ -156,7 +199,7 @@ ipcMain.handle("file:write-pdf", async (_event, filePath: string, bytes: number[
 });
 
 ipcMain.handle("window:new-for-file", async (_event, filePath: string) => {
-  await createWindow(filePath);
+  await createWindow([filePath]);
 });
 
 ipcMain.handle("window:set-full-screen", async (event, enabled: boolean) => {

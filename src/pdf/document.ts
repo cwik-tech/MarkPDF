@@ -15,7 +15,7 @@ import {
   rgb,
   StandardFonts
 } from "pdf-lib";
-import type { FormFieldState, OcrPageText, OutlineItem, OverlayItem, SearchMatch } from "../types";
+import type { FormFieldState, ImagePdfSource, OcrPageText, OutlineItem, OverlayItem, SearchMatch } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -315,6 +315,92 @@ export async function exportPdfBytes(
   return pdfDoc.save();
 }
 
+export async function createPdfFromImages(images: ImagePdfSource[]) {
+  const pdfDoc = await PDFDocument.create();
+
+  for (const image of images) {
+    const embedded = await embedPageImage(pdfDoc, image);
+    const { width, height } = scaleImagePage(embedded.width, embedded.height);
+    const page = pdfDoc.addPage([width, height]);
+    page.drawImage(embedded.image, { x: 0, y: 0, width, height });
+  }
+
+  return pdfDoc.save();
+}
+
+async function embedPageImage(pdfDoc: PDFDocument, source: ImagePdfSource) {
+  const normalizedMime = source.mimeType.toLowerCase();
+
+  if (normalizedMime.includes("jpeg") || normalizedMime.includes("jpg") || /\.(jpe?g)$/i.test(source.name)) {
+    const image = await pdfDoc.embedJpg(source.bytes);
+    return { image, width: image.width, height: image.height };
+  }
+
+  if (normalizedMime.includes("png") || /\.png$/i.test(source.name)) {
+    const image = await pdfDoc.embedPng(source.bytes);
+    return { image, width: image.width, height: image.height };
+  }
+
+  const converted = await convertImageToPng(source);
+  const image = await pdfDoc.embedPng(converted.bytes);
+  return { image, width: converted.width, height: converted.height };
+}
+
+async function convertImageToPng(source: ImagePdfSource) {
+  const buffer = new ArrayBuffer(source.bytes.byteLength);
+  new Uint8Array(buffer).set(source.bytes);
+  const blob = new Blob([buffer], { type: source.mimeType });
+  const url = URL.createObjectURL(blob);
+
+  try {
+    const image = await loadBrowserImage(url);
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d");
+    if (!context || canvas.width <= 0 || canvas.height <= 0) {
+      throw new Error(`Could not decode "${source.name}".`);
+    }
+
+    context.drawImage(image, 0, 0);
+    const convertedBlob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((value) => {
+        if (value) resolve(value);
+        else reject(new Error(`Could not convert "${source.name}".`));
+      }, "image/png");
+    });
+
+    return {
+      bytes: new Uint8Array(await convertedBlob.arrayBuffer()),
+      width: canvas.width,
+      height: canvas.height
+    };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function loadBrowserImage(url: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Image decode failed."));
+    image.src = url;
+  });
+}
+
+function scaleImagePage(width: number, height: number) {
+  const maxPageEdge = 1440;
+  const minPageEdge = 144;
+  const longestEdge = Math.max(width, height, 1);
+  const scale = longestEdge > maxPageEdge ? maxPageEdge / longestEdge : longestEdge < minPageEdge ? minPageEdge / longestEdge : 1;
+
+  return {
+    width: width * scale,
+    height: height * scale
+  };
+}
+
 function writeEditableOverlayMetadata(pdfDoc: PDFDocument, overlays: OverlayItem[]) {
   const existingKeywords = getKeywordsWithoutEditableOverlayMetadata(pdfDoc);
   const editableOverlays = overlays.filter((overlay) => overlay.kind === "highlight" || overlay.kind === "comment");
@@ -358,6 +444,22 @@ export async function movePdfPage(sourceBytes: Uint8Array, pageNumber: number, d
   const toIndex = fromIndex + direction;
 
   if (fromIndex < 0 || fromIndex >= pageCount || toIndex < 0 || toIndex >= pageCount) {
+    return sourceBytes.slice();
+  }
+
+  const page = pdfDoc.getPage(fromIndex);
+  pdfDoc.removePage(fromIndex);
+  pdfDoc.insertPage(toIndex, page);
+  return pdfDoc.save();
+}
+
+export async function movePdfPageTo(sourceBytes: Uint8Array, fromPage: number, toPage: number) {
+  const pdfDoc = await PDFDocument.load(sourceBytes.slice(), { ignoreEncryption: true });
+  const pageCount = pdfDoc.getPageCount();
+  const fromIndex = fromPage - 1;
+  const toIndex = toPage - 1;
+
+  if (fromIndex < 0 || fromIndex >= pageCount || toIndex < 0 || toIndex >= pageCount || fromIndex === toIndex) {
     return sourceBytes.slice();
   }
 
