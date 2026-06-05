@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Columns2,
   ArrowDown,
   ArrowUp,
   FilePlus2,
@@ -19,16 +20,17 @@ import {
   PenLine,
   Plus,
   Printer,
-  Redo2,
   RotateCw,
   Save,
   Search,
   Settings2,
   Signature,
+  ScrollText,
+  StretchHorizontal,
+  StretchVertical,
   Sun,
   Trash2,
   Type,
-  Undo2,
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -668,9 +670,6 @@ export default function App() {
         <button className="icon-button" title="Pages" onClick={() => setSidebar(sidebar === "pages" ? null : "pages")}>
           <PanelLeft size={18} />
         </button>
-        <button className="icon-button" title="Bookmarks" onClick={() => setSidebar(sidebar === "outline" ? null : "outline")}>
-          <BookOpen size={18} />
-        </button>
         <div className="divider" />
         <ToolButton active={tool === "select"} title="Select" onClick={() => setTool("select")}>
           <MousePointer2 size={18} />
@@ -694,13 +693,6 @@ export default function App() {
         >
           <Signature size={18} />
         </ToolButton>
-        <div className="divider" />
-        <button className="icon-button" title="Undo" disabled={!activeTab?.undoStack.length} onClick={() => void undoActiveTab()}>
-          <Undo2 size={18} />
-        </button>
-        <button className="icon-button" title="Redo" disabled={!activeTab?.redoStack.length} onClick={() => void redoActiveTab()}>
-          <Redo2 size={18} />
-        </button>
         <div className="divider" />
         <button
           className="icon-button"
@@ -728,23 +720,25 @@ export default function App() {
           <RotateCw size={18} />
         </button>
         <div className="divider" />
-        <button
-          className="icon-button"
-          title="Zoom out"
-          disabled={!activeTab}
-          onClick={() => activeTab && updateTab(activeTab.id, { zoom: Math.max(0.25, activeTab.zoom - 0.1), fitMode: "actual" })}
-        >
-          <Minus size={18} />
-        </button>
-        <span className="zoom-label">{activeTab ? `${Math.round(activeTab.zoom * 100)}%` : "100%"}</span>
-        <button
-          className="icon-button"
-          title="Zoom in"
-          disabled={!activeTab}
-          onClick={() => activeTab && updateTab(activeTab.id, { zoom: Math.min(4, activeTab.zoom + 0.1), fitMode: "actual" })}
-        >
-          <Plus size={18} />
-        </button>
+        <div className="zoom-control">
+          <button
+            className="icon-button"
+            title="Zoom out"
+            disabled={!activeTab}
+            onClick={() => activeTab && updateTab(activeTab.id, { zoom: Math.max(0.25, activeTab.zoom - 0.1), fitMode: "actual" })}
+          >
+            <Minus size={18} />
+          </button>
+          <span className="zoom-label">{activeTab ? `${Math.round(activeTab.zoom * 100)}%` : "100%"}</span>
+          <button
+            className="icon-button"
+            title="Zoom in"
+            disabled={!activeTab}
+            onClick={() => activeTab && updateTab(activeTab.id, { zoom: Math.min(4, activeTab.zoom + 0.1), fitMode: "actual" })}
+          >
+            <Plus size={18} />
+          </button>
+        </div>
         <FitMenu activeTab={activeTab} onFit={(mode) => void applyFitMode(mode)} />
         <ViewMenu
           activeTab={activeTab}
@@ -753,7 +747,10 @@ export default function App() {
           onToggleFullScreen={() => void toggleFullScreen()}
         />
         <div className="toolbar-spacer" />
-        <div className="search-box">
+        <div
+          className={`search-box ${searchText || activeTab?.searchQuery ? "active" : ""}`}
+          onMouseEnter={() => searchInputRef.current?.focus()}
+        >
           <Search size={15} />
           <input
             ref={searchInputRef}
@@ -770,19 +767,23 @@ export default function App() {
             placeholder="Find text"
           />
         </div>
-        <button className="icon-button" title="Previous match" disabled={!activeTab?.searchMatches.length} onClick={() => stepSearch(-1)}>
-          <ChevronLeft size={16} />
-        </button>
-        <button className="icon-button" title="Next match" disabled={!activeTab?.searchMatches.length} onClick={() => stepSearch(1)}>
-          <ChevronRight size={16} />
-        </button>
-        <span className="search-count">
-          {activeTab?.searchMatches.length
-            ? `${activeTab.activeSearchMatch + 1}/${activeTab.searchMatches.length}`
-            : activeTab?.searchQuery
-              ? "0/0"
-              : ""}
-        </span>
+        {(searchText || activeTab?.searchQuery) && (
+          <>
+            <button className="icon-button" title="Previous match" disabled={!activeTab?.searchMatches.length} onClick={() => stepSearch(-1)}>
+              <ChevronLeft size={16} />
+            </button>
+            <button className="icon-button" title="Next match" disabled={!activeTab?.searchMatches.length} onClick={() => stepSearch(1)}>
+              <ChevronRight size={16} />
+            </button>
+            <span className="search-count">
+              {activeTab?.searchMatches.length
+                ? `${activeTab.activeSearchMatch + 1}/${activeTab.searchMatches.length}`
+                : activeTab?.searchQuery
+                  ? "0/0"
+                  : ""}
+            </span>
+          </>
+        )}
         <button className="icon-button" title="Forms" disabled={!activeTab} onClick={() => setSidebar("forms")}>
           <Settings2 size={18} />
         </button>
@@ -807,6 +808,7 @@ export default function App() {
             onMovePage={(direction) => void moveCurrentPage(direction)}
             onSignatureText={setSignatureText}
             onSignatureDataUrl={setSignatureDataUrl}
+            onModeChange={setSidebar}
           />
         )}
 
@@ -982,23 +984,42 @@ function PageBox({ tab, onChange }: { tab: PdfTab | null; onChange: (page: numbe
           }
         }}
       />
-      <span>/ {tab?.pageCount ?? 0}</span>
+      <span>/{tab?.pageCount ?? 0}</span>
     </div>
   );
 }
 
 function FitMenu({ activeTab, onFit }: { activeTab: PdfTab | null; onFit: (fitMode: FitMode) => void }) {
+  const activeMode = activeTab?.fitMode ?? "page";
+  const activeIcon =
+    activeMode === "actual" ? (
+      <FileText size={18} />
+    ) : activeMode === "width" ? (
+      <StretchHorizontal size={18} />
+    ) : activeMode === "height" ? (
+      <StretchVertical size={18} />
+    ) : (
+      <Maximize2 size={18} />
+    );
+
   return (
     <div className="menu-button">
-      <button className="text-button" disabled={!activeTab}>
-        {activeTab?.fitMode === "actual" ? "Actual size" : `Fit ${activeTab?.fitMode ?? "page"}`}
-        <ChevronDown size={15} />
+      <button className="icon-button menu-trigger" title={activeMode === "actual" ? "Actual size" : `Fit ${activeMode}`} disabled={!activeTab}>
+        {activeIcon}
       </button>
       <div className="menu-popover">
-        <button onClick={() => onFit("actual")}>Actual size</button>
-        <button onClick={() => onFit("page")}>Fit to page</button>
-        <button onClick={() => onFit("width")}>Fit to width</button>
-        <button onClick={() => onFit("height")}>Fit height</button>
+        <MenuItem active={activeMode === "actual"} icon={<FileText size={15} />} onClick={() => onFit("actual")}>
+          Actual size
+        </MenuItem>
+        <MenuItem active={activeMode === "page"} icon={<Maximize2 size={15} />} onClick={() => onFit("page")}>
+          Fit to page
+        </MenuItem>
+        <MenuItem active={activeMode === "width"} icon={<StretchHorizontal size={15} />} onClick={() => onFit("width")}>
+          Fit to width
+        </MenuItem>
+        <MenuItem active={activeMode === "height"} icon={<StretchVertical size={15} />} onClick={() => onFit("height")}>
+          Fit height
+        </MenuItem>
       </div>
     </div>
   );
@@ -1015,31 +1036,48 @@ function ViewMenu({
   isFullScreen: boolean;
   onToggleFullScreen: () => void;
 }) {
+  const activeViewIcon = activeTab?.viewMode === "two" ? <Columns2 size={18} /> : <FileText size={18} />;
+
   return (
     <div className="menu-button">
-      <button className="text-button" disabled={!activeTab}>
-        {activeTab?.viewMode === "two" ? "Two-page" : "Single-page"}
-        <ChevronDown size={15} />
+      <button className="icon-button menu-trigger" title={activeTab?.viewMode === "two" ? "Two-page view" : "Single-page view"} disabled={!activeTab}>
+        {activeViewIcon}
       </button>
       <div className="menu-popover">
-        <button onClick={() => onChange({ viewMode: "single" })}>
-          {activeTab?.viewMode === "single" && <Check size={14} />}
+        <MenuItem active={activeTab?.viewMode === "single"} icon={<FileText size={15} />} onClick={() => onChange({ viewMode: "single" })}>
           Single-page view
-        </button>
-        <button onClick={() => onChange({ viewMode: "two" })}>
-          {activeTab?.viewMode === "two" && <Check size={14} />}
+        </MenuItem>
+        <MenuItem active={activeTab?.viewMode === "two"} icon={<Columns2 size={15} />} onClick={() => onChange({ viewMode: "two" })}>
           Two-page view
-        </button>
-        <button onClick={() => onChange({ scrolling: !activeTab?.scrolling })}>
-          {activeTab?.scrolling && <Check size={14} />}
+        </MenuItem>
+        <MenuItem active={activeTab?.scrolling} icon={<ScrollText size={15} />} onClick={() => onChange({ scrolling: !activeTab?.scrolling })}>
           Enable scrolling
-        </button>
-        <button onClick={onToggleFullScreen}>
-          {isFullScreen && <Check size={14} />}
+        </MenuItem>
+        <MenuItem active={isFullScreen} icon={<Maximize2 size={15} />} onClick={onToggleFullScreen}>
           Full screen mode
-        </button>
+        </MenuItem>
       </div>
     </div>
+  );
+}
+
+function MenuItem({
+  active,
+  icon,
+  children,
+  onClick
+}: {
+  active?: boolean;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button onClick={onClick}>
+      <span className="menu-item-icon">{icon}</span>
+      <span>{children}</span>
+      <span className="menu-check">{active && <Check size={14} />}</span>
+    </button>
   );
 }
 
@@ -1382,7 +1420,8 @@ function Sidebar({
   onDeletePage,
   onMovePage,
   onSignatureText,
-  onSignatureDataUrl
+  onSignatureDataUrl,
+  onModeChange
 }: {
   mode: "pages" | "outline" | "comments" | "forms" | "signature";
   tab: PdfTab | null;
@@ -1400,12 +1439,25 @@ function Sidebar({
   onMovePage: (direction: -1 | 1) => void;
   onSignatureText: (value: string) => void;
   onSignatureDataUrl: (value: string | null) => void;
+  onModeChange: (mode: "pages" | "outline" | "comments" | "forms" | "signature" | null) => void;
 }) {
   return (
     <aside className="sidebar">
+      {(mode === "pages" || mode === "outline") && (
+        <div className="sidebar-switch">
+          <button className={mode === "pages" ? "active" : ""} onClick={() => onModeChange("pages")}>
+            <PanelLeft size={15} />
+            Pages
+          </button>
+          <button className={mode === "outline" ? "active" : ""} onClick={() => onModeChange("outline")}>
+            <BookOpen size={15} />
+            Bookmarks
+          </button>
+        </div>
+      )}
+
       {mode === "pages" && (
         <>
-          <h2>Pages</h2>
           {tab && (
             <div className="page-actions">
               <button title="Insert blank page after current page" onClick={onInsertPage}>
@@ -1456,7 +1508,6 @@ function Sidebar({
 
       {mode === "outline" && (
         <>
-          <h2>Bookmarks</h2>
           {tab?.outline.length ? (
             <OutlineList items={tab.outline} onSelectPage={onSelectPage} />
           ) : (

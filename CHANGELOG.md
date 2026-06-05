@@ -21,3 +21,4 @@
 - Added full-screen controls through Electron and guarded window close when tabs have unsaved changes.
 - Added password retry for protected PDFs and a bookmarks sidebar from PDF outline data.
 - Fixed packaged app startup by emitting relative Vite asset URLs for Electron file loading.
+- Refined the PDF toolbar with sidebar-local page/bookmark switching, compact page and zoom controls, icon-only fit/view menus, expanding search, and left-aligned page labels.
