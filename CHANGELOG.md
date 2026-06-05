@@ -16,6 +16,7 @@
 - Added document text search with match navigation and keyboard submit behavior.
 - Added a temporary active-match highlight for document search navigation.
 - Fixed active search highlighting for words split across PDF text spans and added a clear-search button.
+- Fixed search box focus retention, active-match scrolling, and highlight alignment.
 - Added keyboard shortcuts for page navigation, zoom, actual size, find focus, and escape-to-select.
 - Added standard PDF text-note annotations when exporting comment overlays.
 - Reduced the upper app bar height and made the left sidebar closed by default.

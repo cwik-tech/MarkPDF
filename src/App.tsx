@@ -998,14 +998,15 @@ export default function App() {
         </div>
         <div className="toolbar-spacer" />
         <div
-          className={`search-box ${searchExpanded ? "active" : ""}`}
+          className={`search-box ${searchExpanded || searchText || activeTab?.searchQuery ? "active" : ""}`}
           onMouseEnter={() => {
             setSearchExpanded(true);
             searchInputRef.current?.focus();
           }}
           onMouseLeave={() => {
-            setSearchExpanded(false);
-            searchInputRef.current?.blur();
+            if (!searchText && !activeTab?.searchQuery && document.activeElement !== searchInputRef.current) {
+              setSearchExpanded(false);
+            }
           }}
           onClick={() => {
             setSearchExpanded(true);
@@ -1731,7 +1732,7 @@ function PdfPage({
     const firstMarker = highlightLayer.firstElementChild;
     if (firstMarker) {
       window.requestAnimationFrame(() => {
-        firstMarker.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+        scrollSearchMarkerIntoDocumentPane(firstMarker);
       });
     }
   }, [activeSearchMatch, activeSearchMatchOrdinal, activeSearchQuery, textLayerRenderKey]);
@@ -1843,20 +1844,9 @@ function getSearchHighlightRects(
   }
 
   const layerRect = highlightLayer.getBoundingClientRect();
-  return Array.from(rangesBySpan.entries()).flatMap(([span, range]) => {
-    const textNode = Array.from(span.childNodes).find((node): node is Text => node.nodeType === Node.TEXT_NODE);
-    if (!textNode) {
-      const rect = span.getBoundingClientRect();
-      return [rectToLayerRect(rect, layerRect)];
-    }
-
-    const domRange = document.createRange();
-    domRange.setStart(textNode, Math.min(range.start, textNode.length));
-    domRange.setEnd(textNode, Math.min(range.end, textNode.length));
-    const rects = Array.from(domRange.getClientRects()).map((rect) => rectToLayerRect(rect, layerRect));
-    domRange.detach();
-    return rects;
-  });
+  return Array.from(rangesBySpan.entries()).map(([span, range]) =>
+    spanRangeToLayerRect(span, range.start, range.end, layerRect)
+  );
 }
 
 function buildTextLayerSearchIndex(textLayer: HTMLDivElement, separateSpans: boolean) {
@@ -1931,13 +1921,49 @@ function findNthOccurrence(text: string, query: string, ordinal: number) {
   return index;
 }
 
-function rectToLayerRect(rect: DOMRect, layerRect: DOMRect) {
+function spanRangeToLayerRect(span: HTMLSpanElement, start: number, end: number, layerRect: DOMRect) {
+  const text = span.textContent ?? "";
+  const rect = span.getBoundingClientRect();
+  const clampedStart = Math.max(0, Math.min(start, text.length));
+  const clampedEnd = Math.max(clampedStart, Math.min(end, text.length));
+  const selectedLength = Math.max(1, clampedEnd - clampedStart);
+  const textLength = Math.max(1, text.length);
+  const leftPadding = spanMatchesWholeText(clampedStart, clampedEnd, text.length)
+    ? 0
+    : rect.width * (clampedStart / textLength);
+  const width = spanMatchesWholeText(clampedStart, clampedEnd, text.length)
+    ? rect.width
+    : rect.width * (selectedLength / textLength);
+
   return {
-    left: rect.left - layerRect.left,
+    left: rect.left - layerRect.left + leftPadding,
     top: rect.top - layerRect.top,
-    width: Math.max(2, rect.width),
+    width: Math.max(2, width),
     height: Math.max(2, rect.height)
   };
+}
+
+function spanMatchesWholeText(start: number, end: number, textLength: number) {
+  return start <= 0 && end >= textLength;
+}
+
+function scrollSearchMarkerIntoDocumentPane(marker: Element) {
+  const documentPane = marker.closest(".document-scroll");
+  if (!(documentPane instanceof HTMLElement)) return;
+
+  const markerRect = marker.getBoundingClientRect();
+  const paneRect = documentPane.getBoundingClientRect();
+  const outsideVertically = markerRect.top < paneRect.top || markerRect.bottom > paneRect.bottom;
+  const outsideHorizontally = markerRect.left < paneRect.left || markerRect.right > paneRect.right;
+  if (!outsideVertically && !outsideHorizontally) return;
+
+  const markerCenterY = markerRect.top - paneRect.top + documentPane.scrollTop + markerRect.height / 2;
+  const markerCenterX = markerRect.left - paneRect.left + documentPane.scrollLeft + markerRect.width / 2;
+  documentPane.scrollTo({
+    top: Math.max(0, markerCenterY - documentPane.clientHeight / 2),
+    left: Math.max(0, markerCenterX - documentPane.clientWidth / 2),
+    behavior: "smooth"
+  });
 }
 
 function appendOcrTextLayer(container: HTMLDivElement, ocrPage: OcrPageText | null, zoom: number) {
