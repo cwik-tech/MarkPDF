@@ -9,7 +9,9 @@ import {
   FileText,
   Highlighter,
   MessageSquarePlus,
+  Maximize2,
   Minus,
+  Minimize2,
   Moon,
   MousePointer2,
   PanelLeft,
@@ -64,6 +66,7 @@ export default function App() {
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
+  const [isFullScreen, setIsFullScreen] = useState(false);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -140,6 +143,23 @@ export default function App() {
   useEffect(() => {
     void loadRecentFiles();
   }, [loadRecentFiles]);
+
+  useEffect(() => {
+    if (!window.pdfReader) return undefined;
+    void window.pdfReader.isFullScreen().then(setIsFullScreen);
+    return window.pdfReader.onFullScreenChange(setIsFullScreen);
+  }, []);
+
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!tabs.some((tab) => tab.dirty)) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [tabs]);
 
   useEffect(() => {
     if (!window.pdfReader) return undefined;
@@ -266,6 +286,22 @@ export default function App() {
         frame.remove();
       }, 2000);
     };
+  };
+
+  const toggleFullScreen = async () => {
+    const next = !isFullScreen;
+    if (!window.pdfReader) {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+        setIsFullScreen(true);
+      } else {
+        await document.exitFullscreen();
+        setIsFullScreen(false);
+      }
+      return;
+    }
+
+    setIsFullScreen(await window.pdfReader.setFullScreen(next));
   };
 
   const snapshotTab = (tab: PdfTab): TabHistoryState => ({
@@ -582,6 +618,8 @@ export default function App() {
         onPrint={() => void printActiveTab()}
         theme={theme}
         onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+        isFullScreen={isFullScreen}
+        onToggleFullScreen={() => void toggleFullScreen()}
         recentFiles={recentFiles}
         onOpenRecent={(path) => void openPdfPaths([path])}
         onClearRecent={async () => {
@@ -672,6 +710,8 @@ export default function App() {
         <ViewMenu
           activeTab={activeTab}
           onChange={(patch) => activeTab && updateTab(activeTab.id, patch)}
+          isFullScreen={isFullScreen}
+          onToggleFullScreen={() => void toggleFullScreen()}
         />
         <div className="toolbar-spacer" />
         <div className="search-box">
@@ -772,6 +812,8 @@ function TopBar({
   onPrint,
   theme,
   onToggleTheme,
+  isFullScreen,
+  onToggleFullScreen,
   recentFiles,
   onOpenRecent,
   onClearRecent
@@ -787,6 +829,8 @@ function TopBar({
   onPrint: () => void;
   theme: ThemeMode;
   onToggleTheme: () => void;
+  isFullScreen: boolean;
+  onToggleFullScreen: () => void;
   recentFiles: string[];
   onOpenRecent: (path: string) => void;
   onClearRecent: () => void;
@@ -850,6 +894,9 @@ function TopBar({
         </button>
         <button className="icon-button" title="Toggle theme" onClick={onToggleTheme}>
           {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+        </button>
+        <button className="icon-button" title={isFullScreen ? "Exit full screen" : "Full screen"} onClick={onToggleFullScreen}>
+          {isFullScreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
         </button>
       </div>
     </header>
@@ -920,10 +967,14 @@ function FitMenu({ activeTab, onFit }: { activeTab: PdfTab | null; onFit: (fitMo
 
 function ViewMenu({
   activeTab,
-  onChange
+  onChange,
+  isFullScreen,
+  onToggleFullScreen
 }: {
   activeTab: PdfTab | null;
   onChange: (patch: Partial<PdfTab>) => void;
+  isFullScreen: boolean;
+  onToggleFullScreen: () => void;
 }) {
   return (
     <div className="menu-button">
@@ -943,6 +994,10 @@ function ViewMenu({
         <button onClick={() => onChange({ scrolling: !activeTab?.scrolling })}>
           {activeTab?.scrolling && <Check size={14} />}
           Enable scrolling
+        </button>
+        <button onClick={onToggleFullScreen}>
+          {isFullScreen && <Check size={14} />}
+          Full screen mode
         </button>
       </div>
     </div>

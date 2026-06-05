@@ -45,6 +45,14 @@ const createWindow = async (filePath?: string) => {
     });
   }
 
+  window.on("enter-full-screen", () => {
+    window.webContents.send("window:full-screen-change", true);
+  });
+
+  window.on("leave-full-screen", () => {
+    window.webContents.send("window:full-screen-change", false);
+  });
+
   return window;
 };
 
@@ -119,6 +127,17 @@ ipcMain.handle("file:write-pdf", async (_event, filePath: string, bytes: number[
 
 ipcMain.handle("window:new-for-file", async (_event, filePath: string) => {
   await createWindow(filePath);
+});
+
+ipcMain.handle("window:set-full-screen", async (event, enabled: boolean) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  window?.setFullScreen(enabled);
+  return window?.isFullScreen() ?? false;
+});
+
+ipcMain.handle("window:is-full-screen", async (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  return window?.isFullScreen() ?? false;
 });
 
 ipcMain.handle("shell:show-item", async (_event, filePath: string) => {
