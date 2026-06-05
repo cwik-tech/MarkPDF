@@ -411,6 +411,32 @@ select {
   text-align: left;
 }
 
+.ocr-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ocr-status.checking,
+.ocr-status.running {
+  color: var(--accent);
+}
+
+.ocr-status.ready {
+  color: var(--success);
+}
+
+.ocr-status.error {
+  color: var(--danger);
+}
+
 .search-box input {
   min-width: 0;
   width: 100%;

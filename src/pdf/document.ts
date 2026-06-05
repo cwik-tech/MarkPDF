@@ -12,7 +12,7 @@ import {
   rgb,
   StandardFonts
 } from "pdf-lib";
-import type { FormFieldState, OutlineItem, OverlayItem, SearchMatch } from "../types";
+import type { FormFieldState, OcrPageText, OutlineItem, OverlayItem, SearchMatch } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -111,20 +111,33 @@ export async function detectFormFields(bytes: Uint8Array): Promise<FormFieldStat
   }
 }
 
-export async function findTextMatches(pdfDoc: pdfjsLib.PDFDocumentProxy, query: string): Promise<SearchMatch[]> {
+export async function extractPageText(page: pdfjsLib.PDFPageProxy) {
+  const textContent = await page.getTextContent();
+  return textContent.items
+    .map((item) => ("str" in item ? item.str : ""))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export async function findTextMatches(
+  pdfDoc: pdfjsLib.PDFDocumentProxy,
+  query: string,
+  ocrPages: OcrPageText[] = []
+): Promise<SearchMatch[]> {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return [];
 
   const matches: SearchMatch[] = [];
+  const ocrTextByPage = new Map(ocrPages.map((page) => [page.page, page.text]));
 
   for (let pageNumber = 1; pageNumber <= pdfDoc.numPages; pageNumber += 1) {
     const page = await pdfDoc.getPage(pageNumber);
-    const textContent = await page.getTextContent();
-    const pageText = textContent.items
-      .map((item) => ("str" in item ? item.str : ""))
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
+    const nativeText = await extractPageText(page);
+    const ocrText = ocrTextByPage.get(pageNumber) ?? "";
+    const useOcrText = nativeText.replace(/\s/g, "").length < 100 && ocrText.length > 0;
+    const source = useOcrText ? "ocr" : "pdf";
+    const pageText = useOcrText ? ocrText : nativeText;
     const lowerText = pageText.toLowerCase();
     let index = lowerText.indexOf(normalizedQuery);
 
@@ -135,7 +148,8 @@ export async function findTextMatches(pdfDoc: pdfjsLib.PDFDocumentProxy, query: 
         id: `${pageNumber}-${index}`,
         page: pageNumber,
         index,
-        snippet: `${start > 0 ? "..." : ""}${pageText.slice(start, end)}${end < pageText.length ? "..." : ""}`
+        snippet: `${start > 0 ? "..." : ""}${pageText.slice(start, end)}${end < pageText.length ? "..." : ""}`,
+        source
       });
       index = lowerText.indexOf(normalizedQuery, index + normalizedQuery.length);
     }

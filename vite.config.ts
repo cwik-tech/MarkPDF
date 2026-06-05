@@ -9,16 +9,29 @@ export default defineConfig({
     viteStaticCopy({
       targets: [
         {
-          src: "node_modules/pdfjs-dist/cmaps",
-          dest: "pdfjs"
+          src: "node_modules/pdfjs-dist/cmaps/**/*",
+          dest: "pdfjs/cmaps",
+          rename: { stripBase: true }
         },
         {
-          src: "node_modules/pdfjs-dist/standard_fonts",
-          dest: "pdfjs"
+          src: "node_modules/pdfjs-dist/standard_fonts/**/*",
+          dest: "pdfjs/standard_fonts",
+          rename: { stripBase: true }
         },
         {
-          src: "node_modules/pdfjs-dist/wasm",
-          dest: "pdfjs"
+          src: "node_modules/pdfjs-dist/wasm/**/*",
+          dest: "pdfjs/wasm",
+          rename: { stripBase: true }
+        },
+        {
+          src: "node_modules/tesseract.js/dist/worker.min.js",
+          dest: "tesseract",
+          rename: { stripBase: true }
+        },
+        {
+          src: "node_modules/tesseract.js-core/*",
+          dest: "tesseract-core",
+          rename: { stripBase: true }
         }
       ]
     })

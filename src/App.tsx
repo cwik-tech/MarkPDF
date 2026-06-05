@@ -48,7 +48,18 @@ import {
   loadPdfDocument,
   movePdfPage
 } from "./pdf/document";
-import type { FitMode, FormFieldState, OverlayItem, PdfTab, TabHistoryState, ThemeMode, ToolMode, ViewMode } from "./types";
+import { detectOcrNeed, runDocumentOcr } from "./pdf/ocr";
+import type {
+  FitMode,
+  FormFieldState,
+  OcrPageText,
+  OverlayItem,
+  PdfTab,
+  TabHistoryState,
+  ThemeMode,
+  ToolMode,
+  ViewMode
+} from "./types";
 
 const defaultTextColor = "#1f2937";
 
@@ -89,6 +100,7 @@ export default function App() {
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const menuCloseTimerRef = useRef<number | null>(null);
+  const ocrJobsRef = useRef(new Map<string, { cancelled: boolean }>());
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? null,
@@ -132,6 +144,88 @@ export default function App() {
     );
   }, []);
 
+  const startAutoOcr = useCallback(
+    async (tabId: string, pdfDoc: Awaited<ReturnType<typeof loadPdfDocument>>) => {
+      if (ocrJobsRef.current.has(tabId)) return;
+
+      const job = { cancelled: false };
+      ocrJobsRef.current.set(tabId, job);
+      updateTab(tabId, {
+        ocrStatus: "checking",
+        ocrProgress: { status: "checking", message: "Checking text layer" },
+        ocrError: undefined
+      });
+
+      try {
+        const density = await detectOcrNeed(pdfDoc);
+        if (job.cancelled) return;
+
+        if (!density.shouldRunOcr) {
+          updateTab(tabId, {
+            ocrStatus: "skipped",
+            ocrProgress: {
+              status: "skipped",
+              message: "PDF text layer detected"
+            }
+          });
+          return;
+        }
+
+        updateTab(tabId, {
+          ocrStatus: "running",
+          ocrProgress: {
+            status: "running",
+            page: 1,
+            totalPages: pdfDoc.numPages,
+            progress: 0,
+            message: "Starting OCR"
+          }
+        });
+
+        const ocrPages = await runDocumentOcr(pdfDoc, {
+          isCancelled: () => job.cancelled,
+          onProgress: (progress) => {
+            if (!job.cancelled) {
+              updateTab(tabId, (tab) => ({
+                ocrProgress: {
+                  ...tab.ocrProgress,
+                  ...progress
+                }
+              }));
+            }
+          }
+        });
+
+        if (job.cancelled) return;
+        updateTab(tabId, {
+          ocrStatus: "ready",
+          ocrPages,
+          ocrProgress: {
+            status: "ready",
+            page: pdfDoc.numPages,
+            totalPages: pdfDoc.numPages,
+            progress: 1,
+            message: "OCR ready"
+          }
+        });
+      } catch (error) {
+        if (!job.cancelled) {
+          updateTab(tabId, {
+            ocrStatus: "error",
+            ocrError: error instanceof Error ? error.message : "OCR failed.",
+            ocrProgress: {
+              status: "error",
+              message: "OCR failed"
+            }
+          });
+        }
+      } finally {
+        ocrJobsRef.current.delete(tabId);
+      }
+    },
+    [updateTab]
+  );
+
   const addTabFromBytes = useCallback(
     async (bytes: Uint8Array, name: string, path?: string) => {
       let password: string | undefined;
@@ -174,6 +268,9 @@ export default function App() {
         searchQuery: "",
         searchMatches: [],
         activeSearchMatch: -1,
+        ocrPages: [],
+        ocrStatus: "checking",
+        ocrProgress: { status: "checking", message: "Checking text layer" },
         undoStack: [],
         redoStack: [],
         dirty: false
@@ -181,8 +278,9 @@ export default function App() {
 
       setTabs((current) => [...current, tab]);
       setActiveTabId(tab.id);
+      void startAutoOcr(tab.id, pdfDoc);
     },
-    []
+    [startAutoOcr]
   );
 
   const openPdfPaths = useCallback(
@@ -265,6 +363,8 @@ export default function App() {
     }
 
     setTabs((current) => current.filter((item) => item.id !== tabId));
+    const ocrJob = ocrJobsRef.current.get(tabId);
+    if (ocrJob) ocrJob.cancelled = true;
     if (activeTabId === tabId) {
       const remaining = tabs.filter((item) => item.id !== tabId);
       setActiveTabId(remaining.at(-1)?.id ?? null);
@@ -328,10 +428,14 @@ export default function App() {
       outline,
       searchMatches: [],
       activeSearchMatch: -1,
+      ocrPages: [],
+      ocrStatus: "checking",
+      ocrProgress: { status: "checking", message: "Checking text layer" },
       undoStack: [],
       redoStack: [],
       dirty: false
     });
+    void startAutoOcr(tabToSave.id, pdfDoc);
     await loadRecentFiles();
     return true;
   };
@@ -548,8 +652,12 @@ export default function App() {
       outline: state.outline,
       searchMatches: [],
       activeSearchMatch: -1,
+      ocrPages: [],
+      ocrStatus: "checking",
+      ocrProgress: { status: "checking", message: "Checking text layer" },
       dirty: true
     });
+    void startAutoOcr(tabId, pdfDoc);
   };
 
   const undoActiveTab = async () => {
@@ -596,8 +704,12 @@ export default function App() {
       outline,
       searchMatches: [],
       activeSearchMatch: -1,
+      ocrPages: [],
+      ocrStatus: "checking",
+      ocrProgress: { status: "checking", message: "Checking text layer" },
       dirty: true
     }));
+    void startAutoOcr(activeTab.id, pdfDoc);
   };
 
   const insertPageAfterCurrent = async () => {
@@ -638,7 +750,7 @@ export default function App() {
 
   const runSearch = async () => {
     if (!activeTab) return;
-    const matches = await findTextMatches(activeTab.pdfDoc, searchText);
+    const matches = await findTextMatches(activeTab.pdfDoc, searchText, activeTab.ocrPages);
     const firstMatch = matches[0];
     updateTab(activeTab.id, {
       searchQuery: searchText,
@@ -917,6 +1029,12 @@ export default function App() {
             </span>
           </>
         )}
+        {activeTab?.ocrStatus && activeTab.ocrStatus !== "skipped" && (
+          <span className={`ocr-status ${activeTab.ocrStatus}`} title={activeTab.ocrError ?? activeTab.ocrProgress?.message ?? "OCR status"}>
+            <ScanText size={14} />
+            <span>{formatOcrStatus(activeTab)}</span>
+          </span>
+        )}
       </div>
 
       <main className="workspace">
@@ -982,6 +1100,15 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+function formatOcrStatus(tab: PdfTab) {
+  if (tab.ocrStatus === "ready") return "OCR ready";
+  if (tab.ocrStatus === "error") return "OCR failed";
+  if (tab.ocrStatus === "checking") return "Checking OCR";
+  const page = tab.ocrProgress?.page;
+  const totalPages = tab.ocrProgress?.totalPages;
+  return page && totalPages ? `OCR ${page}/${totalPages}` : "OCR running";
 }
 
 function downloadBytes(bytes: Uint8Array, name: string) {
@@ -1421,6 +1548,7 @@ function DocumentView({
           zoom={tab.zoom}
           rotation={tab.rotation}
           tool={tool}
+          ocrPage={tab.ocrPages.find((page) => page.page === pageNumber) ?? null}
           overlays={tab.overlays.filter((overlay) => overlay.page === pageNumber)}
           selectedOverlayId={selectedOverlayId}
           onPageClick={(x, y) => onPageClick(pageNumber, x, y)}
@@ -1440,6 +1568,7 @@ function PdfPage({
   zoom,
   rotation,
   tool,
+  ocrPage,
   overlays,
   selectedOverlayId,
   onPageClick,
@@ -1453,6 +1582,7 @@ function PdfPage({
   zoom: number;
   rotation: number;
   tool: ToolMode;
+  ocrPage: OcrPageText | null;
   overlays: OverlayItem[];
   selectedOverlayId: string | null;
   onPageClick: (x: number, y: number) => void;
@@ -1505,6 +1635,9 @@ function PdfPage({
           viewport
         });
         await Promise.all([renderTask.promise, textLayer.render()]);
+        if (!cancelled && rotation === 0 && textLayerRef.current) {
+          appendOcrTextLayer(textLayerRef.current, ocrPage, zoom);
+        }
       } catch (error) {
         if (!cancelled) {
           setRenderError(error instanceof Error ? error.message : "Page render failed.");
@@ -1519,7 +1652,7 @@ function PdfPage({
       renderTask?.cancel();
       textLayer?.cancel();
     };
-  }, [pdfDoc, pageNumber, rotation, zoom]);
+  }, [pdfDoc, pageNumber, rotation, zoom, ocrPage]);
 
   return (
     <div className="page-wrap">
@@ -1591,6 +1724,29 @@ function PdfPage({
       </div>
     </div>
   );
+}
+
+function appendOcrTextLayer(container: HTMLDivElement, ocrPage: OcrPageText | null, zoom: number) {
+  const nativeText = Array.from(container.querySelectorAll("span"))
+    .map((span) => span.textContent ?? "")
+    .join("")
+    .trim();
+
+  if (!ocrPage || nativeText.length > 0) return;
+
+  for (const line of ocrPage.lines) {
+    const span = document.createElement("span");
+    span.textContent = line.text;
+    span.style.left = `${line.x * zoom}px`;
+    span.style.top = `${line.y * zoom}px`;
+    span.style.width = `${line.width * zoom}px`;
+    span.style.height = `${line.height * zoom}px`;
+    span.style.fontSize = `${Math.max(6, line.height * zoom * 0.82)}px`;
+    span.style.lineHeight = `${Math.max(6, line.height * zoom)}px`;
+    span.style.display = "inline-block";
+    span.dataset.ocr = "true";
+    container.appendChild(span);
+  }
 }
 
 function OverlayBox({

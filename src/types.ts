@@ -36,6 +36,7 @@ export interface SearchMatch {
   page: number;
   index: number;
   snippet: string;
+  source: "pdf" | "ocr";
 }
 
 export interface OutlineItem {
@@ -43,6 +44,30 @@ export interface OutlineItem {
   title: string;
   page?: number;
   children: OutlineItem[];
+}
+
+export interface OcrTextLine {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface OcrPageText {
+  page: number;
+  text: string;
+  lines: OcrTextLine[];
+}
+
+export type OcrStatus = "checking" | "running" | "ready" | "skipped" | "error";
+
+export interface OcrProgress {
+  status: OcrStatus;
+  page?: number;
+  totalPages?: number;
+  progress?: number;
+  message?: string;
 }
 
 export interface TabHistoryState {
@@ -72,6 +97,10 @@ export interface PdfTab {
   searchQuery: string;
   searchMatches: SearchMatch[];
   activeSearchMatch: number;
+  ocrStatus?: OcrStatus;
+  ocrProgress?: OcrProgress;
+  ocrPages: OcrPageText[];
+  ocrError?: string;
   undoStack: TabHistoryState[];
   redoStack: TabHistoryState[];
   dirty: boolean;
