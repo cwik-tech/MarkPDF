@@ -679,10 +679,27 @@ select {
   user-select: none;
 }
 
-.overlay-layer {
+.search-highlight-layer {
   position: absolute;
   inset: 0;
   z-index: 2;
+  pointer-events: none;
+}
+
+.search-hit {
+  position: absolute;
+  border-radius: 2px;
+  background: rgba(255, 214, 64, 0.62);
+  box-shadow:
+    0 0 0 1px rgba(190, 118, 0, 0.72),
+    0 0 0 3px rgba(255, 214, 64, 0.22);
+  mix-blend-mode: multiply;
+}
+
+.overlay-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
   pointer-events: none;
 }
 

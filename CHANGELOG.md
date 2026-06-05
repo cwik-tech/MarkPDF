@@ -14,6 +14,7 @@
 - Added persisted recent files with an Open Recent menu and empty-state recent list.
 - Replaced numeric page tiles with rendered PDF page thumbnails.
 - Added document text search with match navigation and keyboard submit behavior.
+- Added a temporary active-match highlight for document search navigation.
 - Added keyboard shortcuts for page navigation, zoom, actual size, find focus, and escape-to-select.
 - Added standard PDF text-note annotations when exporting comment overlays.
 - Reduced the upper app bar height and made the left sidebar closed by default.

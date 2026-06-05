@@ -55,6 +55,7 @@ import type {
   OcrPageText,
   OverlayItem,
   PdfTab,
+  SearchMatch,
   TabHistoryState,
   ThemeMode,
   ToolMode,
@@ -1521,6 +1522,12 @@ function DocumentView({
     : tab.viewMode === "two" && tab.currentPage < tab.pageCount
       ? [tab.currentPage, tab.currentPage + 1]
       : [tab.currentPage];
+  const activeSearchMatch = tab.searchMatches[tab.activeSearchMatch] ?? null;
+  const activeSearchMatchOrdinal = activeSearchMatch
+    ? tab.searchMatches
+        .slice(0, tab.activeSearchMatch)
+        .filter((match) => match.page === activeSearchMatch.page).length
+    : -1;
 
   return (
     <div
@@ -1554,6 +1561,9 @@ function DocumentView({
           tool={tool}
           ocrPage={tab.ocrPages.find((page) => page.page === pageNumber) ?? null}
           overlays={tab.overlays.filter((overlay) => overlay.page === pageNumber)}
+          activeSearchQuery={tab.searchQuery}
+          activeSearchMatch={activeSearchMatch?.page === pageNumber ? activeSearchMatch : null}
+          activeSearchMatchOrdinal={activeSearchMatch?.page === pageNumber ? activeSearchMatchOrdinal : -1}
           selectedOverlayId={selectedOverlayId}
           onPageClick={(x, y) => onPageClick(pageNumber, x, y)}
           onSelectOverlay={onSelectOverlay}
@@ -1574,6 +1584,9 @@ function PdfPage({
   tool,
   ocrPage,
   overlays,
+  activeSearchQuery,
+  activeSearchMatch,
+  activeSearchMatchOrdinal,
   selectedOverlayId,
   onPageClick,
   onSelectOverlay,
@@ -1588,6 +1601,9 @@ function PdfPage({
   tool: ToolMode;
   ocrPage: OcrPageText | null;
   overlays: OverlayItem[];
+  activeSearchQuery: string;
+  activeSearchMatch: SearchMatch | null;
+  activeSearchMatchOrdinal: number;
   selectedOverlayId: string | null;
   onPageClick: (x: number, y: number) => void;
   onSelectOverlay: (id: string | null) => void;
@@ -1606,8 +1622,10 @@ function PdfPage({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
+  const searchHighlightLayerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [textLayerRenderKey, setTextLayerRenderKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -1642,6 +1660,9 @@ function PdfPage({
         if (!cancelled && rotation === 0 && textLayerRef.current) {
           appendOcrTextLayer(textLayerRef.current, ocrPage, zoom);
         }
+        if (!cancelled) {
+          setTextLayerRenderKey((key) => key + 1);
+        }
       } catch (error) {
         if (!cancelled) {
           setRenderError(error instanceof Error ? error.message : "Page render failed.");
@@ -1657,6 +1678,38 @@ function PdfPage({
       textLayer?.cancel();
     };
   }, [pdfDoc, pageNumber, rotation, zoom, ocrPage]);
+
+  useEffect(() => {
+    const highlightLayer = searchHighlightLayerRef.current;
+    const textLayer = textLayerRef.current;
+    highlightLayer?.replaceChildren();
+    if (!highlightLayer || !textLayer || !activeSearchMatch) return;
+
+    const rects = getSearchHighlightRects(
+      textLayer,
+      highlightLayer,
+      activeSearchQuery,
+      activeSearchMatch,
+      activeSearchMatchOrdinal
+    );
+
+    for (const rect of rects) {
+      const marker = document.createElement("div");
+      marker.className = "search-hit active";
+      marker.style.left = `${rect.left}px`;
+      marker.style.top = `${rect.top}px`;
+      marker.style.width = `${rect.width}px`;
+      marker.style.height = `${rect.height}px`;
+      highlightLayer.appendChild(marker);
+    }
+
+    const firstMarker = highlightLayer.firstElementChild;
+    if (firstMarker) {
+      window.requestAnimationFrame(() => {
+        firstMarker.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+      });
+    }
+  }, [activeSearchMatch, activeSearchMatchOrdinal, activeSearchQuery, textLayerRenderKey]);
 
   return (
     <div className="page-wrap">
@@ -1705,6 +1758,7 @@ function PdfPage({
       >
         <canvas ref={canvasRef} />
         <div className="text-layer" ref={textLayerRef} />
+        <div className="search-highlight-layer" ref={searchHighlightLayerRef} />
         {renderError && (
           <div className="render-error">
             <strong>Render failed</strong>
@@ -1728,6 +1782,119 @@ function PdfPage({
       </div>
     </div>
   );
+}
+
+function getSearchHighlightRects(
+  textLayer: HTMLDivElement,
+  highlightLayer: HTMLDivElement,
+  query: string,
+  match: SearchMatch,
+  matchOrdinal: number
+) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return [];
+
+  const searchIndex = buildTextLayerSearchIndex(textLayer);
+  const lowerText = searchIndex.text.toLowerCase();
+  let matchStart = match.index;
+
+  if (lowerText.slice(matchStart, matchStart + normalizedQuery.length) !== normalizedQuery) {
+    matchStart = findNthOccurrence(lowerText, normalizedQuery, matchOrdinal);
+  }
+
+  if (matchStart < 0) return [];
+
+  const matchEnd = matchStart + normalizedQuery.length;
+  const rangesBySpan = new Map<HTMLSpanElement, { start: number; end: number }>();
+
+  for (let index = matchStart; index < matchEnd; index += 1) {
+    const position = searchIndex.positions[index];
+    if (!position) continue;
+    const existing = rangesBySpan.get(position.span);
+    if (existing) {
+      existing.start = Math.min(existing.start, position.offset);
+      existing.end = Math.max(existing.end, position.offset + 1);
+    } else {
+      rangesBySpan.set(position.span, { start: position.offset, end: position.offset + 1 });
+    }
+  }
+
+  const layerRect = highlightLayer.getBoundingClientRect();
+  return Array.from(rangesBySpan.entries()).flatMap(([span, range]) => {
+    const textNode = Array.from(span.childNodes).find((node): node is Text => node.nodeType === Node.TEXT_NODE);
+    if (!textNode) {
+      const rect = span.getBoundingClientRect();
+      return [rectToLayerRect(rect, layerRect)];
+    }
+
+    const domRange = document.createRange();
+    domRange.setStart(textNode, Math.min(range.start, textNode.length));
+    domRange.setEnd(textNode, Math.min(range.end, textNode.length));
+    const rects = Array.from(domRange.getClientRects()).map((rect) => rectToLayerRect(rect, layerRect));
+    domRange.detach();
+    return rects;
+  });
+}
+
+function buildTextLayerSearchIndex(textLayer: HTMLDivElement) {
+  const spans = Array.from(textLayer.querySelectorAll("span"));
+  const chars: string[] = [];
+  const positions: ({ span: HTMLSpanElement; offset: number } | null)[] = [];
+
+  const appendNormalizedCharacter = (character: string, position: { span: HTMLSpanElement; offset: number } | null) => {
+    if (/\s/.test(character)) {
+      if (chars.length > 0 && chars[chars.length - 1] !== " ") {
+        chars.push(" ");
+        positions.push(position);
+      }
+      return;
+    }
+
+    chars.push(character);
+    positions.push(position);
+  };
+
+  spans.forEach((span, spanIndex) => {
+    const text = span.textContent ?? "";
+    for (let offset = 0; offset < text.length; offset += 1) {
+      appendNormalizedCharacter(text[offset], { span, offset });
+    }
+    if (spanIndex < spans.length - 1) {
+      appendNormalizedCharacter(" ", null);
+    }
+  });
+
+  while (chars[chars.length - 1] === " ") {
+    chars.pop();
+    positions.pop();
+  }
+
+  return {
+    text: chars.join(""),
+    positions
+  };
+}
+
+function findNthOccurrence(text: string, query: string, ordinal: number) {
+  let index = -1;
+  let fromIndex = 0;
+
+  for (let count = 0; count <= ordinal; count += 1) {
+    index = text.indexOf(query, fromIndex);
+    if (index < 0) return -1;
+    fromIndex = index + query.length;
+  }
+
+  return index;
+}
+
+function rectToLayerRect(rect: DOMRect, layerRect: DOMRect) {
+  return {
+    left: rect.left - layerRect.left,
+    top: rect.top - layerRect.top,
+    width: Math.max(2, rect.width),
+    height: Math.max(2, rect.height)
+  };
 }
 
 function appendOcrTextLayer(container: HTMLDivElement, ocrPage: OcrPageText | null, zoom: number) {
