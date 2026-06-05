@@ -75,6 +75,7 @@ export default function App() {
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [openMenu, setOpenMenu] = useState<"fit" | "view" | null>(null);
+  const [searchExpanded, setSearchExpanded] = useState(false);
   const [selectionAction, setSelectionAction] = useState<{
     page: number;
     x: number;
@@ -87,6 +88,7 @@ export default function App() {
   } | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const menuCloseTimerRef = useRef<number | null>(null);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? null,
@@ -97,6 +99,28 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("open-pdf-reader-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    return () => {
+      if (menuCloseTimerRef.current !== null) window.clearTimeout(menuCloseTimerRef.current);
+    };
+  }, []);
+
+  const openToolbarMenu = (menu: "fit" | "view" | null) => {
+    if (menuCloseTimerRef.current !== null) {
+      window.clearTimeout(menuCloseTimerRef.current);
+      menuCloseTimerRef.current = null;
+    }
+    setOpenMenu(menu);
+  };
+
+  const scheduleToolbarMenuClose = () => {
+    if (menuCloseTimerRef.current !== null) window.clearTimeout(menuCloseTimerRef.current);
+    menuCloseTimerRef.current = window.setTimeout(() => {
+      setOpenMenu(null);
+      menuCloseTimerRef.current = null;
+    }, 500);
+  };
 
   const updateTab = useCallback((tabId: string, patch: Partial<PdfTab> | ((tab: PdfTab) => Partial<PdfTab>)) => {
     setTabs((current) =>
@@ -658,7 +682,8 @@ export default function App() {
 
       if (shortcut && event.key.toLowerCase() === "f") {
         event.preventDefault();
-        searchInputRef.current?.focus();
+        setSearchExpanded(true);
+        window.requestAnimationFrame(() => searchInputRef.current?.focus());
         return;
       }
 
@@ -820,32 +845,44 @@ export default function App() {
           <FitMenu
             activeTab={activeTab}
             openMenu={openMenu}
-            onOpenMenu={setOpenMenu}
+            onOpenMenu={openToolbarMenu}
+            onCloseMenu={scheduleToolbarMenuClose}
             onFit={(mode) => {
               void applyFitMode(mode);
-              setOpenMenu(null);
+              openToolbarMenu(null);
             }}
           />
           <ViewMenu
             activeTab={activeTab}
             onChange={(patch) => {
               if (activeTab) updateTab(activeTab.id, patch);
-              setOpenMenu(null);
+              openToolbarMenu(null);
             }}
             isFullScreen={isFullScreen}
             onToggleFullScreen={() => {
               void toggleFullScreen();
-              setOpenMenu(null);
+              openToolbarMenu(null);
             }}
             openMenu={openMenu}
-            onOpenMenu={setOpenMenu}
+            onOpenMenu={openToolbarMenu}
+            onCloseMenu={scheduleToolbarMenuClose}
           />
         </div>
         <div className="toolbar-spacer" />
         <div
-          className={`search-box ${searchText || activeTab?.searchQuery ? "active" : ""}`}
-          onMouseEnter={() => searchInputRef.current?.focus()}
-          onClick={() => searchInputRef.current?.focus()}
+          className={`search-box ${searchExpanded ? "active" : ""}`}
+          onMouseEnter={() => {
+            setSearchExpanded(true);
+            searchInputRef.current?.focus();
+          }}
+          onMouseLeave={() => {
+            setSearchExpanded(false);
+            searchInputRef.current?.blur();
+          }}
+          onClick={() => {
+            setSearchExpanded(true);
+            searchInputRef.current?.focus();
+          }}
         >
           <Search size={15} />
           <input
@@ -1110,11 +1147,13 @@ function FitMenu({
   activeTab,
   openMenu,
   onOpenMenu,
+  onCloseMenu,
   onFit
 }: {
   activeTab: PdfTab | null;
   openMenu: "fit" | "view" | null;
   onOpenMenu: (menu: "fit" | "view" | null) => void;
+  onCloseMenu: () => void;
   onFit: (fitMode: FitMode) => void;
 }) {
   const activeMode = activeTab?.fitMode ?? "page";
@@ -1133,7 +1172,7 @@ function FitMenu({
     <div
       className={`menu-button ${openMenu === "fit" ? "open" : ""}`}
       onMouseEnter={() => activeTab && onOpenMenu("fit")}
-      onMouseLeave={() => onOpenMenu(null)}
+      onMouseLeave={onCloseMenu}
     >
       <button
         className="icon-button menu-trigger"
@@ -1167,7 +1206,8 @@ function ViewMenu({
   isFullScreen,
   onToggleFullScreen,
   openMenu,
-  onOpenMenu
+  onOpenMenu,
+  onCloseMenu
 }: {
   activeTab: PdfTab | null;
   onChange: (patch: Partial<PdfTab>) => void;
@@ -1175,6 +1215,7 @@ function ViewMenu({
   onToggleFullScreen: () => void;
   openMenu: "fit" | "view" | null;
   onOpenMenu: (menu: "fit" | "view" | null) => void;
+  onCloseMenu: () => void;
 }) {
   const activeViewIcon = activeTab?.viewMode === "two" ? <Columns2 size={18} /> : <FileText size={18} />;
 
@@ -1182,7 +1223,7 @@ function ViewMenu({
     <div
       className={`menu-button ${openMenu === "view" ? "open" : ""}`}
       onMouseEnter={() => activeTab && onOpenMenu("view")}
-      onMouseLeave={() => onOpenMenu(null)}
+      onMouseLeave={onCloseMenu}
     >
       <button
         className="icon-button menu-trigger"

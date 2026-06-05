@@ -90,7 +90,7 @@ button {
   min-width: 0;
   flex: 1;
   overflow: auto hidden;
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
 }
 
 .tab {
@@ -107,6 +107,7 @@ button {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 .tab.active {

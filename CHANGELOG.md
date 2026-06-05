@@ -29,3 +29,4 @@
 - Tightened PDF text copy overlap detection and balanced the centered toolbar spacing.
 - Restored fit/view dropdown hover behavior, hid scrollbar chrome in non-scrolling views, and made empty toolbar/header space draggable.
 - Removed comment/highlight from the main toolbar and fixed intermittent toolbar/search clicks caused by draggable chrome.
+- Added delayed hover closing for toolbar dropdowns, collapsed search on mouse-out, and restored empty tab-strip window dragging.
