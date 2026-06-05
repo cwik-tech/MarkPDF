@@ -35,7 +35,7 @@ import {
   Type,
   X
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { TextLayer } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
@@ -69,6 +69,29 @@ import type {
 
 const defaultTextColor = "#1f2937";
 const supportedImageExtensions = new Set(["gif", "jpeg", "jpg", "png", "webp"]);
+const signatureStorageKey = "open-pdf-reader-signatures";
+
+type SignatureAssetKind = "typed-signature" | "typed-initials" | "date" | "drawn" | "image";
+
+interface SignatureAsset {
+  id: string;
+  kind: SignatureAssetKind;
+  label: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  createdAt: string;
+  sourceText?: string;
+  fontFamily?: string;
+}
+
+const signatureFonts = [
+  { name: "Classic", family: '"Snell Roundhand", "Brush Script MT", cursive' },
+  { name: "Script", family: '"Savoye LET", "Snell Roundhand", cursive' },
+  { name: "Flourish", family: '"Zapfino", "Snell Roundhand", cursive' },
+  { name: "Ink", family: '"SignPainter", "Brush Script MT", cursive' },
+  { name: "Handwritten", family: '"Apple Chancery", "Bradley Hand", cursive' }
+];
 
 function newId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -95,6 +118,125 @@ function mimeTypeFromImageName(name: string) {
   return "application/octet-stream";
 }
 
+function loadSavedSignatureAssets() {
+  try {
+    const stored = localStorage.getItem(signatureStorageKey);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (asset): asset is SignatureAsset =>
+        typeof asset?.id === "string" &&
+        typeof asset?.label === "string" &&
+        typeof asset?.dataUrl === "string" &&
+        typeof asset?.width === "number" &&
+        typeof asset?.height === "number"
+    );
+  } catch {
+    return [];
+  }
+}
+
+function initialsFromName(value: string) {
+  return value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((part) => part[0]?.toLocaleUpperCase() ?? "")
+    .join("");
+}
+
+function todaySignatureDate() {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+}
+
+function appendSignedSuffix(pathOrName: string) {
+  return pathOrName.replace(/(\.pdf)?$/i, " - signed.pdf");
+}
+
+function signedDefaultPath(tab: PdfTab) {
+  return appendSignedSuffix(tab.path ?? tab.name);
+}
+
+function renderSignatureText(text: string, fontFamily: string, fontSize: number, padding = 18) {
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  const dpr = Math.max(2, window.devicePixelRatio || 1);
+  context.font = `${fontSize}px ${fontFamily}`;
+  const measured = context.measureText(text);
+  const cssWidth = Math.max(96, Math.ceil(measured.width + padding * 2));
+  const cssHeight = Math.max(42, Math.ceil(fontSize * 1.55 + padding));
+  canvas.width = cssWidth * dpr;
+  canvas.height = cssHeight * dpr;
+  canvas.style.width = `${cssWidth}px`;
+  canvas.style.height = `${cssHeight}px`;
+  context.scale(dpr, dpr);
+  context.clearRect(0, 0, cssWidth, cssHeight);
+  context.fillStyle = "#111827";
+  context.font = `${fontSize}px ${fontFamily}`;
+  context.textBaseline = "middle";
+  context.fillText(text, padding, cssHeight / 2);
+  return {
+    dataUrl: canvas.toDataURL("image/png"),
+    width: cssWidth,
+    height: cssHeight
+  };
+}
+
+function createTypedSignatureAssets(name: string, fontFamily: string) {
+  const cleanedName = name.trim() || "Signature";
+  const initials = initialsFromName(cleanedName) || cleanedName.slice(0, 2).toLocaleUpperCase();
+  const dateText = todaySignatureDate();
+  const createdAt = new Date().toISOString();
+  const signatureImage = renderSignatureText(cleanedName, fontFamily, 42, 20);
+  const initialsImage = renderSignatureText(initials, fontFamily, 42, 20);
+  const dateImage = renderSignatureText(dateText, '"Inter", "Helvetica Neue", Arial, sans-serif', 21, 12);
+  const assets: SignatureAsset[] = [];
+
+  if (signatureImage) {
+    assets.push({
+      id: newId("signature-typed"),
+      kind: "typed-signature",
+      label: cleanedName,
+      sourceText: cleanedName,
+      fontFamily,
+      createdAt,
+      ...signatureImage
+    });
+  }
+
+  if (initialsImage) {
+    assets.push({
+      id: newId("signature-initials"),
+      kind: "typed-initials",
+      label: `${initials} initials`,
+      sourceText: initials,
+      fontFamily,
+      createdAt,
+      ...initialsImage
+    });
+  }
+
+  if (dateImage) {
+    assets.push({
+      id: newId("signature-date"),
+      kind: "date",
+      label: dateText,
+      sourceText: dateText,
+      createdAt,
+      ...dateImage
+    });
+  }
+
+  return assets;
+}
+
 function getInitialTheme(): ThemeMode {
   const stored = localStorage.getItem("open-pdf-reader-theme");
   if (stored === "light" || stored === "dark") return stored;
@@ -108,8 +250,15 @@ export default function App() {
   const [tool, setTool] = useState<ToolMode>("select");
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [sidebar, setSidebar] = useState<"pages" | "outline" | "comments" | "forms" | "signature" | null>(null);
-  const [signatureText, setSignatureText] = useState("Signature");
-  const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
+  const [signatureText, setSignatureText] = useState("");
+  const [signatureFont, setSignatureFont] = useState(signatureFonts[0].family);
+  const [savedSignatures, setSavedSignatures] = useState<SignatureAsset[]>(loadSavedSignatureAssets);
+  const [selectedSignatureId, setSelectedSignatureId] = useState<string | null>(null);
+  const [drawingSignatureOpen, setDrawingSignatureOpen] = useState(false);
+  const [signatureSavePrompt, setSignatureSavePrompt] = useState<{
+    name: string;
+    resolve: (value: "editable" | "flattened" | "cancel") => void;
+  } | null>(null);
   const [searchText, setSearchText] = useState("");
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -136,6 +285,21 @@ export default function App() {
     () => tabs.find((tab) => tab.id === activeTabId) ?? null,
     [activeTabId, tabs]
   );
+  const selectedSignature = useMemo(
+    () => savedSignatures.find((asset) => asset.id === selectedSignatureId) ?? savedSignatures[0] ?? null,
+    [savedSignatures, selectedSignatureId]
+  );
+
+  useEffect(() => {
+    localStorage.setItem(signatureStorageKey, JSON.stringify(savedSignatures));
+    if (!savedSignatures.length) {
+      setSelectedSignatureId(null);
+      return;
+    }
+    if (!selectedSignatureId || !savedSignatures.some((asset) => asset.id === selectedSignatureId)) {
+      setSelectedSignatureId(savedSignatures[0].id);
+    }
+  }, [savedSignatures, selectedSignatureId]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -387,6 +551,15 @@ export default function App() {
     setRecentFiles(await window.pdfReader.listRecentFiles());
   }, []);
 
+  const removeRecentFile = useCallback(async (path: string) => {
+    if (!window.pdfReader) {
+      setRecentFiles((current) => current.filter((item) => item !== path));
+      return;
+    }
+
+    setRecentFiles(await window.pdfReader.removeRecentFile(path));
+  }, []);
+
   useEffect(() => {
     void loadRecentFiles();
   }, [loadRecentFiles]);
@@ -465,7 +638,7 @@ export default function App() {
 
     const action = await requestUnsavedAction(tab);
     if (action === "cancel") return;
-    if (action === "save" && !(await saveTab(tab, false, false))) {
+    if (action === "save" && !(await saveTabWithSignaturePrompt(tab, false, false))) {
       return;
     }
 
@@ -499,21 +672,26 @@ export default function App() {
     updateTab(activeTab.id, { fitMode, zoom: Number(zoom.toFixed(2)) });
   };
 
-  const saveTab = async (tabToSave: PdfTab, saveAs = false, flattenForms = false) => {
+  const saveTab = async (
+    tabToSave: PdfTab,
+    saveAs = false,
+    flattenForms = false,
+    options: { targetPath?: string; defaultPath?: string } = {}
+  ) => {
     const bytes = await exportPdfBytes(tabToSave.bytes, tabToSave.overlays, tabToSave.formFields, flattenForms, {
       bakeOverlays: flattenForms,
       persistEditable: !flattenForms,
       writeStandardAnnotations: !flattenForms
     });
-    let targetPath = tabToSave.path;
+    let targetPath = options.targetPath ?? tabToSave.path;
 
     if (!window.pdfReader) {
-      downloadBytes(bytes, tabToSave.name);
+      downloadBytes(bytes, options.defaultPath ?? tabToSave.name);
       return true;
     }
 
     if (!targetPath || saveAs) {
-      const selectedPath = await window.pdfReader.savePdfDialog(tabToSave.name);
+      const selectedPath = await window.pdfReader.savePdfDialog(options.defaultPath ?? tabToSave.name);
       if (!selectedPath) return false;
       targetPath = selectedPath;
     }
@@ -548,9 +726,26 @@ export default function App() {
     return true;
   };
 
+  const requestSignatureSaveMode = async (tabToSave: PdfTab) => {
+    if (!tabToSave.overlays.some((overlay) => overlay.kind === "signature")) return "editable" as const;
+    return new Promise<"editable" | "flattened" | "cancel">((resolve) => {
+      setSignatureSavePrompt({ name: tabToSave.name, resolve });
+    });
+  };
+
+  const saveTabWithSignaturePrompt = async (tabToSave: PdfTab, saveAs = false, flattenForms = false) => {
+    const signedPath = signedDefaultPath(tabToSave);
+    const signedSaveOptions = { targetPath: tabToSave.path ? signedPath : undefined, defaultPath: signedPath };
+    if (flattenForms) return saveTab(tabToSave, false, true, signedSaveOptions);
+    const mode = await requestSignatureSaveMode(tabToSave);
+    if (mode === "cancel") return false;
+    if (mode === "flattened") return saveTab(tabToSave, false, true, signedSaveOptions);
+    return saveTab(tabToSave, saveAs, false);
+  };
+
   const saveActiveTab = async (saveAs = false, flattenForms = false) => {
     if (!activeTab) return false;
-    return saveTab(activeTab, saveAs, flattenForms);
+    return saveTabWithSignaturePrompt(activeTab, saveAs, flattenForms);
   };
 
   useEffect(() => {
@@ -560,7 +755,7 @@ export default function App() {
       for (const tab of tabs.filter((item) => item.dirty)) {
         const action = await requestUnsavedAction(tab);
         if (action === "cancel") return;
-        if (action === "save" && !(await saveTab(tab, false, false))) return;
+        if (action === "save" && !(await saveTabWithSignaturePrompt(tab, false, false))) return;
       }
 
       await window.pdfReader?.closeWindowAfterConfirm();
@@ -673,17 +868,24 @@ export default function App() {
     }
 
     if (tool === "signature") {
+      if (!selectedSignature) {
+        window.alert("Create or select a signature first.");
+        setSidebar("signature");
+        return;
+      }
+      const targetWidth = Math.min(260, Math.max(70, selectedSignature.width));
+      const targetHeight = Math.max(24, Math.round((selectedSignature.height / selectedSignature.width) * targetWidth));
       overlay = {
         id: newId("signature"),
         kind: "signature",
         page,
         x,
         y,
-        width: 220,
-        height: 80,
-        text: signatureText,
+        width: targetWidth,
+        height: targetHeight,
+        text: selectedSignature.label,
         fontSize: 28,
-        dataUrl: signatureDataUrl ?? undefined
+        dataUrl: selectedSignature.dataUrl
       };
     }
 
@@ -1257,7 +1459,9 @@ export default function App() {
             tab={activeTab}
             selectedOverlay={selectedOverlay}
             signatureText={signatureText}
-            signatureDataUrl={signatureDataUrl}
+            signatureFont={signatureFont}
+            savedSignatures={savedSignatures}
+            selectedSignatureId={selectedSignature?.id ?? null}
             recentFiles={recentFiles}
             onSelectPage={(page) => activeTab && updateTab(activeTab.id, { currentPage: page })}
             onOpenRecent={(path) => void openFilePaths([path])}
@@ -1269,7 +1473,30 @@ export default function App() {
             onMovePage={(direction) => void moveCurrentPage(direction)}
             onReorderPage={(fromPage, toPage) => void movePageTo(fromPage, toPage)}
             onSignatureText={setSignatureText}
-            onSignatureDataUrl={setSignatureDataUrl}
+            onSignatureFont={setSignatureFont}
+            onSaveTypedSignature={() => {
+              const nextAssets = createTypedSignatureAssets(signatureText, signatureFont);
+              if (!nextAssets.length) return;
+              setSavedSignatures((current) => [...nextAssets, ...current]);
+              setSelectedSignatureId(nextAssets[0].id);
+              setSelectedOverlayId(null);
+              setTool("signature");
+            }}
+            onSelectSignature={(id) => {
+              setSelectedSignatureId(id);
+              setSelectedOverlayId(null);
+              setTool("signature");
+            }}
+            onDeleteSignature={(id) => {
+              setSavedSignatures((current) => current.filter((asset) => asset.id !== id));
+            }}
+            onSaveSignatureAsset={(asset) => {
+              setSavedSignatures((current) => [asset, ...current]);
+              setSelectedSignatureId(asset.id);
+              setSelectedOverlayId(null);
+              setTool("signature");
+            }}
+            onOpenDrawingSignature={() => setDrawingSignatureOpen(true)}
             onModeChange={setSidebar}
           />
         )}
@@ -1293,7 +1520,12 @@ export default function App() {
 
         <section className="document-stage" ref={workspaceRef}>
           {!activeTab ? (
-            <EmptyState onOpen={openFromDialog} recentFiles={recentFiles} onOpenRecent={(path) => void openFilePaths([path])} />
+            <EmptyState
+              onOpen={openFromDialog}
+              recentFiles={recentFiles}
+              onOpenRecent={(path) => void openFilePaths([path])}
+              onRemoveRecent={(path) => void removeRecentFile(path)}
+            />
           ) : (
             <DocumentView
               tab={activeTab}
@@ -1312,6 +1544,36 @@ export default function App() {
           )}
         </section>
       </main>
+
+      {drawingSignatureOpen && (
+        <DrawingSignatureModal
+          onCancel={() => setDrawingSignatureOpen(false)}
+          onSave={(dataUrl, width, height) => {
+            const asset: SignatureAsset = {
+              id: newId("signature-drawn"),
+              kind: "drawn",
+              label: "Drawn signature",
+              dataUrl,
+              width,
+              height,
+              createdAt: new Date().toISOString()
+            };
+            setSavedSignatures((current) => [asset, ...current]);
+            setSelectedSignatureId(asset.id);
+            setDrawingSignatureOpen(false);
+          }}
+        />
+      )}
+
+      {signatureSavePrompt && (
+        <SignatureSavePrompt
+          name={signatureSavePrompt.name}
+          onChoose={(choice) => {
+            signatureSavePrompt.resolve(choice);
+            setSignatureSavePrompt(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1615,11 +1877,13 @@ function MenuItem({
 function EmptyState({
   onOpen,
   recentFiles,
-  onOpenRecent
+  onOpenRecent,
+  onRemoveRecent
 }: {
   onOpen: () => void;
   recentFiles: string[];
   onOpenRecent: (path: string) => void;
+  onRemoveRecent: (path: string) => void;
 }) {
   return (
     <div className="empty-state">
@@ -1637,9 +1901,19 @@ function EmptyState({
         <div className="recent-empty">
           <h2>Recent</h2>
           {recentFiles.slice(0, 5).map((path) => (
-            <button key={path} onClick={() => onOpenRecent(path)} title={path}>
-              {fileNameFromPath(path)}
-            </button>
+            <div className="recent-empty-row" key={path}>
+              <button className="recent-empty-open" onClick={() => onOpenRecent(path)} title={path}>
+                {fileNameFromPath(path)}
+              </button>
+              <button
+                className="recent-empty-remove"
+                onClick={() => onRemoveRecent(path)}
+                title="Remove from recent files"
+                aria-label={`Remove ${fileNameFromPath(path)} from recent files`}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -2380,7 +2654,9 @@ function Sidebar({
   tab,
   selectedOverlay,
   signatureText,
-  signatureDataUrl,
+  signatureFont,
+  savedSignatures,
+  selectedSignatureId,
   recentFiles,
   onSelectPage,
   onOpenRecent,
@@ -2392,14 +2668,21 @@ function Sidebar({
   onMovePage,
   onReorderPage,
   onSignatureText,
-  onSignatureDataUrl,
+  onSignatureFont,
+  onSaveTypedSignature,
+  onSelectSignature,
+  onDeleteSignature,
+  onSaveSignatureAsset,
+  onOpenDrawingSignature,
   onModeChange
 }: {
   mode: "pages" | "outline" | "comments" | "forms" | "signature";
   tab: PdfTab | null;
   selectedOverlay: OverlayItem | null;
   signatureText: string;
-  signatureDataUrl: string | null;
+  signatureFont: string;
+  savedSignatures: SignatureAsset[];
+  selectedSignatureId: string | null;
   recentFiles: string[];
   onSelectPage: (page: number) => void;
   onOpenRecent: (path: string) => void;
@@ -2411,9 +2694,16 @@ function Sidebar({
   onMovePage: (direction: -1 | 1) => void;
   onReorderPage: (fromPage: number, toPage: number) => void;
   onSignatureText: (value: string) => void;
-  onSignatureDataUrl: (value: string | null) => void;
+  onSignatureFont: (value: string) => void;
+  onSaveTypedSignature: () => void;
+  onSelectSignature: (id: string) => void;
+  onDeleteSignature: (id: string) => void;
+  onSaveSignatureAsset: (asset: SignatureAsset) => void;
+  onOpenDrawingSignature: () => void;
   onModeChange: (mode: "pages" | "outline" | "comments" | "forms" | "signature" | null) => void;
 }) {
+  const typedInitials = initialsFromName(signatureText) || "AB";
+
   return (
     <aside className="sidebar">
       {(mode === "pages" || mode === "outline") && (
@@ -2567,31 +2857,102 @@ function Sidebar({
       {mode === "signature" && (
         <>
           <h2>Signature</h2>
-          <label className="field-row">
-            <span>Typed signature</span>
-            <input value={signatureText} onChange={(event) => onSignatureText(event.target.value)} />
-          </label>
-          <SignaturePad onChange={onSignatureDataUrl} />
-          <label className="upload-row">
-            Upload image
-            <input
-              type="file"
-              accept="image/png,image/jpeg"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = () => onSignatureDataUrl(String(reader.result));
-                reader.readAsDataURL(file);
-              }}
-            />
-          </label>
-          {signatureDataUrl && (
-            <button className="secondary-button" onClick={() => onSignatureDataUrl(null)}>
-              Clear image
+          <div className="signature-section">
+            <label className="field-row">
+              <span>Name and surname</span>
+              <input
+                placeholder="Type your name"
+                value={signatureText}
+                onChange={(event) => onSignatureText(event.target.value)}
+              />
+            </label>
+            <label className="field-row">
+              <span>Style</span>
+              <select value={signatureFont} onChange={(event) => onSignatureFont(event.target.value)}>
+                {signatureFonts.map((font) => (
+                  <option key={font.family} value={font.family}>
+                    {font.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="signature-preview-grid">
+              <div className="signature-preview">
+                <span style={{ fontFamily: signatureFont }}>{signatureText.trim() || "Signature"}</span>
+              </div>
+              <div className="signature-preview small">
+                <span style={{ fontFamily: signatureFont }}>{typedInitials}</span>
+              </div>
+            </div>
+            <button className="primary-button" onClick={onSaveTypedSignature}>
+              <Check size={15} />
+              Save typed set
             </button>
-          )}
-          <p>Choose the signature tool, then click a page to place it.</p>
+          </div>
+
+          <div className="signature-section">
+            <button className="secondary-button" onClick={onOpenDrawingSignature}>
+              <PenLine size={15} />
+              Draw signature
+            </button>
+            <label className="signature-upload">
+              <FileText size={15} />
+              Upload image
+              <input
+                type="file"
+                accept="image/png,image/jpeg"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  const input = event.currentTarget;
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    onSaveSignatureAsset({
+                      id: newId("signature-image"),
+                      kind: "image",
+                      label: file.name,
+                      dataUrl: String(reader.result),
+                      width: 220,
+                      height: 80,
+                      createdAt: new Date().toISOString()
+                    });
+                    input.value = "";
+                  };
+                  reader.readAsDataURL(file);
+                }}
+              />
+            </label>
+          </div>
+
+          <div className="signature-section">
+            <h3>Saved</h3>
+            {savedSignatures.length ? (
+              <div className="signature-assets">
+                {savedSignatures.map((asset) => (
+                  <div
+                    key={asset.id}
+                    className={`signature-asset ${asset.id === selectedSignatureId ? "active" : ""}`}
+                  >
+                    <button className="signature-asset-select" onClick={() => onSelectSignature(asset.id)} title={asset.label}>
+                      <img src={asset.dataUrl} alt={asset.label} />
+                      <span>{asset.kind === "typed-initials" ? "Initials" : asset.kind === "date" ? "Date" : asset.label}</span>
+                    </button>
+                    <button
+                      className="signature-asset-delete"
+                      title="Delete saved signature"
+                      onClick={() => onDeleteSignature(asset.id)}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p>No saved signatures.</p>
+            )}
+          </div>
+
+          <p>Select a saved signature, initials, or date, then click a page to place it.</p>
         </>
       )}
 
@@ -2638,71 +2999,138 @@ function Sidebar({
   );
 }
 
-function SignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void }) {
+function DrawingSignatureModal({
+  onSave,
+  onCancel
+}: {
+  onSave: (dataUrl: string, width: number, height: number) => void;
+  onCancel: () => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
+  const hasDrawingRef = useRef(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
     context.strokeStyle = "#111827";
-    context.lineWidth = 2.4;
+    context.lineWidth = 3;
     context.lineCap = "round";
+    context.lineJoin = "round";
   }, []);
 
-  const update = () => {
+  const clear = () => {
     const canvas = canvasRef.current;
-    if (canvas) onChange(canvas.toDataURL("image/png"));
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = "#111827";
+    context.lineWidth = 3;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    hasDrawingRef.current = false;
+  };
+
+  const pointForEvent = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * event.currentTarget.width,
+      y: ((event.clientY - rect.top) / rect.height) * event.currentTarget.height
+    };
   };
 
   return (
-    <div className="signature-pad">
-      <canvas
-        ref={canvasRef}
-        width={420}
-        height={160}
-        onPointerDown={(event) => {
-          const context = event.currentTarget.getContext("2d");
-          if (!context) return;
-          drawingRef.current = true;
-          const rect = event.currentTarget.getBoundingClientRect();
-          context.beginPath();
-          context.moveTo(event.clientX - rect.left, event.clientY - rect.top);
-          event.currentTarget.setPointerCapture(event.pointerId);
-        }}
-        onPointerMove={(event) => {
-          if (!drawingRef.current) return;
-          const context = event.currentTarget.getContext("2d");
-          if (!context) return;
-          const rect = event.currentTarget.getBoundingClientRect();
-          context.lineTo(event.clientX - rect.left, event.clientY - rect.top);
-          context.stroke();
-          update();
-        }}
-        onPointerUp={() => {
-          drawingRef.current = false;
-          update();
-        }}
-      />
-      <button
-        className="secondary-button"
-        onClick={() => {
-          const canvas = canvasRef.current;
-          const context = canvas?.getContext("2d");
-          if (!canvas || !context) return;
-          context.fillStyle = "#ffffff";
-          context.fillRect(0, 0, canvas.width, canvas.height);
-          context.strokeStyle = "#111827";
-          context.lineWidth = 2.4;
-          context.lineCap = "round";
-          onChange(null);
-        }}
-      >
-        Clear drawing
-      </button>
+    <div className="modal-backdrop" role="presentation">
+      <div className="signature-draw-modal" role="dialog" aria-modal="true" aria-labelledby="draw-signature-title">
+        <div className="modal-header">
+          <h2 id="draw-signature-title">Draw signature</h2>
+          <button className="icon-button" title="Close" onClick={onCancel}>
+            <X size={16} />
+          </button>
+        </div>
+        <canvas
+          ref={canvasRef}
+          width={960}
+          height={360}
+          onPointerDown={(event) => {
+            const context = event.currentTarget.getContext("2d");
+            if (!context) return;
+            drawingRef.current = true;
+            hasDrawingRef.current = true;
+            const point = pointForEvent(event);
+            context.beginPath();
+            context.moveTo(point.x, point.y);
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (!drawingRef.current) return;
+            const context = event.currentTarget.getContext("2d");
+            if (!context) return;
+            const point = pointForEvent(event);
+            context.lineTo(point.x, point.y);
+            context.stroke();
+          }}
+          onPointerUp={() => {
+            drawingRef.current = false;
+          }}
+          onPointerCancel={() => {
+            drawingRef.current = false;
+          }}
+        />
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={clear}>
+            Clear
+          </button>
+          <button className="secondary-button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            className="primary-button"
+            onClick={() => {
+              const canvas = canvasRef.current;
+              if (!canvas || !hasDrawingRef.current) return;
+              onSave(canvas.toDataURL("image/png"), 260, 98);
+            }}
+          >
+            <Check size={15} />
+            Save drawing
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SignatureSavePrompt({
+  name,
+  onChoose
+}: {
+  name: string;
+  onChoose: (choice: "editable" | "flattened" | "cancel") => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="save-signature-modal" role="dialog" aria-modal="true" aria-labelledby="save-signature-title">
+        <div className="modal-header">
+          <h2 id="save-signature-title">Save signed PDF</h2>
+          <button className="icon-button" title="Cancel" onClick={() => onChoose("cancel")}>
+            <X size={16} />
+          </button>
+        </div>
+        <p>
+          {name} contains placed signatures. Keep them editable in Open PDF Reader, or save a flattened copy where
+          they cannot be moved.
+        </p>
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={() => onChoose("editable")}>
+            Save editable
+          </button>
+          <button className="primary-button" onClick={() => onChoose("flattened")}>
+            Save flattened copy
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

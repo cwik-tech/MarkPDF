@@ -2,8 +2,11 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Changed the typed signature preview to stack signature and initials vertically and removed the date preview.
 - Added image-to-PDF import for Finder/Open With, file dialog, and drag/drop image batches, with generated PDFs opened as unsaved tabs.
 - Added drag-and-drop page reordering in the Pages sidebar.
+- Rebuilt visual signing with saved typed signatures, generated initials and date stamps, image upload, large drawing modal, Acrobat-style placement, and editable-vs-flattened save prompts.
+- Fixed signature placement from saved items, switched all typed signature choices to written-style fonts, persisted editable signatures, and saved flattened signed copies with a ` - signed.pdf` suffix.
 - Added conditional automatic OCR for mostly textless PDFs, with toolbar progress and OCR-backed search/text-selection fallback.
 - Created the Electron, React, and TypeScript desktop app scaffold.
 - Added tabbed PDF opening from dialog, drag and drop, and OS file-open handoff.
@@ -39,3 +42,6 @@
 - Added delayed hover closing for toolbar dropdowns, collapsed search on mouse-out, and restored empty tab-strip window dragging.
 - Added macOS and Windows Electron app icons generated from the bundled app icon.
 - Made normal PDF saves write comments and highlights as standard Acrobat-compatible PDF annotations while retaining app-editable overlay metadata.
+- Forced the macOS Dock icon to use the bundled app icon at runtime.
+- Removed the icon's outer white background and enlarged the mark for Dock display.
+- Added hover-only controls for removing individual files from the empty-state recent list without deleting the files.
