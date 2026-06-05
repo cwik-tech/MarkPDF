@@ -1,10 +1,12 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
+import type { MessageBoxOptions } from "electron";
 import Store from "electron-store";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 let pendingOpenPath: string | null = null;
+const confirmedCloseWindows = new WeakSet<BrowserWindow>();
 const store = new Store<{ recentFiles: string[] }>({
   defaults: {
     recentFiles: []
@@ -31,6 +33,16 @@ const createWindow = async (filePath?: string) => {
       nodeIntegration: false,
       sandbox: false
     }
+  });
+
+  window.on("close", (event) => {
+    if (confirmedCloseWindows.has(window)) {
+      confirmedCloseWindows.delete(window);
+      return;
+    }
+
+    event.preventDefault();
+    window.webContents.send("window:request-close");
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -109,6 +121,23 @@ ipcMain.handle("dialog:save-pdf", async (_event, defaultPath?: string) => {
   return result.filePath;
 });
 
+ipcMain.handle("dialog:confirm-unsaved", async (event, documentName?: string) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  const options: MessageBoxOptions = {
+    type: "warning",
+    title: "Unsaved changes",
+    message: documentName ? `Save changes to "${documentName}" before closing?` : "Save changes before closing?",
+    detail: "Your changes will be lost if you do not save them.",
+    buttons: ["Save", "Discard", "Cancel"],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true
+  };
+  const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+
+  return (["save", "discard", "cancel"] as const)[result.response] ?? "cancel";
+});
+
 ipcMain.handle("file:read-pdf", async (_event, filePath: string) => {
   const data = await readFile(filePath);
   addRecentFile(filePath);
@@ -138,6 +167,13 @@ ipcMain.handle("window:set-full-screen", async (event, enabled: boolean) => {
 ipcMain.handle("window:is-full-screen", async (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   return window?.isFullScreen() ?? false;
+});
+
+ipcMain.handle("window:close-after-confirm", async (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return;
+  confirmedCloseWindows.add(window);
+  window.close();
 });
 
 ipcMain.handle("shell:show-item", async (_event, filePath: string) => {

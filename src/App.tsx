@@ -192,17 +192,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!tabs.some((tab) => tab.dirty)) return;
-      event.preventDefault();
-      event.returnValue = "";
-    };
-
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [tabs]);
-
-  useEffect(() => {
     if (!window.pdfReader) return undefined;
     return window.pdfReader.onOpenFile((filePath) => void openPdfPaths([filePath]));
   }, [openPdfPaths]);
@@ -234,11 +223,19 @@ export default function App() {
     }
   };
 
-  const closeTab = (tabId: string) => {
+  const requestUnsavedAction = async (tab: PdfTab) => {
+    if (!tab.dirty) return "discard" as const;
+    if (window.pdfReader?.confirmUnsaved) return window.pdfReader.confirmUnsaved(tab.name);
+    return window.confirm(`Close "${tab.name}" without saving changes?`) ? "discard" : "cancel";
+  };
+
+  const closeTab = async (tabId: string) => {
     const tab = tabs.find((item) => item.id === tabId);
     if (!tab) return;
 
-    if (tab.dirty && !window.confirm(`Close "${tab.name}" without saving changes?`)) {
+    const action = await requestUnsavedAction(tab);
+    if (action === "cancel") return;
+    if (action === "save" && !(await saveTab(tab, false, false))) {
       return;
     }
 
@@ -270,22 +267,21 @@ export default function App() {
     updateTab(activeTab.id, { fitMode, zoom: Number(zoom.toFixed(2)) });
   };
 
-  const saveActiveTab = async (saveAs = false, flattenForms = false) => {
-    if (!activeTab) return;
-    const bytes = await exportPdfBytes(activeTab.bytes, activeTab.overlays, activeTab.formFields, flattenForms, {
+  const saveTab = async (tabToSave: PdfTab, saveAs = false, flattenForms = false) => {
+    const bytes = await exportPdfBytes(tabToSave.bytes, tabToSave.overlays, tabToSave.formFields, flattenForms, {
       bakeOverlays: flattenForms,
       persistEditable: !flattenForms
     });
-    let targetPath = activeTab.path;
+    let targetPath = tabToSave.path;
 
     if (!window.pdfReader) {
-      downloadBytes(bytes, activeTab.name);
-      return;
+      downloadBytes(bytes, tabToSave.name);
+      return true;
     }
 
     if (!targetPath || saveAs) {
-      const selectedPath = await window.pdfReader.savePdfDialog(activeTab.name);
-      if (!selectedPath) return;
+      const selectedPath = await window.pdfReader.savePdfDialog(tabToSave.name);
+      if (!selectedPath) return false;
       targetPath = selectedPath;
     }
 
@@ -296,7 +292,7 @@ export default function App() {
     const outline = await extractOutline(pdfDoc);
     const overlays = flattenForms ? [] : await extractEditableOverlays(nextBytes);
 
-    updateTab(activeTab.id, {
+    updateTab(tabToSave.id, {
       path: written.path,
       name: written.name,
       bytes: nextBytes,
@@ -312,7 +308,27 @@ export default function App() {
       dirty: false
     });
     await loadRecentFiles();
+    return true;
   };
+
+  const saveActiveTab = async (saveAs = false, flattenForms = false) => {
+    if (!activeTab) return false;
+    return saveTab(activeTab, saveAs, flattenForms);
+  };
+
+  useEffect(() => {
+    if (!window.pdfReader) return undefined;
+
+    return window.pdfReader.onWindowRequestClose(async () => {
+      for (const tab of tabs.filter((item) => item.dirty)) {
+        const action = await requestUnsavedAction(tab);
+        if (action === "cancel") return;
+        if (action === "save" && !(await saveTab(tab, false, false))) return;
+      }
+
+      await window.pdfReader?.closeWindowAfterConfirm();
+    });
+  }, [tabs]);
 
   const printActiveTab = async () => {
     if (!activeTab) return;
@@ -620,6 +636,19 @@ export default function App() {
   const selectedOverlay = activeTab?.overlays.find((overlay) => overlay.id === selectedOverlayId) ?? null;
 
   useEffect(() => {
+    if (selectedOverlay?.kind !== "comment" || !selectedOverlay.minimized) return undefined;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (target?.closest(".comment-popup, .comment-pin")) return;
+      setSelectedOverlayId(null);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [selectedOverlay]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!activeTab) return;
       const target = event.target as HTMLElement | null;
@@ -747,59 +776,61 @@ export default function App() {
         >
           <Signature size={18} />
         </ToolButton>
-        <div className="divider" />
-        <button
-          className="icon-button"
-          title="Previous page"
-          disabled={!activeTab || activeTab.currentPage <= 1}
-          onClick={() => activeTab && updateTab(activeTab.id, { currentPage: activeTab.currentPage - 1 })}
-        >
-          <ChevronLeft size={18} />
-        </button>
-        <PageBox tab={activeTab} onChange={(page) => activeTab && updateTab(activeTab.id, { currentPage: page })} />
-        <button
-          className="icon-button"
-          title="Next page"
-          disabled={!activeTab || activeTab.currentPage >= activeTab.pageCount}
-          onClick={() => activeTab && updateTab(activeTab.id, { currentPage: activeTab.currentPage + 1 })}
-        >
-          <ChevronRight size={18} />
-        </button>
-        <button
-          className="icon-button"
-          title="Rotate page view"
-          disabled={!activeTab}
-          onClick={() => activeTab && updateTab(activeTab.id, { rotation: (activeTab.rotation + 90) % 360 })}
-        >
-          <RotateCw size={18} />
-        </button>
-        <div className="divider" />
-        <div className="zoom-control">
+        <div className="toolbar-center">
+          <div className="divider" />
           <button
             className="icon-button"
-            title="Zoom out"
-            disabled={!activeTab}
-            onClick={() => activeTab && updateTab(activeTab.id, { zoom: Math.max(0.25, activeTab.zoom - 0.1), fitMode: "actual" })}
+            title="Previous page"
+            disabled={!activeTab || activeTab.currentPage <= 1}
+            onClick={() => activeTab && updateTab(activeTab.id, { currentPage: activeTab.currentPage - 1 })}
           >
-            <Minus size={18} />
+            <ChevronLeft size={18} />
           </button>
-          <span className="zoom-label">{activeTab ? `${Math.round(activeTab.zoom * 100)}%` : "100%"}</span>
+          <PageBox tab={activeTab} onChange={(page) => activeTab && updateTab(activeTab.id, { currentPage: page })} />
           <button
             className="icon-button"
-            title="Zoom in"
-            disabled={!activeTab}
-            onClick={() => activeTab && updateTab(activeTab.id, { zoom: Math.min(4, activeTab.zoom + 0.1), fitMode: "actual" })}
+            title="Next page"
+            disabled={!activeTab || activeTab.currentPage >= activeTab.pageCount}
+            onClick={() => activeTab && updateTab(activeTab.id, { currentPage: activeTab.currentPage + 1 })}
           >
-            <Plus size={18} />
+            <ChevronRight size={18} />
           </button>
+          <button
+            className="icon-button"
+            title="Rotate page view"
+            disabled={!activeTab}
+            onClick={() => activeTab && updateTab(activeTab.id, { rotation: (activeTab.rotation + 90) % 360 })}
+          >
+            <RotateCw size={18} />
+          </button>
+          <div className="divider" />
+          <div className="zoom-control">
+            <button
+              className="icon-button"
+              title="Zoom out"
+              disabled={!activeTab}
+              onClick={() => activeTab && updateTab(activeTab.id, { zoom: Math.max(0.25, activeTab.zoom - 0.1), fitMode: "actual" })}
+            >
+              <Minus size={18} />
+            </button>
+            <span className="zoom-label">{activeTab ? `${Math.round(activeTab.zoom * 100)}%` : "100%"}</span>
+            <button
+              className="icon-button"
+              title="Zoom in"
+              disabled={!activeTab}
+              onClick={() => activeTab && updateTab(activeTab.id, { zoom: Math.min(4, activeTab.zoom + 0.1), fitMode: "actual" })}
+            >
+              <Plus size={18} />
+            </button>
+          </div>
+          <FitMenu activeTab={activeTab} onFit={(mode) => void applyFitMode(mode)} />
+          <ViewMenu
+            activeTab={activeTab}
+            onChange={(patch) => activeTab && updateTab(activeTab.id, patch)}
+            isFullScreen={isFullScreen}
+            onToggleFullScreen={() => void toggleFullScreen()}
+          />
         </div>
-        <FitMenu activeTab={activeTab} onFit={(mode) => void applyFitMode(mode)} />
-        <ViewMenu
-          activeTab={activeTab}
-          onChange={(patch) => activeTab && updateTab(activeTab.id, patch)}
-          isFullScreen={isFullScreen}
-          onToggleFullScreen={() => void toggleFullScreen()}
-        />
         <div className="toolbar-spacer" />
         <div
           className={`search-box ${searchText || activeTab?.searchQuery ? "active" : ""}`}
@@ -1213,6 +1244,31 @@ async function copyTextToClipboard(value: string) {
   }
 }
 
+function extractSelectedTextFromLayer(textLayer: HTMLElement, selectionRects: DOMRect[]) {
+  const spans = Array.from(textLayer.querySelectorAll("span"))
+    .map((span) => {
+      const rect = span.getBoundingClientRect();
+      const intersects = selectionRects.some((selectionRect) => rectanglesIntersect(rect, selectionRect));
+      return intersects
+        ? {
+            text: span.textContent?.trim() ?? "",
+            top: rect.top,
+            left: rect.left
+          }
+        : null;
+    })
+    .filter((item): item is { text: string; top: number; left: number } => Boolean(item?.text))
+    .sort((a, b) => (Math.abs(a.top - b.top) > 4 ? a.top - b.top : a.left - b.left));
+
+  return spans.map((span) => span.text).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function rectanglesIntersect(a: DOMRect, b: DOMRect) {
+  const xOverlap = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+  const yOverlap = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+  return xOverlap > 1 && yOverlap > 1;
+}
+
 function DocumentView({
   tab,
   tool,
@@ -1404,7 +1460,7 @@ function PdfPage({
           const top = Math.min(...rects.map((rect) => rect.top));
           const right = Math.max(...rects.map((rect) => rect.right));
           const bottom = Math.max(...rects.map((rect) => rect.bottom));
-          const selectedText = selection.toString().trim();
+          const selectedText = extractSelectedTextFromLayer(textLayerRef.current, rects) || selection.toString().trim();
           if (selectedText) void copyTextToClipboard(selectedText);
           onTextSelection({
             page: pageNumber,

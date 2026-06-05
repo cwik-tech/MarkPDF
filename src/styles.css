@@ -142,11 +142,22 @@ button {
 }
 
 .toolbar {
+  position: relative;
   min-height: 44px;
   gap: 5px;
   padding: 0 8px;
   background: var(--chrome-2);
   border-bottom: 1px solid var(--border);
+}
+
+.toolbar-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transform: translate(-50%, -50%);
 }
 
 .toolbar-spacer {
