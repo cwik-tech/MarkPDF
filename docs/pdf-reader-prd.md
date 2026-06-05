@@ -6,6 +6,90 @@ Build a standalone desktop PDF reader with core viewing controls, lightweight ed
 
 The first version should feel close to a simplified Adobe Acrobat viewer, but avoid advanced enterprise/legal PDF workflows unless explicitly added later.
 
+## Implementation Status
+
+### ✅ Implemented
+
+- Standalone Electron desktop application.
+- TypeScript, React, Electron, PDF.js, and pdf-lib stack.
+- Open local PDFs.
+- Drag and drop PDFs into new tabs.
+- Multi-PDF tab support.
+- Per-tab document state for current page, zoom, view mode, unsaved changes, comments, edits, forms, and signatures.
+- Unsaved-change prompt when closing a modified tab or quitting the app.
+- Recent files menu.
+- Password-protected PDF retry.
+- PDF rendering with bundled PDF.js CMaps, standard fonts, and wasm assets.
+- Single-page view.
+- Two-page view.
+- Enable/disable continuous scrolling.
+- Page number input and total page count.
+- Previous/next page controls.
+- Rotate page view.
+- Zoom in and zoom out.
+- Actual size.
+- Fit to page.
+- Fit to width.
+- Fit height.
+- Full screen mode.
+- Thumbnail sidebar.
+- Bookmarks/outline sidebar.
+- Current page indicator.
+- Keyboard navigation for page movement, zoom, actual size, find, save, undo, redo, and escape-to-select.
+- Text search with match navigation.
+- Add text overlays.
+- Move and resize added text.
+- Edit added text content.
+- Change font size.
+- Delete added text.
+- Add highlights from selected text.
+- Add pinned comments from selected text.
+- Edit and delete comments.
+- Auto-minimize comment popups.
+- Persist editable highlights/comments after saving and reopening through app metadata.
+- Export standard PDF text-note annotations for comment overlays where supported.
+- Detect fillable PDF form fields.
+- Fill text fields, checkboxes, radio groups, and dropdowns where supported.
+- Preserve form values in saved/exported PDFs.
+- Export flattened PDFs.
+- Draw signature with mouse/trackpad.
+- Type signature as text.
+- Upload signature image.
+- Place, move, and resize visual signatures.
+- Print current PDF with overlays/forms/signatures included.
+- Save edited PDF.
+- Save as new file.
+- Light mode and dark mode.
+- Visible theme switcher.
+- Remember selected theme.
+- Default to operating-system theme on first launch.
+- Compact Adobe-like toolbar with Zed-inspired dark visual direction.
+
+### ⚠️ Partially Implemented
+
+- PDF-compatible annotations: comments export as standard text-note annotations where possible, but editable Adobe-compatible highlights/comments are not fully native yet.
+- Form filling: basic field types are supported, but complex or malformed form fields may still need hardening.
+- Text editing: adding new text overlays works, but full style controls are incomplete.
+- Opening PDFs from the operating system: OS handoff exists, but the desired new-window versus existing-window behavior still needs product verification.
+- Comments UI: pinned popovers and a comments sidebar exist, but Acrobat-level comment workflows are not complete.
+
+### ⬜ Not Implemented Yet
+
+- Cover-page mode for two-page view.
+- Fit visible content.
+- Text color control for added text.
+- Basic font family selection for added text:
+  - Sans.
+  - Serif.
+  - Monospace.
+- Certificate-backed digital signatures.
+- Identity verification.
+- Audit trails.
+- Long-term validation.
+- Legal/compliance guarantees.
+- Optional inverted-document reading mode.
+- Windows packaging/testing.
+
 ## Target Platform
 
 - Desktop standalone application.
