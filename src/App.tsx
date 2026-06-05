@@ -761,12 +761,6 @@ export default function App() {
         <ToolButton active={tool === "text"} title="Add text" onClick={() => setTool("text")}>
           <Type size={18} />
         </ToolButton>
-        <ToolButton active={tool === "comment"} title="Add comment" onClick={() => setTool("comment")}>
-          <MessageSquarePlus size={18} />
-        </ToolButton>
-        <ToolButton active={tool === "highlight"} title="Highlight" onClick={() => setTool("highlight")}>
-          <Highlighter size={18} />
-        </ToolButton>
         <ToolButton
           active={tool === "signature"}
           title="Sign"
@@ -851,6 +845,7 @@ export default function App() {
         <div
           className={`search-box ${searchText || activeTab?.searchQuery ? "active" : ""}`}
           onMouseEnter={() => searchInputRef.current?.focus()}
+          onClick={() => searchInputRef.current?.focus()}
         >
           <Search size={15} />
           <input

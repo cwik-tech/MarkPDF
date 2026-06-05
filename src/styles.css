@@ -58,6 +58,7 @@ input,
 select,
 textarea {
   font: inherit;
+  -webkit-app-region: no-drag;
 }
 
 button {
@@ -163,6 +164,13 @@ button {
   -webkit-app-region: no-drag;
 }
 
+.toolbar > .icon-button,
+.toolbar > .divider,
+.toolbar > .search-box,
+.toolbar > .search-count {
+  -webkit-app-region: no-drag;
+}
+
 .toolbar-spacer {
   flex: 1;
 }
@@ -182,6 +190,7 @@ button {
   background: transparent;
   color: var(--text);
   cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 .icon-button {
@@ -244,6 +253,7 @@ button:disabled {
   gap: 4px;
   color: var(--muted);
   white-space: nowrap;
+  -webkit-app-region: no-drag;
 }
 
 .page-box input {
@@ -268,6 +278,7 @@ select {
   align-items: center;
   gap: 2px;
   white-space: nowrap;
+  -webkit-app-region: no-drag;
 }
 
 .zoom-label {
@@ -375,6 +386,8 @@ select {
   color: var(--muted);
   overflow: hidden;
   transition: width 160ms ease;
+  cursor: text;
+  -webkit-app-region: no-drag;
 }
 
 .search-box svg {

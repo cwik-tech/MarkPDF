@@ -28,3 +28,4 @@
 - Centered the page/zoom toolbar controls, improved PDF text copy accuracy, auto-minimized comment popups on outside click, and added Save/Discard/Cancel close prompts.
 - Tightened PDF text copy overlap detection and balanced the centered toolbar spacing.
 - Restored fit/view dropdown hover behavior, hid scrollbar chrome in non-scrolling views, and made empty toolbar/header space draggable.
+- Removed comment/highlight from the main toolbar and fixed intermittent toolbar/search clicks caused by draggable chrome.
