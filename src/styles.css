@@ -534,6 +534,30 @@ button:disabled {
   gap: 10px;
 }
 
+.page-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px 32px 32px;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.page-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.page-actions button:hover:not(:disabled) {
+  background: var(--accent-2);
+}
+
 .page-list button {
   display: grid;
   justify-items: center;

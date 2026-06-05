@@ -219,6 +219,39 @@ export async function exportPdfBytes(
   return pdfDoc.save();
 }
 
+export async function insertBlankPageAfter(sourceBytes: Uint8Array, pageNumber: number) {
+  const pdfDoc = await PDFDocument.load(sourceBytes.slice(), { ignoreEncryption: true });
+  const referencePage = pdfDoc.getPage(Math.max(0, Math.min(pdfDoc.getPageCount() - 1, pageNumber - 1)));
+  pdfDoc.insertPage(Math.min(pdfDoc.getPageCount(), pageNumber), [referencePage.getWidth(), referencePage.getHeight()]);
+  return pdfDoc.save();
+}
+
+export async function deletePdfPage(sourceBytes: Uint8Array, pageNumber: number) {
+  const pdfDoc = await PDFDocument.load(sourceBytes.slice(), { ignoreEncryption: true });
+  if (pdfDoc.getPageCount() <= 1) {
+    return sourceBytes.slice();
+  }
+
+  pdfDoc.removePage(Math.max(0, Math.min(pdfDoc.getPageCount() - 1, pageNumber - 1)));
+  return pdfDoc.save();
+}
+
+export async function movePdfPage(sourceBytes: Uint8Array, pageNumber: number, direction: -1 | 1) {
+  const pdfDoc = await PDFDocument.load(sourceBytes.slice(), { ignoreEncryption: true });
+  const pageCount = pdfDoc.getPageCount();
+  const fromIndex = pageNumber - 1;
+  const toIndex = fromIndex + direction;
+
+  if (fromIndex < 0 || fromIndex >= pageCount || toIndex < 0 || toIndex >= pageCount) {
+    return sourceBytes.slice();
+  }
+
+  const page = pdfDoc.getPage(fromIndex);
+  pdfDoc.removePage(fromIndex);
+  pdfDoc.insertPage(toIndex, page);
+  return pdfDoc.save();
+}
+
 function addTextNoteAnnotation(
   pdfDoc: PDFDocument,
   page: ReturnType<PDFDocument["getPages"]>[number],

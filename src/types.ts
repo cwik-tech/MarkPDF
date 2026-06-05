@@ -37,6 +37,13 @@ export interface SearchMatch {
   snippet: string;
 }
 
+export interface TabHistoryState {
+  bytes: Uint8Array;
+  currentPage: number;
+  overlays: OverlayItem[];
+  formFields: FormFieldState[];
+}
+
 export interface PdfTab {
   id: string;
   name: string;
@@ -55,5 +62,7 @@ export interface PdfTab {
   searchQuery: string;
   searchMatches: SearchMatch[];
   activeSearchMatch: number;
+  undoStack: TabHistoryState[];
+  redoStack: TabHistoryState[];
   dirty: boolean;
 }

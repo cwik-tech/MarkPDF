@@ -3,6 +3,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ArrowDown,
+  ArrowUp,
   FilePlus2,
   FileText,
   Highlighter,
@@ -14,19 +16,30 @@ import {
   PenLine,
   Plus,
   Printer,
+  Redo2,
   RotateCw,
   Save,
   Search,
   Settings2,
   Signature,
   Sun,
+  Trash2,
   Type,
+  Undo2,
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { detectFormFields, exportPdfBytes, findTextMatches, loadPdfDocument } from "./pdf/document";
-import type { FitMode, FormFieldState, OverlayItem, PdfTab, ThemeMode, ToolMode, ViewMode } from "./types";
+import {
+  deletePdfPage,
+  detectFormFields,
+  exportPdfBytes,
+  findTextMatches,
+  insertBlankPageAfter,
+  loadPdfDocument,
+  movePdfPage
+} from "./pdf/document";
+import type { FitMode, FormFieldState, OverlayItem, PdfTab, TabHistoryState, ThemeMode, ToolMode, ViewMode } from "./types";
 
 const defaultTextColor = "#1f2937";
 
@@ -96,6 +109,8 @@ export default function App() {
         searchQuery: "",
         searchMatches: [],
         activeSearchMatch: -1,
+        undoStack: [],
+        redoStack: [],
         dirty: false
       };
 
@@ -221,6 +236,8 @@ export default function App() {
       formFields,
       searchMatches: [],
       activeSearchMatch: -1,
+      undoStack: [],
+      redoStack: [],
       dirty: false
     });
     await loadRecentFiles();
@@ -250,6 +267,18 @@ export default function App() {
       }, 2000);
     };
   };
+
+  const snapshotTab = (tab: PdfTab): TabHistoryState => ({
+    bytes: tab.bytes.slice(),
+    currentPage: tab.currentPage,
+    overlays: structuredClone(tab.overlays),
+    formFields: structuredClone(tab.formFields)
+  });
+
+  const pushHistory = (tab: PdfTab) => ({
+    undoStack: [...tab.undoStack, snapshotTab(tab)].slice(-50),
+    redoStack: []
+  });
 
   const addOverlay = (page: number, x: number, y: number) => {
     if (!activeTab) return;
@@ -317,6 +346,7 @@ export default function App() {
     if (!overlay) return;
 
     updateTab(activeTab.id, (tab) => ({
+      ...pushHistory(tab),
       overlays: [...tab.overlays, overlay],
       dirty: true
     }));
@@ -324,9 +354,10 @@ export default function App() {
     setTool("select");
   };
 
-  const updateOverlay = (overlayId: string, patch: Partial<OverlayItem>) => {
+  const updateOverlay = (overlayId: string, patch: Partial<OverlayItem>, recordHistory = true) => {
     if (!activeTab) return;
     updateTab(activeTab.id, (tab) => ({
+      ...(recordHistory ? pushHistory(tab) : {}),
       overlays: tab.overlays.map((overlay) => (overlay.id === overlayId ? { ...overlay, ...patch } : overlay)),
       dirty: true
     }));
@@ -335,6 +366,7 @@ export default function App() {
   const deleteOverlay = (overlayId: string) => {
     if (!activeTab) return;
     updateTab(activeTab.id, (tab) => ({
+      ...pushHistory(tab),
       overlays: tab.overlays.filter((overlay) => overlay.id !== overlayId),
       dirty: true
     }));
@@ -344,9 +376,107 @@ export default function App() {
   const updateFormField = (fieldName: string, value: string | boolean) => {
     if (!activeTab) return;
     updateTab(activeTab.id, (tab) => ({
+      ...pushHistory(tab),
       formFields: tab.formFields.map((field) => (field.name === fieldName ? { ...field, value } : field)),
       dirty: true
     }));
+  };
+
+  const restoreHistoryState = async (tabId: string, state: TabHistoryState) => {
+    const pdfDoc = await loadPdfDocument(state.bytes);
+    updateTab(tabId, {
+      bytes: state.bytes,
+      pdfDoc,
+      pageCount: pdfDoc.numPages,
+      currentPage: Math.min(state.currentPage, pdfDoc.numPages),
+      overlays: state.overlays,
+      formFields: state.formFields,
+      searchMatches: [],
+      activeSearchMatch: -1,
+      dirty: true
+    });
+  };
+
+  const undoActiveTab = async () => {
+    if (!activeTab || activeTab.undoStack.length === 0) return;
+    const previous = activeTab.undoStack.at(-1);
+    if (!previous) return;
+    const redoState = snapshotTab(activeTab);
+    updateTab(activeTab.id, {
+      undoStack: activeTab.undoStack.slice(0, -1),
+      redoStack: [...activeTab.redoStack, redoState].slice(-50)
+    });
+    await restoreHistoryState(activeTab.id, previous);
+  };
+
+  const redoActiveTab = async () => {
+    if (!activeTab || activeTab.redoStack.length === 0) return;
+    const next = activeTab.redoStack.at(-1);
+    if (!next) return;
+    const undoState = snapshotTab(activeTab);
+    updateTab(activeTab.id, {
+      undoStack: [...activeTab.undoStack, undoState].slice(-50),
+      redoStack: activeTab.redoStack.slice(0, -1)
+    });
+    await restoreHistoryState(activeTab.id, next);
+  };
+
+  const replaceDocumentBytes = async (
+    bytes: Uint8Array,
+    page: number,
+    updateOverlays: (overlays: OverlayItem[]) => OverlayItem[]
+  ) => {
+    if (!activeTab) return;
+    const pdfDoc = await loadPdfDocument(bytes);
+    const formFields = await detectFormFields(bytes);
+    updateTab(activeTab.id, (tab) => ({
+      ...pushHistory(tab),
+      bytes,
+      pdfDoc,
+      pageCount: pdfDoc.numPages,
+      currentPage: Math.min(Math.max(1, page), pdfDoc.numPages),
+      overlays: updateOverlays(tab.overlays),
+      formFields,
+      searchMatches: [],
+      activeSearchMatch: -1,
+      dirty: true
+    }));
+  };
+
+  const insertPageAfterCurrent = async () => {
+    if (!activeTab) return;
+    const bytes = await insertBlankPageAfter(activeTab.bytes, activeTab.currentPage);
+    await replaceDocumentBytes(bytes, activeTab.currentPage + 1, (overlays) =>
+      overlays.map((overlay) => (overlay.page > activeTab.currentPage ? { ...overlay, page: overlay.page + 1 } : overlay))
+    );
+  };
+
+  const deleteCurrentPage = async () => {
+    if (!activeTab || activeTab.pageCount <= 1) return;
+    if (!window.confirm(`Delete page ${activeTab.currentPage}?`)) return;
+    const deletedPage = activeTab.currentPage;
+    const bytes = await deletePdfPage(activeTab.bytes, deletedPage);
+    await replaceDocumentBytes(bytes, Math.min(deletedPage, activeTab.pageCount - 1), (overlays) =>
+      overlays
+        .filter((overlay) => overlay.page !== deletedPage)
+        .map((overlay) => (overlay.page > deletedPage ? { ...overlay, page: overlay.page - 1 } : overlay))
+    );
+  };
+
+  const moveCurrentPage = async (direction: -1 | 1) => {
+    if (!activeTab) return;
+    const fromPage = activeTab.currentPage;
+    const toPage = fromPage + direction;
+    if (toPage < 1 || toPage > activeTab.pageCount) return;
+    const bytes = await movePdfPage(activeTab.bytes, fromPage, direction);
+    await replaceDocumentBytes(bytes, toPage, (overlays) =>
+      overlays.map((overlay) => {
+        if (overlay.page === fromPage) return { ...overlay, page: toPage };
+        if (direction === -1 && overlay.page === toPage) return { ...overlay, page: fromPage };
+        if (direction === 1 && overlay.page === toPage) return { ...overlay, page: fromPage };
+        return overlay;
+      })
+    );
   };
 
   const runSearch = async () => {
@@ -383,6 +513,18 @@ export default function App() {
       if (shortcut && event.key.toLowerCase() === "f") {
         event.preventDefault();
         searchInputRef.current?.focus();
+        return;
+      }
+
+      if (shortcut && event.key.toLowerCase() === "z" && !event.shiftKey) {
+        event.preventDefault();
+        void undoActiveTab();
+        return;
+      }
+
+      if (shortcut && (event.key.toLowerCase() === "y" || (event.key.toLowerCase() === "z" && event.shiftKey))) {
+        event.preventDefault();
+        void redoActiveTab();
         return;
       }
 
@@ -475,6 +617,13 @@ export default function App() {
         >
           <Signature size={18} />
         </ToolButton>
+        <div className="divider" />
+        <button className="icon-button" title="Undo" disabled={!activeTab?.undoStack.length} onClick={() => void undoActiveTab()}>
+          <Undo2 size={18} />
+        </button>
+        <button className="icon-button" title="Redo" disabled={!activeTab?.redoStack.length} onClick={() => void redoActiveTab()}>
+          <Redo2 size={18} />
+        </button>
         <div className="divider" />
         <button
           className="icon-button"
@@ -574,6 +723,9 @@ export default function App() {
             onUpdateOverlay={updateOverlay}
             onDeleteOverlay={deleteOverlay}
             onUpdateFormField={updateFormField}
+            onInsertPage={() => void insertPageAfterCurrent()}
+            onDeletePage={() => void deleteCurrentPage()}
+            onMovePage={(direction) => void moveCurrentPage(direction)}
             onSignatureText={setSignatureText}
             onSignatureDataUrl={setSignatureDataUrl}
           />
@@ -587,8 +739,8 @@ export default function App() {
               tab={activeTab}
               selectedOverlayId={selectedOverlayId}
               onPageClick={addOverlay}
-              onSelectOverlay={setSelectedOverlayId}
-              onUpdateOverlay={updateOverlay}
+            onSelectOverlay={setSelectedOverlayId}
+            onUpdateOverlay={updateOverlay}
             />
           )}
         </section>
@@ -844,7 +996,7 @@ function DocumentView({
   selectedOverlayId: string | null;
   onPageClick: (page: number, x: number, y: number) => void;
   onSelectOverlay: (id: string | null) => void;
-  onUpdateOverlay: (id: string, patch: Partial<OverlayItem>) => void;
+  onUpdateOverlay: (id: string, patch: Partial<OverlayItem>, recordHistory?: boolean) => void;
 }) {
   const pages = tab.scrolling
     ? Array.from({ length: tab.pageCount }, (_, index) => index + 1)
@@ -962,7 +1114,7 @@ function PdfPage({
               zoom={zoom}
               selected={selectedOverlayId === overlay.id}
               onSelect={() => onSelectOverlay(overlay.id)}
-              onUpdate={(patch) => onUpdateOverlay(overlay.id, patch)}
+          onUpdate={(patch) => onUpdateOverlay(overlay.id, patch)}
             />
           ))}
         </div>
@@ -982,7 +1134,7 @@ function OverlayBox({
   zoom: number;
   selected: boolean;
   onSelect: () => void;
-  onUpdate: (patch: Partial<OverlayItem>) => void;
+  onUpdate: (patch: Partial<OverlayItem>, recordHistory?: boolean) => void;
 }) {
   const dragRef = useRef<{ startX: number; startY: number; originalX: number; originalY: number } | null>(null);
 
@@ -1007,7 +1159,7 @@ function OverlayBox({
         onUpdate({
           x: Math.max(0, dragRef.current.originalX + (event.clientX - dragRef.current.startX) / zoom),
           y: Math.max(0, dragRef.current.originalY + (event.clientY - dragRef.current.startY) / zoom)
-        });
+        }, false);
       }}
       onPointerUp={() => {
         dragRef.current = null;
@@ -1016,7 +1168,7 @@ function OverlayBox({
       onDoubleClick={() => {
         if (overlay.kind === "highlight" || overlay.dataUrl) return;
         const nextText = window.prompt("Edit text", overlay.text ?? "");
-        if (nextText !== null) onUpdate({ text: nextText });
+        if (nextText !== null) onUpdate({ text: nextText }, true);
       }}
     >
       {overlay.kind === "signature" && overlay.dataUrl ? (
@@ -1040,7 +1192,7 @@ function OverlayBox({
               onUpdate({
                 width: Math.max(24, startWidth + (moveEvent.clientX - startX) / zoom),
                 height: Math.max(18, startHeight + (moveEvent.clientY - startY) / zoom)
-              });
+              }, false);
             };
             target.onpointerup = () => {
               target.onpointermove = null;
@@ -1110,6 +1262,9 @@ function Sidebar({
   onUpdateOverlay,
   onDeleteOverlay,
   onUpdateFormField,
+  onInsertPage,
+  onDeletePage,
+  onMovePage,
   onSignatureText,
   onSignatureDataUrl
 }: {
@@ -1124,6 +1279,9 @@ function Sidebar({
   onUpdateOverlay: (id: string, patch: Partial<OverlayItem>) => void;
   onDeleteOverlay: (id: string) => void;
   onUpdateFormField: (name: string, value: string | boolean) => void;
+  onInsertPage: () => void;
+  onDeletePage: () => void;
+  onMovePage: (direction: -1 | 1) => void;
   onSignatureText: (value: string) => void;
   onSignatureDataUrl: (value: string | null) => void;
 }) {
@@ -1132,6 +1290,23 @@ function Sidebar({
       {mode === "pages" && (
         <>
           <h2>Pages</h2>
+          {tab && (
+            <div className="page-actions">
+              <button title="Insert blank page after current page" onClick={onInsertPage}>
+                <FilePlus2 size={15} />
+                Insert
+              </button>
+              <button title="Move page up" disabled={tab.currentPage <= 1} onClick={() => onMovePage(-1)}>
+                <ArrowUp size={15} />
+              </button>
+              <button title="Move page down" disabled={tab.currentPage >= tab.pageCount} onClick={() => onMovePage(1)}>
+                <ArrowDown size={15} />
+              </button>
+              <button title="Delete current page" disabled={tab.pageCount <= 1} onClick={onDeletePage}>
+                <Trash2 size={15} />
+              </button>
+            </div>
+          )}
           <div className="page-list">
             {tab ? (
               Array.from({ length: tab.pageCount }, (_, index) => index + 1).map((page) => (

@@ -17,3 +17,4 @@
 - Added standard PDF text-note annotations when exporting comment overlays.
 - Reduced the upper app bar height and made the left sidebar closed by default.
 - Hardened PDF rendering with bundled PDF.js CMaps, standard fonts, wasm assets, the legacy PDF.js build, visible render errors, and single-page rendering by default.
+- Added undo/redo history for edits and page operations, plus page insert, delete, and move controls in the Pages panel.
