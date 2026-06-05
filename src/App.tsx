@@ -777,7 +777,6 @@ export default function App() {
           <Signature size={18} />
         </ToolButton>
         <div className="toolbar-center">
-          <div className="divider" />
           <button
             className="icon-button"
             title="Previous page"
@@ -1248,8 +1247,8 @@ function extractSelectedTextFromLayer(textLayer: HTMLElement, selectionRects: DO
   const spans = Array.from(textLayer.querySelectorAll("span"))
     .map((span) => {
       const rect = span.getBoundingClientRect();
-      const intersects = selectionRects.some((selectionRect) => rectanglesIntersect(rect, selectionRect));
-      return intersects
+      const overlap = Math.max(...selectionRects.map((selectionRect) => rectangleOverlapRatio(rect, selectionRect)), 0);
+      return overlap >= 0.45
         ? {
             text: span.textContent?.trim() ?? "",
             top: rect.top,
@@ -1263,10 +1262,12 @@ function extractSelectedTextFromLayer(textLayer: HTMLElement, selectionRects: DO
   return spans.map((span) => span.text).join(" ").replace(/\s+/g, " ").trim();
 }
 
-function rectanglesIntersect(a: DOMRect, b: DOMRect) {
+function rectangleOverlapRatio(a: DOMRect, b: DOMRect) {
   const xOverlap = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
   const yOverlap = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
-  return xOverlap > 1 && yOverlap > 1;
+  const overlapArea = xOverlap * yOverlap;
+  const spanArea = Math.max(1, a.width * a.height);
+  return overlapArea / spanArea;
 }
 
 function DocumentView({

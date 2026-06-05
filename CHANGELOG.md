@@ -26,3 +26,4 @@
 - Restored the single-page icon, constrained recent-file menu labels, repaired wheel scrolling, and added selection actions for highlighting or commenting selected PDF text.
 - Added auto-copy for selected PDF text, Cmd/Ctrl+S saving, editable persisted highlights/comments, and Acrobat-style pinned comment popups.
 - Centered the page/zoom toolbar controls, improved PDF text copy accuracy, auto-minimized comment popups on outside click, and added Save/Discard/Cancel close prompts.
+- Tightened PDF text copy overlap detection and balanced the centered toolbar spacing.

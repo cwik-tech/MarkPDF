@@ -156,7 +156,7 @@ button {
   top: 50%;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 7px;
   transform: translate(-50%, -50%);
 }
 
@@ -232,7 +232,7 @@ button:disabled {
   width: 1px;
   height: 24px;
   background: var(--border);
-  margin: 0 3px;
+  margin: 0 10px;
 }
 
 .page-box {
