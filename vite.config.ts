@@ -3,6 +3,7 @@ import { viteStaticCopy } from "vite-plugin-static-copy";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  base: "./",
   plugins: [
     react(),
     viteStaticCopy({
