@@ -25,6 +25,7 @@ const createWindow = async (filePath?: string) => {
     minWidth: 980,
     minHeight: 680,
     title: "Open PDF Reader",
+    icon: fileURLToPath(new URL("../build/icon.png", import.meta.url)),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1f2633" : "#f5f6f8",
     webPreferences: {
