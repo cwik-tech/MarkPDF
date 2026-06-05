@@ -12,21 +12,61 @@ import {
   rgb,
   StandardFonts
 } from "pdf-lib";
-import type { FormFieldState, OverlayItem, SearchMatch } from "../types";
+import type { FormFieldState, OutlineItem, OverlayItem, SearchMatch } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const pdfAssetBase = `${import.meta.env.BASE_URL}pdfjs/`;
 
-export async function loadPdfDocument(bytes: Uint8Array) {
+export async function loadPdfDocument(bytes: Uint8Array, password?: string) {
   return pdfjsLib.getDocument({
     data: bytes.slice(),
+    password,
     cMapUrl: `${pdfAssetBase}cmaps/`,
     cMapPacked: true,
     standardFontDataUrl: `${pdfAssetBase}standard_fonts/`,
     wasmUrl: `${pdfAssetBase}wasm/`,
     useSystemFonts: true
   }).promise;
+}
+
+export function isPasswordError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.name === "PasswordException" || /password/i.test(error.message);
+}
+
+export async function extractOutline(pdfDoc: pdfjsLib.PDFDocumentProxy): Promise<OutlineItem[]> {
+  const outline = await pdfDoc.getOutline();
+  if (!outline) return [];
+
+  async function normalize(items: Awaited<ReturnType<typeof pdfDoc.getOutline>>, path: string): Promise<OutlineItem[]> {
+    if (!items) return [];
+
+    return Promise.all(
+      items.map(async (item, index) => {
+        const id = `${path}-${index}`;
+        const page = await resolveOutlinePage(pdfDoc, item.dest);
+        return {
+          id,
+          title: item.title || "Untitled",
+          page,
+          children: await normalize(item.items, id)
+        };
+      })
+    );
+  }
+
+  return normalize(outline, "outline");
+}
+
+async function resolveOutlinePage(pdfDoc: pdfjsLib.PDFDocumentProxy, dest: unknown) {
+  try {
+    const resolved = typeof dest === "string" ? await pdfDoc.getDestination(dest) : dest;
+    if (!Array.isArray(resolved) || !resolved[0]) return undefined;
+    return (await pdfDoc.getPageIndex(resolved[0])) + 1;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function detectFormFields(bytes: Uint8Array): Promise<FormFieldState[]> {

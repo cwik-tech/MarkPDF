@@ -588,6 +588,52 @@ button:disabled {
   font-size: 12px;
 }
 
+.outline-list {
+  display: grid;
+  gap: 4px;
+}
+
+.outline-list .outline-list {
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+.outline-item {
+  display: grid;
+  gap: 4px;
+}
+
+.outline-item button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.outline-item button:hover:not(:disabled) {
+  background: var(--accent-2);
+}
+
+.outline-item button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outline-item button small {
+  color: var(--muted);
+}
+
 .stack {
   display: grid;
   gap: 10px;

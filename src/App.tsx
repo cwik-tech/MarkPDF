@@ -1,5 +1,6 @@
 import {
   Check,
+  BookOpen,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -35,9 +36,11 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
   deletePdfPage,
   detectFormFields,
+  extractOutline,
   exportPdfBytes,
   findTextMatches,
   insertBlankPageAfter,
+  isPasswordError,
   loadPdfDocument,
   movePdfPage
 } from "./pdf/document";
@@ -61,7 +64,7 @@ export default function App() {
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [tool, setTool] = useState<ToolMode>("select");
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
-  const [sidebar, setSidebar] = useState<"pages" | "comments" | "forms" | "signature" | null>(null);
+  const [sidebar, setSidebar] = useState<"pages" | "outline" | "comments" | "forms" | "signature" | null>(null);
   const [signatureText, setSignatureText] = useState("Signature");
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
@@ -92,8 +95,26 @@ export default function App() {
 
   const addTabFromBytes = useCallback(
     async (bytes: Uint8Array, name: string, path?: string) => {
-      const pdfDoc = await loadPdfDocument(bytes);
+      let password: string | undefined;
+      let pdfDoc!: Awaited<ReturnType<typeof loadPdfDocument>>;
+
+      for (;;) {
+        try {
+          pdfDoc = await loadPdfDocument(bytes, password);
+          break;
+        } catch (error) {
+          if (!isPasswordError(error)) {
+            throw error;
+          }
+
+          const nextPassword = window.prompt(`Password required for "${name}"`);
+          if (nextPassword === null) return;
+          password = nextPassword;
+        }
+      }
+
       const formFields = await detectFormFields(bytes);
+      const outline = await extractOutline(pdfDoc);
       const tab: PdfTab = {
         id: newId("tab"),
         name,
@@ -109,6 +130,7 @@ export default function App() {
         scrolling: false,
         overlays: [],
         formFields,
+        outline,
         searchQuery: "",
         searchMatches: [],
         activeSearchMatch: -1,
@@ -127,8 +149,12 @@ export default function App() {
     async (paths: string[]) => {
       if (!window.pdfReader) return;
       for (const path of paths) {
-        const result = await window.pdfReader.readPdf(path);
-        await addTabFromBytes(Uint8Array.from(result.bytes), result.name, result.path);
+        try {
+          const result = await window.pdfReader.readPdf(path);
+          await addTabFromBytes(Uint8Array.from(result.bytes), result.name, result.path);
+        } catch (error) {
+          window.alert(error instanceof Error ? error.message : `Could not open "${path}".`);
+        }
       }
       setRecentFiles(await window.pdfReader.listRecentFiles());
     },
@@ -184,8 +210,12 @@ export default function App() {
     );
 
     for (const file of files) {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      await addTabFromBytes(bytes, file.name);
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        await addTabFromBytes(bytes, file.name);
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : `Could not open "${file.name}".`);
+      }
     }
   };
 
@@ -245,6 +275,7 @@ export default function App() {
     const nextBytes = Uint8Array.from(bytes);
     const pdfDoc = await loadPdfDocument(nextBytes);
     const formFields = flattenForms ? [] : await detectFormFields(nextBytes);
+    const outline = await extractOutline(pdfDoc);
 
     updateTab(activeTab.id, {
       path: written.path,
@@ -254,6 +285,7 @@ export default function App() {
       pageCount: pdfDoc.numPages,
       overlays: [],
       formFields,
+      outline,
       searchMatches: [],
       activeSearchMatch: -1,
       undoStack: [],
@@ -308,7 +340,8 @@ export default function App() {
     bytes: tab.bytes.slice(),
     currentPage: tab.currentPage,
     overlays: structuredClone(tab.overlays),
-    formFields: structuredClone(tab.formFields)
+    formFields: structuredClone(tab.formFields),
+    outline: structuredClone(tab.outline)
   });
 
   const pushHistory = (tab: PdfTab) => ({
@@ -427,6 +460,7 @@ export default function App() {
       currentPage: Math.min(state.currentPage, pdfDoc.numPages),
       overlays: state.overlays,
       formFields: state.formFields,
+      outline: state.outline,
       searchMatches: [],
       activeSearchMatch: -1,
       dirty: true
@@ -465,6 +499,7 @@ export default function App() {
     if (!activeTab) return;
     const pdfDoc = await loadPdfDocument(bytes);
     const formFields = await detectFormFields(bytes);
+    const outline = await extractOutline(pdfDoc);
     updateTab(activeTab.id, (tab) => ({
       ...pushHistory(tab),
       bytes,
@@ -473,6 +508,7 @@ export default function App() {
       currentPage: Math.min(Math.max(1, page), pdfDoc.numPages),
       overlays: updateOverlays(tab.overlays),
       formFields,
+      outline,
       searchMatches: [],
       activeSearchMatch: -1,
       dirty: true
@@ -631,6 +667,9 @@ export default function App() {
       <div className="toolbar">
         <button className="icon-button" title="Pages" onClick={() => setSidebar(sidebar === "pages" ? null : "pages")}>
           <PanelLeft size={18} />
+        </button>
+        <button className="icon-button" title="Bookmarks" onClick={() => setSidebar(sidebar === "outline" ? null : "outline")}>
+          <BookOpen size={18} />
         </button>
         <div className="divider" />
         <ToolButton active={tool === "select"} title="Select" onClick={() => setTool("select")}>
@@ -1305,6 +1344,28 @@ function PageThumbnail({
   return <canvas className={active ? "active" : ""} ref={canvasRef} />;
 }
 
+function OutlineList({
+  items,
+  onSelectPage
+}: {
+  items: PdfTab["outline"];
+  onSelectPage: (page: number) => void;
+}) {
+  return (
+    <div className="outline-list">
+      {items.map((item) => (
+        <div className="outline-item" key={item.id}>
+          <button disabled={!item.page} onClick={() => item.page && onSelectPage(item.page)} title={item.title}>
+            <span>{item.title}</span>
+            {item.page && <small>{item.page}</small>}
+          </button>
+          {item.children.length > 0 && <OutlineList items={item.children} onSelectPage={onSelectPage} />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Sidebar({
   mode,
   tab,
@@ -1323,7 +1384,7 @@ function Sidebar({
   onSignatureText,
   onSignatureDataUrl
 }: {
-  mode: "pages" | "comments" | "forms" | "signature";
+  mode: "pages" | "outline" | "comments" | "forms" | "signature";
   tab: PdfTab | null;
   selectedOverlay: OverlayItem | null;
   signatureText: string;
@@ -1390,6 +1451,17 @@ function Sidebar({
               </>
             )}
           </div>
+        </>
+      )}
+
+      {mode === "outline" && (
+        <>
+          <h2>Bookmarks</h2>
+          {tab?.outline.length ? (
+            <OutlineList items={tab.outline} onSelectPage={onSelectPage} />
+          ) : (
+            <p>No bookmarks found.</p>
+          )}
         </>
       )}
 

@@ -37,11 +37,19 @@ export interface SearchMatch {
   snippet: string;
 }
 
+export interface OutlineItem {
+  id: string;
+  title: string;
+  page?: number;
+  children: OutlineItem[];
+}
+
 export interface TabHistoryState {
   bytes: Uint8Array;
   currentPage: number;
   overlays: OverlayItem[];
   formFields: FormFieldState[];
+  outline: OutlineItem[];
 }
 
 export interface PdfTab {
@@ -59,6 +67,7 @@ export interface PdfTab {
   scrolling: boolean;
   overlays: OverlayItem[];
   formFields: FormFieldState[];
+  outline: OutlineItem[];
   searchQuery: string;
   searchMatches: SearchMatch[];
   activeSearchMatch: number;
