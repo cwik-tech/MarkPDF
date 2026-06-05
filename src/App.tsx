@@ -101,6 +101,8 @@ export default function App() {
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const menuCloseTimerRef = useRef<number | null>(null);
+  const autoSearchTimerRef = useRef<number | null>(null);
+  const searchRequestIdRef = useRef(0);
   const ocrJobsRef = useRef(new Map<string, { cancelled: boolean }>());
 
   const activeTab = useMemo(
@@ -116,6 +118,7 @@ export default function App() {
   useEffect(() => {
     return () => {
       if (menuCloseTimerRef.current !== null) window.clearTimeout(menuCloseTimerRef.current);
+      if (autoSearchTimerRef.current !== null) window.clearTimeout(autoSearchTimerRef.current);
     };
   }, []);
 
@@ -753,16 +756,68 @@ export default function App() {
     );
   };
 
-  const runSearch = async () => {
-    if (!activeTab) return;
-    const matches = await findTextMatches(activeTab.pdfDoc, searchText, activeTab.ocrPages);
+  const applySearch = useCallback(async (tab: PdfTab, query: string, navigateToFirstMatch = true) => {
+    const normalizedQuery = query.trim();
+    const requestId = searchRequestIdRef.current + 1;
+    searchRequestIdRef.current = requestId;
+
+    if (!normalizedQuery) {
+      updateTab(tab.id, {
+        searchQuery: "",
+        searchMatches: [],
+        activeSearchMatch: -1
+      });
+      return;
+    }
+
+    const matches = await findTextMatches(tab.pdfDoc, normalizedQuery, tab.ocrPages);
+    if (requestId !== searchRequestIdRef.current) return;
+
     const firstMatch = matches[0];
-    updateTab(activeTab.id, {
-      searchQuery: searchText,
+    updateTab(tab.id, (currentTab) => ({
+      searchQuery: normalizedQuery,
       searchMatches: matches,
       activeSearchMatch: firstMatch ? 0 : -1,
-      currentPage: firstMatch?.page ?? activeTab.currentPage
-    });
+      currentPage: navigateToFirstMatch && firstMatch ? firstMatch.page : currentTab.currentPage
+    }));
+  }, [updateTab]);
+
+  useEffect(() => {
+    if (autoSearchTimerRef.current !== null) {
+      window.clearTimeout(autoSearchTimerRef.current);
+      autoSearchTimerRef.current = null;
+    }
+
+    if (!activeTab) return undefined;
+
+    const normalizedQuery = searchText.trim();
+    if (normalizedQuery.length < 3) {
+      searchRequestIdRef.current += 1;
+      if (activeTab.searchQuery || activeTab.searchMatches.length > 0) {
+        updateTab(activeTab.id, {
+          searchQuery: "",
+          searchMatches: [],
+          activeSearchMatch: -1
+        });
+      }
+      return undefined;
+    }
+
+    autoSearchTimerRef.current = window.setTimeout(() => {
+      void applySearch(activeTab, normalizedQuery);
+    }, 250);
+
+    return () => {
+      if (autoSearchTimerRef.current !== null) {
+        window.clearTimeout(autoSearchTimerRef.current);
+        autoSearchTimerRef.current = null;
+      }
+    };
+  }, [activeTab?.id, activeTab?.pdfDoc, activeTab?.ocrPages, searchText, applySearch, updateTab]);
+
+  const runSearch = async () => {
+    if (!activeTab) return;
+    await applySearch(activeTab, searchText);
   };
 
   const stepSearch = (direction: 1 | -1) => {
@@ -776,6 +831,11 @@ export default function App() {
   };
 
   const clearSearch = () => {
+    searchRequestIdRef.current += 1;
+    if (autoSearchTimerRef.current !== null) {
+      window.clearTimeout(autoSearchTimerRef.current);
+      autoSearchTimerRef.current = null;
+    }
     setSearchText("");
     if (!activeTab) return;
     updateTab(activeTab.id, {
@@ -1022,7 +1082,7 @@ export default function App() {
               if (event.key === "Enter") {
                 event.preventDefault();
                 if (event.shiftKey) stepSearch(-1);
-                else if (activeTab?.searchQuery === searchText && activeTab.searchMatches.length > 0) stepSearch(1);
+                else if (activeTab?.searchQuery === searchText.trim() && activeTab.searchMatches.length > 0) stepSearch(1);
                 else void runSearch();
               }
             }}
