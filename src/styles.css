@@ -309,6 +309,15 @@ button:disabled {
   white-space: nowrap;
 }
 
+.menu-title {
+  grid-column: 1 / -1;
+  min-width: 0;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .menu-popover button:hover {
   background: var(--accent-2);
 }
@@ -444,6 +453,37 @@ button:disabled {
   min-width: 0;
   flex: 1;
   background: var(--bg);
+}
+
+.selection-popover {
+  position: fixed;
+  z-index: 60;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  transform: translate(-50%, -100%);
+}
+
+.selection-popover button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.selection-popover button:hover {
+  background: var(--accent-2);
+  color: var(--accent);
 }
 
 .empty-state {

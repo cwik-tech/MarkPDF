@@ -10,7 +10,6 @@ import {
   FilePlus2,
   FileText,
   Highlighter,
-  LayoutPanelTop,
   MessageSquarePlus,
   Maximize2,
   Minus,
@@ -74,6 +73,16 @@ export default function App() {
   const [searchText, setSearchText] = useState("");
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [selectionAction, setSelectionAction] = useState<{
+    page: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    screenX: number;
+    screenY: number;
+    text: string;
+  } | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -434,6 +443,30 @@ export default function App() {
       overlays: tab.overlays.map((overlay) => (overlay.id === overlayId ? { ...overlay, ...patch } : overlay)),
       dirty: true
     }));
+  };
+
+  const addSelectionOverlay = (kind: "highlight" | "comment") => {
+    if (!activeTab || !selectionAction) return;
+    const overlay: OverlayItem = {
+      id: newId(kind),
+      kind,
+      page: selectionAction.page,
+      x: selectionAction.x,
+      y: selectionAction.y,
+      width: selectionAction.width,
+      height: kind === "highlight" ? selectionAction.height : Math.max(72, selectionAction.height + 36),
+      text: kind === "comment" ? selectionAction.text || "Comment" : undefined,
+      fontSize: kind === "comment" ? 12 : undefined,
+      color: kind === "comment" ? "#2f2400" : "#facc15"
+    };
+
+    updateTab(activeTab.id, (tab) => ({
+      ...pushHistory(tab),
+      overlays: [...tab.overlays, overlay],
+      dirty: true
+    }));
+    setSelectedOverlayId(overlay.id);
+    setSelectionAction(null);
   };
 
   const deleteOverlay = (overlayId: string) => {
@@ -811,6 +844,23 @@ export default function App() {
           />
         )}
 
+        {selectionAction && (
+          <div
+            className="selection-popover"
+            style={{
+              left: selectionAction.screenX,
+              top: selectionAction.screenY
+            }}
+          >
+            <button title="Highlight selection" onMouseDown={(event) => event.preventDefault()} onClick={() => addSelectionOverlay("highlight")}>
+              <Highlighter size={16} />
+            </button>
+            <button title="Comment on selection" onMouseDown={(event) => event.preventDefault()} onClick={() => addSelectionOverlay("comment")}>
+              <MessageSquarePlus size={16} />
+            </button>
+          </div>
+        )}
+
         <section className="document-stage" ref={workspaceRef}>
           {!activeTab ? (
             <EmptyState onOpen={openFromDialog} recentFiles={recentFiles} onOpenRecent={(path) => void openPdfPaths([path])} />
@@ -820,8 +870,13 @@ export default function App() {
               tool={tool}
               selectedOverlayId={selectedOverlayId}
               onPageClick={addOverlay}
-            onSelectOverlay={setSelectedOverlayId}
-            onUpdateOverlay={updateOverlay}
+              onSelectOverlay={setSelectedOverlayId}
+              onUpdateOverlay={updateOverlay}
+              onTextSelection={setSelectionAction}
+              onWheelPage={(direction) => {
+                const nextPage = Math.min(activeTab.pageCount, Math.max(1, activeTab.currentPage + direction));
+                if (nextPage !== activeTab.currentPage) updateTab(activeTab.id, { currentPage: nextPage });
+              }}
             />
           )}
         </section>
@@ -912,7 +967,7 @@ function TopBar({
           <div className="menu-popover right wide">
             {recentFiles.map((path) => (
               <button key={path} onClick={() => onOpenRecent(path)} title={path}>
-                {fileNameFromPath(path)}
+                <span className="menu-title">{truncateMiddle(fileNameFromPath(path), 36)}</span>
               </button>
             ))}
             <button onClick={onClearRecent}>Clear recent files</button>
@@ -1036,7 +1091,7 @@ function ViewMenu({
   isFullScreen: boolean;
   onToggleFullScreen: () => void;
 }) {
-  const activeViewIcon = activeTab?.viewMode === "two" ? <Columns2 size={18} /> : <LayoutPanelTop size={18} />;
+  const activeViewIcon = activeTab?.viewMode === "two" ? <Columns2 size={18} /> : <FileText size={18} />;
 
   return (
     <div className="menu-button">
@@ -1044,7 +1099,7 @@ function ViewMenu({
         {activeViewIcon}
       </button>
       <div className="menu-popover">
-        <MenuItem active={activeTab?.viewMode === "single"} icon={<LayoutPanelTop size={15} />} onClick={() => onChange({ viewMode: "single" })}>
+        <MenuItem active={activeTab?.viewMode === "single"} icon={<FileText size={15} />} onClick={() => onChange({ viewMode: "single" })}>
           Single-page view
         </MenuItem>
         <MenuItem active={activeTab?.viewMode === "two"} icon={<Columns2 size={15} />} onClick={() => onChange({ viewMode: "two" })}>
@@ -1117,13 +1172,21 @@ function fileNameFromPath(path: string) {
   return path.split(/[\\/]/).pop() || path;
 }
 
+function truncateMiddle(value: string, maxLength: number) {
+  if (value.length <= maxLength) return value;
+  const keep = Math.max(6, Math.floor((maxLength - 1) / 2));
+  return `${value.slice(0, keep)}…${value.slice(-keep)}`;
+}
+
 function DocumentView({
   tab,
   tool,
   selectedOverlayId,
   onPageClick,
   onSelectOverlay,
-  onUpdateOverlay
+  onUpdateOverlay,
+  onTextSelection,
+  onWheelPage
 }: {
   tab: PdfTab;
   tool: ToolMode;
@@ -1131,6 +1194,17 @@ function DocumentView({
   onPageClick: (page: number, x: number, y: number) => void;
   onSelectOverlay: (id: string | null) => void;
   onUpdateOverlay: (id: string, patch: Partial<OverlayItem>, recordHistory?: boolean) => void;
+  onTextSelection: (selection: {
+    page: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    screenX: number;
+    screenY: number;
+    text: string;
+  } | null) => void;
+  onWheelPage: (direction: -1 | 1) => void;
 }) {
   const pages = tab.scrolling
     ? Array.from({ length: tab.pageCount }, (_, index) => index + 1)
@@ -1139,7 +1213,27 @@ function DocumentView({
       : [tab.currentPage];
 
   return (
-    <div className={`document-scroll ${tab.viewMode === "two" && !tab.scrolling ? "two-up" : ""}`}>
+    <div
+      className={`document-scroll ${tab.viewMode === "two" && !tab.scrolling ? "two-up" : ""}`}
+      onWheelCapture={(event) => {
+        const target = event.currentTarget;
+        const canScrollVertically = target.scrollHeight > target.clientHeight;
+        const canScrollHorizontally = target.scrollWidth > target.clientWidth;
+        if (!canScrollVertically && !canScrollHorizontally) return;
+        const atTop = target.scrollTop <= 0;
+        const atBottom = Math.ceil(target.scrollTop + target.clientHeight) >= target.scrollHeight;
+        event.preventDefault();
+        if (!tab.scrolling && event.deltaY < 0 && atTop) {
+          onWheelPage(-1);
+          return;
+        }
+        if (!tab.scrolling && event.deltaY > 0 && atBottom) {
+          onWheelPage(1);
+          return;
+        }
+        target.scrollBy({ top: event.deltaY, left: event.deltaX });
+      }}
+    >
       {pages.map((pageNumber) => (
         <PdfPage
           key={`${tab.id}-${pageNumber}-${tab.rotation}`}
@@ -1153,6 +1247,7 @@ function DocumentView({
           onPageClick={(x, y) => onPageClick(pageNumber, x, y)}
           onSelectOverlay={onSelectOverlay}
           onUpdateOverlay={onUpdateOverlay}
+          onTextSelection={onTextSelection}
         />
       ))}
     </div>
@@ -1169,7 +1264,8 @@ function PdfPage({
   selectedOverlayId,
   onPageClick,
   onSelectOverlay,
-  onUpdateOverlay
+  onUpdateOverlay,
+  onTextSelection
 }: {
   pdfDoc: PDFDocumentProxy;
   pageNumber: number;
@@ -1181,6 +1277,16 @@ function PdfPage({
   onPageClick: (x: number, y: number) => void;
   onSelectOverlay: (id: string | null) => void;
   onUpdateOverlay: (id: string, patch: Partial<OverlayItem>) => void;
+  onTextSelection: (selection: {
+    page: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    screenX: number;
+    screenY: number;
+    text: string;
+  } | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
@@ -1239,6 +1345,36 @@ function PdfPage({
       <div
         className={`pdf-page ${tool === "select" ? "selectable" : "editing"}`}
         style={{ width: size.width, height: size.height }}
+        onMouseDown={() => onTextSelection(null)}
+        onMouseUp={() => {
+          if (tool !== "select") return;
+          const selection = window.getSelection();
+          if (!selection || selection.isCollapsed || !textLayerRef.current) {
+            onTextSelection(null);
+            return;
+          }
+          const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+          if (!range || !textLayerRef.current.contains(range.commonAncestorContainer)) return;
+          const pageRect = textLayerRef.current.getBoundingClientRect();
+          const rects = Array.from(range.getClientRects()).filter(
+            (rect) => rect.width > 0 && rect.height > 0 && rect.bottom >= pageRect.top && rect.top <= pageRect.bottom
+          );
+          if (rects.length === 0) return;
+          const left = Math.min(...rects.map((rect) => rect.left));
+          const top = Math.min(...rects.map((rect) => rect.top));
+          const right = Math.max(...rects.map((rect) => rect.right));
+          const bottom = Math.max(...rects.map((rect) => rect.bottom));
+          onTextSelection({
+            page: pageNumber,
+            x: Math.max(0, (left - pageRect.left) / zoom),
+            y: Math.max(0, (top - pageRect.top) / zoom),
+            width: Math.max(12, (right - left) / zoom),
+            height: Math.max(8, (bottom - top) / zoom),
+            screenX: left + (right - left) / 2,
+            screenY: Math.max(10, top - 10),
+            text: selection.toString().trim()
+          });
+        }}
         onClick={(event) => {
           if (tool === "select") return;
           const rect = event.currentTarget.getBoundingClientRect();
