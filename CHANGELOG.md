@@ -37,3 +37,6 @@
 - Added delayed hover closing for toolbar dropdowns, collapsed search on mouse-out, and restored empty tab-strip window dragging.
 - Added macOS and Windows Electron app icons generated from the bundled app icon.
 - Made normal PDF saves write comments and highlights as standard Acrobat-compatible PDF annotations while retaining app-editable overlay metadata.
+- Forced the macOS Dock icon to use the bundled app icon at runtime.
+- Removed the icon's outer white background and enlarged the mark for Dock display.
+- Added hover-only controls for removing individual files from the empty-state recent list without deleting the files.

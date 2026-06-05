@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
 import type { MessageBoxOptions } from "electron";
 import Store from "electron-store";
 import { readFile, writeFile } from "node:fs/promises";
@@ -6,6 +6,7 @@ import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 let pendingOpenPath: string | null = null;
+const appIconPath = fileURLToPath(new URL("../build/icon.png", import.meta.url));
 const confirmedCloseWindows = new WeakSet<BrowserWindow>();
 const store = new Store<{ recentFiles: string[] }>({
   defaults: {
@@ -18,6 +19,22 @@ function addRecentFile(filePath: string) {
   store.set("recentFiles", [filePath, ...recentFiles.filter((item) => item !== filePath)].slice(0, 12));
 }
 
+function removeRecentFile(filePath: string) {
+  const recentFiles = store.get("recentFiles", []);
+  const nextRecentFiles = recentFiles.filter((item) => item !== filePath);
+  store.set("recentFiles", nextRecentFiles);
+  return nextRecentFiles;
+}
+
+function setDockIcon() {
+  if (process.platform !== "darwin") return;
+
+  const dockIcon = nativeImage.createFromPath(appIconPath);
+  if (!dockIcon.isEmpty()) {
+    app.dock?.setIcon(dockIcon);
+  }
+}
+
 const createWindow = async (filePath?: string) => {
   const window = new BrowserWindow({
     width: 1360,
@@ -25,7 +42,7 @@ const createWindow = async (filePath?: string) => {
     minWidth: 980,
     minHeight: 680,
     title: "Open PDF Reader",
-    icon: fileURLToPath(new URL("../build/icon.png", import.meta.url)),
+    icon: appIconPath,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1f2633" : "#f5f6f8",
     webPreferences: {
@@ -79,6 +96,7 @@ app.on("open-file", (event, filePath) => {
 });
 
 app.whenReady().then(async () => {
+  setDockIcon();
   await createWindow(pendingOpenPath ?? undefined);
 
   app.on("activate", async () => {
@@ -182,6 +200,8 @@ ipcMain.handle("shell:show-item", async (_event, filePath: string) => {
 });
 
 ipcMain.handle("recent:list", async () => store.get("recentFiles", []));
+
+ipcMain.handle("recent:remove", async (_event, filePath: string) => removeRecentFile(filePath));
 
 ipcMain.handle("recent:clear", async () => {
   store.set("recentFiles", []);

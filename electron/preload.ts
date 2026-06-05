@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("pdfReader", {
   closeWindowAfterConfirm: () => ipcRenderer.invoke("window:close-after-confirm"),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke("shell:show-item", filePath),
   listRecentFiles: () => ipcRenderer.invoke("recent:list"),
+  removeRecentFile: (filePath: string) => ipcRenderer.invoke("recent:remove", filePath),
   clearRecentFiles: () => ipcRenderer.invoke("recent:clear"),
   onFullScreenChange: (callback: (enabled: boolean) => void) => {
     const listener = (_event: unknown, enabled: boolean) => callback(enabled);

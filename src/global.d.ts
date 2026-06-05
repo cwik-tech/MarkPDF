@@ -14,6 +14,7 @@ declare global {
       closeWindowAfterConfirm: () => Promise<void>;
       showItemInFolder: (filePath: string) => Promise<void>;
       listRecentFiles: () => Promise<string[]>;
+      removeRecentFile: (filePath: string) => Promise<string[]>;
       clearRecentFiles: () => Promise<string[]>;
       onFullScreenChange: (callback: (enabled: boolean) => void) => () => void;
       onWindowRequestClose: (callback: () => void) => () => void;

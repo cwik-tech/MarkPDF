@@ -308,6 +308,15 @@ export default function App() {
     setRecentFiles(await window.pdfReader.listRecentFiles());
   }, []);
 
+  const removeRecentFile = useCallback(async (path: string) => {
+    if (!window.pdfReader) {
+      setRecentFiles((current) => current.filter((item) => item !== path));
+      return;
+    }
+
+    setRecentFiles(await window.pdfReader.removeRecentFile(path));
+  }, []);
+
   useEffect(() => {
     void loadRecentFiles();
   }, [loadRecentFiles]);
@@ -1170,7 +1179,12 @@ export default function App() {
 
         <section className="document-stage" ref={workspaceRef}>
           {!activeTab ? (
-            <EmptyState onOpen={openFromDialog} recentFiles={recentFiles} onOpenRecent={(path) => void openPdfPaths([path])} />
+            <EmptyState
+              onOpen={openFromDialog}
+              recentFiles={recentFiles}
+              onOpenRecent={(path) => void openPdfPaths([path])}
+              onRemoveRecent={(path) => void removeRecentFile(path)}
+            />
           ) : (
             <DocumentView
               tab={activeTab}
@@ -1492,11 +1506,13 @@ function MenuItem({
 function EmptyState({
   onOpen,
   recentFiles,
-  onOpenRecent
+  onOpenRecent,
+  onRemoveRecent
 }: {
   onOpen: () => void;
   recentFiles: string[];
   onOpenRecent: (path: string) => void;
+  onRemoveRecent: (path: string) => void;
 }) {
   return (
     <div className="empty-state">
@@ -1511,9 +1527,19 @@ function EmptyState({
         <div className="recent-empty">
           <h2>Recent</h2>
           {recentFiles.slice(0, 5).map((path) => (
-            <button key={path} onClick={() => onOpenRecent(path)} title={path}>
-              {fileNameFromPath(path)}
-            </button>
+            <div className="recent-empty-row" key={path}>
+              <button className="recent-empty-open" onClick={() => onOpenRecent(path)} title={path}>
+                {fileNameFromPath(path)}
+              </button>
+              <button
+                className="recent-empty-remove"
+                onClick={() => onRemoveRecent(path)}
+                title="Remove from recent files"
+                aria-label={`Remove ${fileNameFromPath(path)} from recent files`}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
           ))}
         </div>
       )}
