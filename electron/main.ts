@@ -1,9 +1,20 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
+import Store from "electron-store";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 let pendingOpenPath: string | null = null;
+const store = new Store<{ recentFiles: string[] }>({
+  defaults: {
+    recentFiles: []
+  }
+});
+
+function addRecentFile(filePath: string) {
+  const recentFiles = store.get("recentFiles", []);
+  store.set("recentFiles", [filePath, ...recentFiles.filter((item) => item !== filePath)].slice(0, 12));
+}
 
 const createWindow = async (filePath?: string) => {
   const window = new BrowserWindow({
@@ -92,6 +103,7 @@ ipcMain.handle("dialog:save-pdf", async (_event, defaultPath?: string) => {
 
 ipcMain.handle("file:read-pdf", async (_event, filePath: string) => {
   const data = await readFile(filePath);
+  addRecentFile(filePath);
   return {
     path: filePath,
     name: basename(filePath),
@@ -101,6 +113,7 @@ ipcMain.handle("file:read-pdf", async (_event, filePath: string) => {
 
 ipcMain.handle("file:write-pdf", async (_event, filePath: string, bytes: number[]) => {
   await writeFile(filePath, Buffer.from(bytes));
+  addRecentFile(filePath);
   return { path: filePath, name: basename(filePath) };
 });
 
@@ -110,4 +123,11 @@ ipcMain.handle("window:new-for-file", async (_event, filePath: string) => {
 
 ipcMain.handle("shell:show-item", async (_event, filePath: string) => {
   shell.showItemInFolder(filePath);
+});
+
+ipcMain.handle("recent:list", async () => store.get("recentFiles", []));
+
+ipcMain.handle("recent:clear", async () => {
+  store.set("recentFiles", []);
+  return [];
 });

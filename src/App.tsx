@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { detectFormFields, exportPdfBytes, loadPdfDocument } from "./pdf/document";
+import { detectFormFields, exportPdfBytes, findTextMatches, loadPdfDocument } from "./pdf/document";
 import type { FitMode, FormFieldState, OverlayItem, PdfTab, ThemeMode, ToolMode, ViewMode } from "./types";
 
 const defaultTextColor = "#1f2937";
@@ -46,11 +46,13 @@ export default function App() {
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [tool, setTool] = useState<ToolMode>("select");
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
-  const [sidebar, setSidebar] = useState<"pages" | "comments" | "forms" | "signature" | null>("pages");
+  const [sidebar, setSidebar] = useState<"pages" | "comments" | "forms" | "signature" | null>(null);
   const [signatureText, setSignatureText] = useState("Signature");
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
+  const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? null,
@@ -91,6 +93,9 @@ export default function App() {
         scrolling: true,
         overlays: [],
         formFields,
+        searchQuery: "",
+        searchMatches: [],
+        activeSearchMatch: -1,
         dirty: false
       };
 
@@ -107,9 +112,19 @@ export default function App() {
         const result = await window.pdfReader.readPdf(path);
         await addTabFromBytes(Uint8Array.from(result.bytes), result.name, result.path);
       }
+      setRecentFiles(await window.pdfReader.listRecentFiles());
     },
     [addTabFromBytes]
   );
+
+  const loadRecentFiles = useCallback(async () => {
+    if (!window.pdfReader) return;
+    setRecentFiles(await window.pdfReader.listRecentFiles());
+  }, []);
+
+  useEffect(() => {
+    void loadRecentFiles();
+  }, [loadRecentFiles]);
 
   useEffect(() => {
     if (!window.pdfReader) return undefined;
@@ -204,8 +219,11 @@ export default function App() {
       pageCount: pdfDoc.numPages,
       overlays: [],
       formFields,
+      searchMatches: [],
+      activeSearchMatch: -1,
       dirty: false
     });
+    await loadRecentFiles();
   };
 
   const printActiveTab = async () => {
@@ -331,7 +349,82 @@ export default function App() {
     }));
   };
 
+  const runSearch = async () => {
+    if (!activeTab) return;
+    const matches = await findTextMatches(activeTab.pdfDoc, searchText);
+    const firstMatch = matches[0];
+    updateTab(activeTab.id, {
+      searchQuery: searchText,
+      searchMatches: matches,
+      activeSearchMatch: firstMatch ? 0 : -1,
+      currentPage: firstMatch?.page ?? activeTab.currentPage
+    });
+  };
+
+  const stepSearch = (direction: 1 | -1) => {
+    if (!activeTab || activeTab.searchMatches.length === 0) return;
+    const nextIndex =
+      (activeTab.activeSearchMatch + direction + activeTab.searchMatches.length) % activeTab.searchMatches.length;
+    updateTab(activeTab.id, {
+      activeSearchMatch: nextIndex,
+      currentPage: activeTab.searchMatches[nextIndex].page
+    });
+  };
+
   const selectedOverlay = activeTab?.overlays.find((overlay) => overlay.id === selectedOverlayId) ?? null;
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!activeTab) return;
+      const target = event.target as HTMLElement | null;
+      const isTyping = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.tagName === "SELECT";
+      const shortcut = event.metaKey || event.ctrlKey;
+
+      if (shortcut && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      if (shortcut && (event.key === "+" || event.key === "=")) {
+        event.preventDefault();
+        updateTab(activeTab.id, { zoom: Math.min(4, activeTab.zoom + 0.1), fitMode: "actual" });
+        return;
+      }
+
+      if (shortcut && event.key === "-") {
+        event.preventDefault();
+        updateTab(activeTab.id, { zoom: Math.max(0.25, activeTab.zoom - 0.1), fitMode: "actual" });
+        return;
+      }
+
+      if (shortcut && event.key === "0") {
+        event.preventDefault();
+        updateTab(activeTab.id, { zoom: 1, fitMode: "actual" });
+        return;
+      }
+
+      if (isTyping) return;
+
+      if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+        event.preventDefault();
+        updateTab(activeTab.id, { currentPage: Math.max(1, activeTab.currentPage - 1) });
+      }
+
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+        event.preventDefault();
+        updateTab(activeTab.id, { currentPage: Math.min(activeTab.pageCount, activeTab.currentPage + 1) });
+      }
+
+      if (event.key === "Escape") {
+        setTool("select");
+        setSelectedOverlayId(null);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeTab, updateTab]);
 
   return (
     <div className="app-shell" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
@@ -347,6 +440,12 @@ export default function App() {
         onPrint={() => void printActiveTab()}
         theme={theme}
         onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+        recentFiles={recentFiles}
+        onOpenRecent={(path) => void openPdfPaths([path])}
+        onClearRecent={async () => {
+          if (!window.pdfReader) return;
+          setRecentFiles(await window.pdfReader.clearRecentFiles());
+        }}
       />
 
       <div className="toolbar">
@@ -428,8 +527,34 @@ export default function App() {
         <div className="toolbar-spacer" />
         <div className="search-box">
           <Search size={15} />
-          <input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Find text" />
+          <input
+            ref={searchInputRef}
+            value={searchText}
+            onChange={(event) => setSearchText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                if (event.shiftKey) stepSearch(-1);
+                else if (activeTab?.searchQuery === searchText && activeTab.searchMatches.length > 0) stepSearch(1);
+                else void runSearch();
+              }
+            }}
+            placeholder="Find text"
+          />
         </div>
+        <button className="icon-button" title="Previous match" disabled={!activeTab?.searchMatches.length} onClick={() => stepSearch(-1)}>
+          <ChevronLeft size={16} />
+        </button>
+        <button className="icon-button" title="Next match" disabled={!activeTab?.searchMatches.length} onClick={() => stepSearch(1)}>
+          <ChevronRight size={16} />
+        </button>
+        <span className="search-count">
+          {activeTab?.searchMatches.length
+            ? `${activeTab.activeSearchMatch + 1}/${activeTab.searchMatches.length}`
+            : activeTab?.searchQuery
+              ? "0/0"
+              : ""}
+        </span>
         <button className="icon-button" title="Forms" disabled={!activeTab} onClick={() => setSidebar("forms")}>
           <Settings2 size={18} />
         </button>
@@ -443,7 +568,9 @@ export default function App() {
             selectedOverlay={selectedOverlay}
             signatureText={signatureText}
             signatureDataUrl={signatureDataUrl}
+            recentFiles={recentFiles}
             onSelectPage={(page) => activeTab && updateTab(activeTab.id, { currentPage: page })}
+            onOpenRecent={(path) => void openPdfPaths([path])}
             onUpdateOverlay={updateOverlay}
             onDeleteOverlay={deleteOverlay}
             onUpdateFormField={updateFormField}
@@ -454,7 +581,7 @@ export default function App() {
 
         <section className="document-stage" ref={workspaceRef}>
           {!activeTab ? (
-            <EmptyState onOpen={openFromDialog} />
+            <EmptyState onOpen={openFromDialog} recentFiles={recentFiles} onOpenRecent={(path) => void openPdfPaths([path])} />
           ) : (
             <DocumentView
               tab={activeTab}
@@ -492,7 +619,10 @@ function TopBar({
   onExportFlattened,
   onPrint,
   theme,
-  onToggleTheme
+  onToggleTheme,
+  recentFiles,
+  onOpenRecent,
+  onClearRecent
 }: {
   tabs: PdfTab[];
   activeTabId: string | null;
@@ -505,6 +635,9 @@ function TopBar({
   onPrint: () => void;
   theme: ThemeMode;
   onToggleTheme: () => void;
+  recentFiles: string[];
+  onOpenRecent: (path: string) => void;
+  onClearRecent: () => void;
 }) {
   return (
     <header className="top-bar">
@@ -534,6 +667,20 @@ function TopBar({
           <FilePlus2 size={16} />
           Open
         </button>
+        <div className="menu-button">
+          <button className="text-button" disabled={recentFiles.length === 0}>
+            Recent
+            <ChevronDown size={15} />
+          </button>
+          <div className="menu-popover right wide">
+            {recentFiles.map((path) => (
+              <button key={path} onClick={() => onOpenRecent(path)} title={path}>
+                {fileNameFromPath(path)}
+              </button>
+            ))}
+            <button onClick={onClearRecent}>Clear recent files</button>
+          </div>
+        </div>
         <button className="icon-button" title="Save" onClick={onSave} disabled={tabs.length === 0}>
           <Save size={17} />
         </button>
@@ -650,7 +797,15 @@ function ViewMenu({
   );
 }
 
-function EmptyState({ onOpen }: { onOpen: () => void }) {
+function EmptyState({
+  onOpen,
+  recentFiles,
+  onOpenRecent
+}: {
+  onOpen: () => void;
+  recentFiles: string[];
+  onOpenRecent: (path: string) => void;
+}) {
   return (
     <div className="empty-state">
       <FileText size={48} />
@@ -660,8 +815,22 @@ function EmptyState({ onOpen }: { onOpen: () => void }) {
         <FilePlus2 size={18} />
         Open PDF
       </button>
+      {recentFiles.length > 0 && (
+        <div className="recent-empty">
+          <h2>Recent</h2>
+          {recentFiles.slice(0, 5).map((path) => (
+            <button key={path} onClick={() => onOpenRecent(path)} title={path}>
+              {fileNameFromPath(path)}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+function fileNameFromPath(path: string) {
+  return path.split(/[\\/]/).pop() || path;
 }
 
 function DocumentView({
@@ -764,7 +933,6 @@ function PdfPage({
         className="pdf-page"
         style={{ width: size.width, height: size.height }}
         onClick={(event) => {
-          if (event.target !== event.currentTarget) return;
           const rect = event.currentTarget.getBoundingClientRect();
           onSelectOverlay(null);
           onPageClick((event.clientX - rect.left) / zoom, (event.clientY - rect.top) / zoom);
@@ -829,6 +997,7 @@ function OverlayBox({
       onPointerUp={() => {
         dragRef.current = null;
       }}
+      onClick={(event) => event.stopPropagation()}
       onDoubleClick={() => {
         if (overlay.kind === "highlight" || overlay.dataUrl) return;
         const nextText = window.prompt("Edit text", overlay.text ?? "");
@@ -869,13 +1038,60 @@ function OverlayBox({
   );
 }
 
+function PageThumbnail({
+  pdfDoc,
+  pageNumber,
+  active
+}: {
+  pdfDoc: PDFDocumentProxy;
+  pageNumber: number;
+  active: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
+
+    async function renderThumbnail() {
+      const page = await pdfDoc.getPage(pageNumber);
+      if (cancelled || !canvasRef.current) return;
+      const baseViewport = page.getViewport({ scale: 1 });
+      const scale = 116 / baseViewport.width;
+      const viewport = page.getViewport({ scale });
+      const canvas = canvasRef.current;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(viewport.width * dpr);
+      canvas.height = Math.floor(viewport.height * dpr);
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      renderTask = page.render({ canvas, canvasContext: context, viewport });
+      await renderTask.promise.catch(() => undefined);
+    }
+
+    void renderThumbnail();
+
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+    };
+  }, [pdfDoc, pageNumber]);
+
+  return <canvas className={active ? "active" : ""} ref={canvasRef} />;
+}
+
 function Sidebar({
   mode,
   tab,
   selectedOverlay,
   signatureText,
   signatureDataUrl,
+  recentFiles,
   onSelectPage,
+  onOpenRecent,
   onUpdateOverlay,
   onDeleteOverlay,
   onUpdateFormField,
@@ -887,7 +1103,9 @@ function Sidebar({
   selectedOverlay: OverlayItem | null;
   signatureText: string;
   signatureDataUrl: string | null;
+  recentFiles: string[];
   onSelectPage: (page: number) => void;
+  onOpenRecent: (path: string) => void;
   onUpdateOverlay: (id: string, patch: Partial<OverlayItem>) => void;
   onDeleteOverlay: (id: string) => void;
   onUpdateFormField: (name: string, value: string | boolean) => void;
@@ -907,11 +1125,24 @@ function Sidebar({
                   className={page === tab.currentPage ? "active" : ""}
                   onClick={() => onSelectPage(page)}
                 >
+                  <PageThumbnail pdfDoc={tab.pdfDoc} pageNumber={page} active={page === tab.currentPage} />
                   <span>{page}</span>
                 </button>
               ))
             ) : (
-              <p>No document open.</p>
+              <>
+                <p>No document open.</p>
+                {recentFiles.length > 0 && (
+                  <div className="stack">
+                    {recentFiles.slice(0, 6).map((path) => (
+                      <button className="comment-row" key={path} onClick={() => onOpenRecent(path)} title={path}>
+                        <strong>{fileNameFromPath(path)}</strong>
+                        <span>{path}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </>

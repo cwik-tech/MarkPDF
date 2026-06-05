@@ -1,15 +1,18 @@
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.mjs?url";
 import {
+  PDFArray,
   PDFCheckBox,
   PDFDocument,
   PDFDropdown,
+  PDFName,
   PDFRadioGroup,
+  PDFString,
   PDFTextField,
   rgb,
   StandardFonts
 } from "pdf-lib";
-import type { FormFieldState, OverlayItem } from "../types";
+import type { FormFieldState, OverlayItem, SearchMatch } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -56,6 +59,39 @@ export async function detectFormFields(bytes: Uint8Array): Promise<FormFieldStat
   } catch {
     return [];
   }
+}
+
+export async function findTextMatches(pdfDoc: pdfjsLib.PDFDocumentProxy, query: string): Promise<SearchMatch[]> {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return [];
+
+  const matches: SearchMatch[] = [];
+
+  for (let pageNumber = 1; pageNumber <= pdfDoc.numPages; pageNumber += 1) {
+    const page = await pdfDoc.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items
+      .map((item) => ("str" in item ? item.str : ""))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const lowerText = pageText.toLowerCase();
+    let index = lowerText.indexOf(normalizedQuery);
+
+    while (index >= 0) {
+      const start = Math.max(0, index - 42);
+      const end = Math.min(pageText.length, index + normalizedQuery.length + 42);
+      matches.push({
+        id: `${pageNumber}-${index}`,
+        page: pageNumber,
+        index,
+        snippet: `${start > 0 ? "..." : ""}${pageText.slice(start, end)}${end < pageText.length ? "..." : ""}`
+      });
+      index = lowerText.indexOf(normalizedQuery, index + normalizedQuery.length);
+    }
+  }
+
+  return matches;
 }
 
 export async function exportPdfBytes(
@@ -122,6 +158,7 @@ export async function exportPdfBytes(
     }
 
     if (overlay.kind === "comment") {
+      addTextNoteAnnotation(pdfDoc, page, overlay, x, y);
       page.drawRectangle({
         x,
         y,
@@ -171,6 +208,34 @@ export async function exportPdfBytes(
   }
 
   return pdfDoc.save();
+}
+
+function addTextNoteAnnotation(
+  pdfDoc: PDFDocument,
+  page: ReturnType<PDFDocument["getPages"]>[number],
+  overlay: OverlayItem,
+  x: number,
+  y: number
+) {
+  const annots =
+    page.node.lookupMaybe(PDFName.of("Annots"), PDFArray) ?? pdfDoc.context.obj([]);
+
+  if (!page.node.lookupMaybe(PDFName.of("Annots"), PDFArray)) {
+    page.node.set(PDFName.of("Annots"), annots);
+  }
+
+  const noteSize = 24;
+  const annotation = pdfDoc.context.obj({
+    Type: PDFName.of("Annot"),
+    Subtype: PDFName.of("Text"),
+    Rect: [x, y + Math.max(0, overlay.height - noteSize), x + noteSize, y + overlay.height],
+    Contents: PDFString.of(overlay.text || "Comment"),
+    Name: PDFName.of("Comment"),
+    C: [1, 0.88, 0.1],
+    Open: false
+  });
+
+  annots.push(pdfDoc.context.register(annotation));
 }
 
 async function embedSignatureImage(pdfDoc: PDFDocument, dataUrl: string) {

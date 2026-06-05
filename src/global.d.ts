@@ -9,6 +9,8 @@ declare global {
       writePdf: (filePath: string, bytes: number[]) => Promise<{ path: string; name: string }>;
       openFileInNewWindow: (filePath: string) => Promise<void>;
       showItemInFolder: (filePath: string) => Promise<void>;
+      listRecentFiles: () => Promise<string[]>;
+      clearRecentFiles: () => Promise<string[]>;
       onOpenFile: (callback: (filePath: string) => void) => () => void;
     };
   }

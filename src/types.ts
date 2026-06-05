@@ -30,6 +30,13 @@ export interface FormFieldState {
   options?: string[];
 }
 
+export interface SearchMatch {
+  id: string;
+  page: number;
+  index: number;
+  snippet: string;
+}
+
 export interface PdfTab {
   id: string;
   name: string;
@@ -45,5 +52,8 @@ export interface PdfTab {
   scrolling: boolean;
   overlays: OverlayItem[];
   formFields: FormFieldState[];
+  searchQuery: string;
+  searchMatches: SearchMatch[];
+  activeSearchMatch: number;
   dirty: boolean;
 }

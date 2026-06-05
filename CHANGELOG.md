@@ -10,3 +10,9 @@
 - Added basic form-field detection and filling panel.
 - Added PDF save, save-as, flattened export, and print flows.
 - Removed the duplicate native-looking header by hiding the macOS title bar and removing the fake traffic-light strip.
+- Added persisted recent files with an Open Recent menu and empty-state recent list.
+- Replaced numeric page tiles with rendered PDF page thumbnails.
+- Added document text search with match navigation and keyboard submit behavior.
+- Added keyboard shortcuts for page navigation, zoom, actual size, find focus, and escape-to-select.
+- Added standard PDF text-note annotations when exporting comment overlays.
+- Reduced the upper app bar height and made the left sidebar closed by default.

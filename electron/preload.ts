@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("pdfReader", {
   writePdf: (filePath: string, bytes: number[]) => ipcRenderer.invoke("file:write-pdf", filePath, bytes),
   openFileInNewWindow: (filePath: string) => ipcRenderer.invoke("window:new-for-file", filePath),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke("shell:show-item", filePath),
+  listRecentFiles: () => ipcRenderer.invoke("recent:list"),
+  clearRecentFiles: () => ipcRenderer.invoke("recent:clear"),
   onOpenFile: (callback: (filePath: string) => void) => {
     const listener = (_event: unknown, filePath: string) => callback(filePath);
     ipcRenderer.on("app:open-file", listener);
