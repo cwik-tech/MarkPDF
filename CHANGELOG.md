@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Rebuilt visual signing with saved typed signatures, generated initials and date stamps, image upload, large drawing modal, Acrobat-style placement, and editable-vs-flattened save prompts.
 - Added conditional automatic OCR for mostly textless PDFs, with toolbar progress and OCR-backed search/text-selection fallback.
 - Created the Electron, React, and TypeScript desktop app scaffold.
 - Added tabbed PDF opening from dialog, drag and drop, and OS file-open handoff.

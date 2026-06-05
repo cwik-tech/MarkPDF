@@ -493,6 +493,7 @@ select {
   width: 286px;
   min-width: 286px;
   overflow: auto;
+  overflow-x: hidden;
   padding: 14px;
   background: var(--panel);
   border-right: 1px solid var(--border);
@@ -1097,18 +1098,207 @@ select {
   border-top: 1px solid var(--border);
 }
 
-.signature-pad {
+.signature-section {
   display: grid;
-  gap: 8px;
-  margin: 10px 0;
+  gap: 10px;
+  margin: 0 0 16px;
+  min-width: 0;
 }
 
-.signature-pad canvas {
-  width: 100%;
-  height: auto;
+.signature-section h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.signature-preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 92px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.signature-preview {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 70px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: white;
+  color: #111827;
+  overflow: hidden;
+}
+
+.signature-preview:first-child {
+  grid-row: span 2;
+}
+
+.signature-preview span {
+  max-width: 100%;
+  padding: 0 8px;
+  overflow: hidden;
+  font-size: 30px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signature-preview.small {
+  min-height: 31px;
+}
+
+.signature-preview.small span {
+  font-size: 17px;
+}
+
+.signature-upload {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.signature-upload input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.signature-assets {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.signature-asset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.signature-asset-select {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 46px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.signature-asset.active .signature-asset-select {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent), transparent 20%);
+}
+
+.signature-asset-select img {
+  width: 100%;
+  height: 34px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: white;
+}
+
+.signature-asset-select span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signature-asset-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  min-height: 46px;
+  border: 1px solid color-mix(in srgb, var(--danger), transparent 55%);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(6, 10, 18, 0.68);
+  -webkit-app-region: no-drag;
+}
+
+.signature-draw-modal,
+.save-signature-modal {
+  display: grid;
+  gap: 14px;
+  width: min(960px, 94vw);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 14px;
+}
+
+.save-signature-modal {
+  width: min(440px, 94vw);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.signature-draw-modal canvas {
+  width: 100%;
+  height: min(360px, 48vh);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: white;
+  touch-action: none;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.save-signature-modal p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 .upload-row {
