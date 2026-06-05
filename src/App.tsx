@@ -74,6 +74,7 @@ export default function App() {
   const [searchText, setSearchText] = useState("");
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [openMenu, setOpenMenu] = useState<"fit" | "view" | null>(null);
   const [selectionAction, setSelectionAction] = useState<{
     page: number;
     x: number;
@@ -822,12 +823,28 @@ export default function App() {
               <Plus size={18} />
             </button>
           </div>
-          <FitMenu activeTab={activeTab} onFit={(mode) => void applyFitMode(mode)} />
+          <FitMenu
+            activeTab={activeTab}
+            openMenu={openMenu}
+            onOpenMenu={setOpenMenu}
+            onFit={(mode) => {
+              void applyFitMode(mode);
+              setOpenMenu(null);
+            }}
+          />
           <ViewMenu
             activeTab={activeTab}
-            onChange={(patch) => activeTab && updateTab(activeTab.id, patch)}
+            onChange={(patch) => {
+              if (activeTab) updateTab(activeTab.id, patch);
+              setOpenMenu(null);
+            }}
             isFullScreen={isFullScreen}
-            onToggleFullScreen={() => void toggleFullScreen()}
+            onToggleFullScreen={() => {
+              void toggleFullScreen();
+              setOpenMenu(null);
+            }}
+            openMenu={openMenu}
+            onOpenMenu={setOpenMenu}
           />
         </div>
         <div className="toolbar-spacer" />
@@ -1094,7 +1111,17 @@ function PageBox({ tab, onChange }: { tab: PdfTab | null; onChange: (page: numbe
   );
 }
 
-function FitMenu({ activeTab, onFit }: { activeTab: PdfTab | null; onFit: (fitMode: FitMode) => void }) {
+function FitMenu({
+  activeTab,
+  openMenu,
+  onOpenMenu,
+  onFit
+}: {
+  activeTab: PdfTab | null;
+  openMenu: "fit" | "view" | null;
+  onOpenMenu: (menu: "fit" | "view" | null) => void;
+  onFit: (fitMode: FitMode) => void;
+}) {
   const activeMode = activeTab?.fitMode ?? "page";
   const activeIcon =
     activeMode === "actual" ? (
@@ -1108,8 +1135,17 @@ function FitMenu({ activeTab, onFit }: { activeTab: PdfTab | null; onFit: (fitMo
     );
 
   return (
-    <div className="menu-button">
-      <button className="icon-button menu-trigger" title={activeMode === "actual" ? "Actual size" : `Fit ${activeMode}`} disabled={!activeTab}>
+    <div
+      className={`menu-button ${openMenu === "fit" ? "open" : ""}`}
+      onMouseEnter={() => activeTab && onOpenMenu("fit")}
+      onMouseLeave={() => onOpenMenu(null)}
+    >
+      <button
+        className="icon-button menu-trigger"
+        title={activeMode === "actual" ? "Actual size" : `Fit ${activeMode}`}
+        disabled={!activeTab}
+        onClick={() => activeTab && onOpenMenu(openMenu === "fit" ? null : "fit")}
+      >
         {activeIcon}
       </button>
       <div className="menu-popover">
@@ -1134,18 +1170,31 @@ function ViewMenu({
   activeTab,
   onChange,
   isFullScreen,
-  onToggleFullScreen
+  onToggleFullScreen,
+  openMenu,
+  onOpenMenu
 }: {
   activeTab: PdfTab | null;
   onChange: (patch: Partial<PdfTab>) => void;
   isFullScreen: boolean;
   onToggleFullScreen: () => void;
+  openMenu: "fit" | "view" | null;
+  onOpenMenu: (menu: "fit" | "view" | null) => void;
 }) {
   const activeViewIcon = activeTab?.viewMode === "two" ? <Columns2 size={18} /> : <FileText size={18} />;
 
   return (
-    <div className="menu-button">
-      <button className="icon-button menu-trigger" title={activeTab?.viewMode === "two" ? "Two-page view" : "Single-page view"} disabled={!activeTab}>
+    <div
+      className={`menu-button ${openMenu === "view" ? "open" : ""}`}
+      onMouseEnter={() => activeTab && onOpenMenu("view")}
+      onMouseLeave={() => onOpenMenu(null)}
+    >
+      <button
+        className="icon-button menu-trigger"
+        title={activeTab?.viewMode === "two" ? "Two-page view" : "Single-page view"}
+        disabled={!activeTab}
+        onClick={() => activeTab && onOpenMenu(openMenu === "view" ? null : "view")}
+      >
         {activeViewIcon}
       </button>
       <div className="menu-popover">
@@ -1308,7 +1357,7 @@ function DocumentView({
 
   return (
     <div
-      className={`document-scroll ${tab.viewMode === "two" && !tab.scrolling ? "two-up" : ""}`}
+      className={`document-scroll ${tab.viewMode === "two" && !tab.scrolling ? "two-up" : ""} ${!tab.scrolling ? "chrome-hidden" : ""}`}
       onWheelCapture={(event) => {
         const target = event.currentTarget;
         const canScrollVertically = target.scrollHeight > target.clientHeight;

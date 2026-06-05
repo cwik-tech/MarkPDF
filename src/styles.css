@@ -148,6 +148,7 @@ button {
   padding: 0 8px;
   background: var(--chrome-2);
   border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
 }
 
 .toolbar-center {
@@ -158,6 +159,8 @@ button {
   align-items: center;
   gap: 7px;
   transform: translate(-50%, -50%);
+  z-index: 5;
+  -webkit-app-region: no-drag;
 }
 
 .toolbar-spacer {
@@ -251,6 +254,13 @@ button:disabled {
   background: var(--panel);
   color: var(--text);
   text-align: center;
+  -webkit-app-region: no-drag;
+}
+
+input,
+textarea,
+select {
+  -webkit-app-region: no-drag;
 }
 
 .zoom-control {
@@ -273,6 +283,7 @@ button:disabled {
   align-items: center;
   padding: 6px 0;
   margin: -6px 0;
+  -webkit-app-region: no-drag;
 }
 
 .menu-popover {
@@ -287,6 +298,7 @@ button:disabled {
   border-radius: 8px;
   background: var(--panel);
   box-shadow: var(--shadow);
+  pointer-events: auto;
 }
 
 .menu-popover.right {
@@ -299,7 +311,8 @@ button:disabled {
 }
 
 .menu-button:hover .menu-popover,
-.menu-button:focus-within .menu-popover {
+.menu-button:focus-within .menu-popover,
+.menu-button.open .menu-popover {
   display: grid;
   gap: 2px;
 }
@@ -550,6 +563,15 @@ button:disabled {
   height: 100%;
   overflow: auto;
   padding: 28px;
+}
+
+.document-scroll.chrome-hidden {
+  scrollbar-width: none;
+}
+
+.document-scroll.chrome-hidden::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .document-scroll.two-up {
