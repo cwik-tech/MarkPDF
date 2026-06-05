@@ -257,11 +257,16 @@ button:disabled {
 
 .menu-button {
   position: relative;
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 0;
+  margin: -6px 0;
 }
 
 .menu-popover {
   position: absolute;
-  top: calc(100% + 4px);
+  top: 100%;
   left: 0;
   z-index: 20;
   display: none;
@@ -282,7 +287,8 @@ button:disabled {
   min-width: 280px;
 }
 
-.menu-button:hover .menu-popover {
+.menu-button:hover .menu-popover,
+.menu-button:focus-within .menu-popover {
   display: grid;
   gap: 2px;
 }
@@ -327,7 +333,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 7px;
-  width: 32px;
+  width: 34px;
   height: 30px;
   padding: 0 8px;
   border: 1px solid var(--border);
@@ -336,6 +342,13 @@ button:disabled {
   color: var(--muted);
   overflow: hidden;
   transition: width 160ms ease;
+}
+
+.search-box svg {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: var(--text);
 }
 
 .search-box:hover,
@@ -495,15 +508,17 @@ button:disabled {
 
 .page-wrap {
   display: grid;
-  justify-items: start;
-  gap: 8px;
+  grid-template-columns: 72px minmax(0, max-content);
+  align-items: start;
+  gap: 12px;
 }
 
 .page-number-label {
-  width: 100%;
+  padding-top: 1px;
   color: var(--muted);
   font-size: 12px;
-  text-align: left;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .pdf-page {
@@ -518,9 +533,43 @@ button:disabled {
   inset: 0;
 }
 
+.text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  text-align: initial;
+  transform-origin: 0 0;
+  z-index: 1;
+}
+
+.text-layer span,
+.text-layer br {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.text-layer ::selection {
+  background: rgba(84, 169, 255, 0.35);
+}
+
+.pdf-page.selectable .text-layer {
+  pointer-events: auto;
+  user-select: text;
+}
+
+.pdf-page.editing .text-layer {
+  pointer-events: none;
+  user-select: none;
+}
+
 .overlay-layer {
   position: absolute;
   inset: 0;
+  z-index: 2;
   pointer-events: none;
 }
 

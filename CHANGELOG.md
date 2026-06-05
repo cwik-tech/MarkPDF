@@ -22,3 +22,4 @@
 - Added password retry for protected PDFs and a bookmarks sidebar from PDF outline data.
 - Fixed packaged app startup by emitting relative Vite asset URLs for Electron file loading.
 - Refined the PDF toolbar with sidebar-local page/bookmark switching, compact page and zoom controls, icon-only fit/view menus, expanding search, and left-aligned page labels.
+- Fixed toolbar hover/search visibility, separated fit/view icons, moved page labels beside pages, removed the unclear forms shortcut, and enabled selectable PDF text in select mode.

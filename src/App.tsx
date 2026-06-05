@@ -10,6 +10,7 @@ import {
   FilePlus2,
   FileText,
   Highlighter,
+  LayoutPanelTop,
   MessageSquarePlus,
   Maximize2,
   Minus,
@@ -22,8 +23,8 @@ import {
   Printer,
   RotateCw,
   Save,
+  ScanText,
   Search,
-  Settings2,
   Signature,
   ScrollText,
   StretchHorizontal,
@@ -34,6 +35,7 @@ import {
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { TextLayer } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
   deletePdfPage,
@@ -671,7 +673,7 @@ export default function App() {
           <PanelLeft size={18} />
         </button>
         <div className="divider" />
-        <ToolButton active={tool === "select"} title="Select" onClick={() => setTool("select")}>
+        <ToolButton active={tool === "select"} title="Select text" onClick={() => setTool("select")}>
           <MousePointer2 size={18} />
         </ToolButton>
         <ToolButton active={tool === "text"} title="Add text" onClick={() => setTool("text")}>
@@ -784,9 +786,6 @@ export default function App() {
             </span>
           </>
         )}
-        <button className="icon-button" title="Forms" disabled={!activeTab} onClick={() => setSidebar("forms")}>
-          <Settings2 size={18} />
-        </button>
       </div>
 
       <main className="workspace">
@@ -818,6 +817,7 @@ export default function App() {
           ) : (
             <DocumentView
               tab={activeTab}
+              tool={tool}
               selectedOverlayId={selectedOverlayId}
               onPageClick={addOverlay}
             onSelectOverlay={setSelectedOverlayId}
@@ -993,7 +993,7 @@ function FitMenu({ activeTab, onFit }: { activeTab: PdfTab | null; onFit: (fitMo
   const activeMode = activeTab?.fitMode ?? "page";
   const activeIcon =
     activeMode === "actual" ? (
-      <FileText size={18} />
+      <ScanText size={18} />
     ) : activeMode === "width" ? (
       <StretchHorizontal size={18} />
     ) : activeMode === "height" ? (
@@ -1008,7 +1008,7 @@ function FitMenu({ activeTab, onFit }: { activeTab: PdfTab | null; onFit: (fitMo
         {activeIcon}
       </button>
       <div className="menu-popover">
-        <MenuItem active={activeMode === "actual"} icon={<FileText size={15} />} onClick={() => onFit("actual")}>
+        <MenuItem active={activeMode === "actual"} icon={<ScanText size={15} />} onClick={() => onFit("actual")}>
           Actual size
         </MenuItem>
         <MenuItem active={activeMode === "page"} icon={<Maximize2 size={15} />} onClick={() => onFit("page")}>
@@ -1036,7 +1036,7 @@ function ViewMenu({
   isFullScreen: boolean;
   onToggleFullScreen: () => void;
 }) {
-  const activeViewIcon = activeTab?.viewMode === "two" ? <Columns2 size={18} /> : <FileText size={18} />;
+  const activeViewIcon = activeTab?.viewMode === "two" ? <Columns2 size={18} /> : <LayoutPanelTop size={18} />;
 
   return (
     <div className="menu-button">
@@ -1044,7 +1044,7 @@ function ViewMenu({
         {activeViewIcon}
       </button>
       <div className="menu-popover">
-        <MenuItem active={activeTab?.viewMode === "single"} icon={<FileText size={15} />} onClick={() => onChange({ viewMode: "single" })}>
+        <MenuItem active={activeTab?.viewMode === "single"} icon={<LayoutPanelTop size={15} />} onClick={() => onChange({ viewMode: "single" })}>
           Single-page view
         </MenuItem>
         <MenuItem active={activeTab?.viewMode === "two"} icon={<Columns2 size={15} />} onClick={() => onChange({ viewMode: "two" })}>
@@ -1119,12 +1119,14 @@ function fileNameFromPath(path: string) {
 
 function DocumentView({
   tab,
+  tool,
   selectedOverlayId,
   onPageClick,
   onSelectOverlay,
   onUpdateOverlay
 }: {
   tab: PdfTab;
+  tool: ToolMode;
   selectedOverlayId: string | null;
   onPageClick: (page: number, x: number, y: number) => void;
   onSelectOverlay: (id: string | null) => void;
@@ -1145,6 +1147,7 @@ function DocumentView({
           pageNumber={pageNumber}
           zoom={tab.zoom}
           rotation={tab.rotation}
+          tool={tool}
           overlays={tab.overlays.filter((overlay) => overlay.page === pageNumber)}
           selectedOverlayId={selectedOverlayId}
           onPageClick={(x, y) => onPageClick(pageNumber, x, y)}
@@ -1161,6 +1164,7 @@ function PdfPage({
   pageNumber,
   zoom,
   rotation,
+  tool,
   overlays,
   selectedOverlayId,
   onPageClick,
@@ -1171,6 +1175,7 @@ function PdfPage({
   pageNumber: number;
   zoom: number;
   rotation: number;
+  tool: ToolMode;
   overlays: OverlayItem[];
   selectedOverlayId: string | null;
   onPageClick: (x: number, y: number) => void;
@@ -1178,18 +1183,20 @@ function PdfPage({
   onUpdateOverlay: (id: string, patch: Partial<OverlayItem>) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const textLayerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [renderError, setRenderError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
+    let textLayer: TextLayer | null = null;
 
     async function renderPage() {
       try {
         setRenderError(null);
         const page = await pdfDoc.getPage(pageNumber);
-        if (cancelled || !canvasRef.current) return;
+        if (cancelled || !canvasRef.current || !textLayerRef.current) return;
         const viewport = page.getViewport({ scale: zoom, rotation });
         const canvas = canvasRef.current;
         const context = canvas.getContext("2d");
@@ -1203,7 +1210,13 @@ function PdfPage({
         context.clearRect(0, 0, viewport.width, viewport.height);
         setSize({ width: viewport.width, height: viewport.height });
         renderTask = page.render({ canvas, canvasContext: context, viewport, background: "white" });
-        await renderTask.promise;
+        textLayerRef.current.replaceChildren();
+        textLayer = new TextLayer({
+          textContentSource: page.streamTextContent({ includeMarkedContent: true }),
+          container: textLayerRef.current,
+          viewport
+        });
+        await Promise.all([renderTask.promise, textLayer.render()]);
       } catch (error) {
         if (!cancelled) {
           setRenderError(error instanceof Error ? error.message : "Page render failed.");
@@ -1216,6 +1229,7 @@ function PdfPage({
     return () => {
       cancelled = true;
       renderTask?.cancel();
+      textLayer?.cancel();
     };
   }, [pdfDoc, pageNumber, rotation, zoom]);
 
@@ -1223,15 +1237,17 @@ function PdfPage({
     <div className="page-wrap">
       <div className="page-number-label">Page {pageNumber}</div>
       <div
-        className="pdf-page"
+        className={`pdf-page ${tool === "select" ? "selectable" : "editing"}`}
         style={{ width: size.width, height: size.height }}
         onClick={(event) => {
+          if (tool === "select") return;
           const rect = event.currentTarget.getBoundingClientRect();
           onSelectOverlay(null);
           onPageClick((event.clientX - rect.left) / zoom, (event.clientY - rect.top) / zoom);
         }}
       >
         <canvas ref={canvasRef} />
+        <div className="text-layer" ref={textLayerRef} />
         {renderError && (
           <div className="render-error">
             <strong>Render failed</strong>
