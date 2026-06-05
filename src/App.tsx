@@ -90,7 +90,7 @@ export default function App() {
         rotation: 0,
         viewMode: "single",
         fitMode: "actual",
-        scrolling: true,
+        scrolling: false,
         overlays: [],
         formFields,
         searchQuery: "",
@@ -895,27 +895,36 @@ function PdfPage({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const [renderError, setRenderError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
 
     async function renderPage() {
-      const page = await pdfDoc.getPage(pageNumber);
-      if (cancelled || !canvasRef.current) return;
-      const viewport = page.getViewport({ scale: zoom, rotation });
-      const canvas = canvasRef.current;
-      const context = canvas.getContext("2d");
-      if (!context) return;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.floor(viewport.width * dpr);
-      canvas.height = Math.floor(viewport.height * dpr);
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      context.setTransform(dpr, 0, 0, dpr, 0, 0);
-      setSize({ width: viewport.width, height: viewport.height });
-      renderTask = page.render({ canvas, canvasContext: context, viewport });
-      await renderTask.promise.catch(() => undefined);
+      try {
+        setRenderError(null);
+        const page = await pdfDoc.getPage(pageNumber);
+        if (cancelled || !canvasRef.current) return;
+        const viewport = page.getViewport({ scale: zoom, rotation });
+        const canvas = canvasRef.current;
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
+        context.setTransform(dpr, 0, 0, dpr, 0, 0);
+        context.clearRect(0, 0, viewport.width, viewport.height);
+        setSize({ width: viewport.width, height: viewport.height });
+        renderTask = page.render({ canvas, canvasContext: context, viewport, background: "white" });
+        await renderTask.promise;
+      } catch (error) {
+        if (!cancelled) {
+          setRenderError(error instanceof Error ? error.message : "Page render failed.");
+        }
+      }
     }
 
     void renderPage();
@@ -939,6 +948,12 @@ function PdfPage({
         }}
       >
         <canvas ref={canvasRef} />
+        {renderError && (
+          <div className="render-error">
+            <strong>Render failed</strong>
+            <span>{renderError}</span>
+          </div>
+        )}
         <div className="overlay-layer">
           {overlays.map((overlay) => (
             <OverlayBox

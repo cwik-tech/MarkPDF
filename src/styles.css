@@ -449,6 +449,27 @@ button:disabled {
   pointer-events: none;
 }
 
+.render-error {
+  position: absolute;
+  inset: 16px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--danger), transparent 35%);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #7f1d1d;
+  text-align: center;
+}
+
+.render-error span {
+  max-width: 420px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
 .overlay-box {
   position: absolute;
   display: flex;

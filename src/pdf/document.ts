@@ -1,5 +1,5 @@
-import * as pdfjsLib from "pdfjs-dist";
-import pdfWorker from "pdfjs-dist/build/pdf.worker.mjs?url";
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import pdfWorker from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import {
   PDFArray,
   PDFCheckBox,
@@ -16,8 +16,17 @@ import type { FormFieldState, OverlayItem, SearchMatch } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
+const pdfAssetBase = `${import.meta.env.BASE_URL}pdfjs/`;
+
 export async function loadPdfDocument(bytes: Uint8Array) {
-  return pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+  return pdfjsLib.getDocument({
+    data: bytes.slice(),
+    cMapUrl: `${pdfAssetBase}cmaps/`,
+    cMapPacked: true,
+    standardFontDataUrl: `${pdfAssetBase}standard_fonts/`,
+    wasmUrl: `${pdfAssetBase}wasm/`,
+    useSystemFonts: true
+  }).promise;
 }
 
 export async function detectFormFields(bytes: Uint8Array): Promise<FormFieldState[]> {
