@@ -22,7 +22,8 @@
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.4.394",
     "react": "^19.2.1",
-    "react-dom": "^19.2.1"
+    "react-dom": "^19.2.1",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.0.0",

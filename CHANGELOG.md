@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Added conditional automatic OCR for mostly textless PDFs, with toolbar progress and OCR-backed search/text-selection fallback.
 - Created the Electron, React, and TypeScript desktop app scaffold.
 - Added tabbed PDF opening from dialog, drag and drop, and OS file-open handoff.
 - Added PDF rendering with page navigation, zoom, rotate, fit controls, view modes, and scrolling mode.
