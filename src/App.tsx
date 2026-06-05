@@ -2020,17 +2020,25 @@ function DocumentView({
       className={`document-scroll ${tab.viewMode === "two" && !tab.scrolling ? "two-up" : ""} ${!tab.scrolling ? "chrome-hidden" : ""}`}
       onWheelCapture={(event) => {
         const target = event.currentTarget;
+        if (!tab.scrolling) {
+          event.preventDefault();
+          target.scrollTo({ top: 0, left: 0 });
+          if (event.deltaY < 0) onWheelPage(-1);
+          if (event.deltaY > 0) onWheelPage(1);
+          return;
+        }
+
         const canScrollVertically = target.scrollHeight > target.clientHeight;
         const canScrollHorizontally = target.scrollWidth > target.clientWidth;
         if (!canScrollVertically && !canScrollHorizontally) return;
         const atTop = target.scrollTop <= 0;
         const atBottom = Math.ceil(target.scrollTop + target.clientHeight) >= target.scrollHeight;
         event.preventDefault();
-        if (!tab.scrolling && event.deltaY < 0 && atTop) {
+        if (event.deltaY < 0 && atTop) {
           onWheelPage(-1);
           return;
         }
-        if (!tab.scrolling && event.deltaY > 0 && atBottom) {
+        if (event.deltaY > 0 && atBottom) {
           onWheelPage(1);
           return;
         }

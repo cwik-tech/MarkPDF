@@ -697,6 +697,7 @@ select {
 }
 
 .document-scroll.chrome-hidden {
+  overflow: hidden;
   scrollbar-width: none;
 }
 
