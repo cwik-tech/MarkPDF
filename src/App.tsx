@@ -775,6 +775,17 @@ export default function App() {
     });
   };
 
+  const clearSearch = () => {
+    setSearchText("");
+    if (!activeTab) return;
+    updateTab(activeTab.id, {
+      searchQuery: "",
+      searchMatches: [],
+      activeSearchMatch: -1
+    });
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
+  };
+
   const selectedOverlay = activeTab?.overlays.find((overlay) => overlay.id === selectedOverlayId) ?? null;
 
   useEffect(() => {
@@ -1016,6 +1027,20 @@ export default function App() {
             }}
             placeholder="Find text"
           />
+          {(searchText || activeTab?.searchQuery) && (
+            <button
+              className="search-clear-button"
+              title="Clear search"
+              aria-label="Clear search"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={(event) => {
+                event.stopPropagation();
+                clearSearch();
+              }}
+            >
+              <X size={13} />
+            </button>
+          )}
         </div>
         {(searchText || activeTab?.searchQuery) && (
           <>
@@ -1794,21 +1819,19 @@ function getSearchHighlightRects(
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return [];
 
-  const searchIndex = buildTextLayerSearchIndex(textLayer);
-  const lowerText = searchIndex.text.toLowerCase();
-  let matchStart = match.index;
+  const spacedSearchIndex = buildTextLayerSearchIndex(textLayer, true);
+  const compactSearchIndex = buildTextLayerSearchIndex(textLayer, false);
+  const matchLocation =
+    findSearchMatchLocation(spacedSearchIndex, normalizedQuery, match.index, matchOrdinal) ??
+    findSearchMatchLocation(compactSearchIndex, normalizedQuery, match.index, matchOrdinal);
 
-  if (lowerText.slice(matchStart, matchStart + normalizedQuery.length) !== normalizedQuery) {
-    matchStart = findNthOccurrence(lowerText, normalizedQuery, matchOrdinal);
-  }
+  if (!matchLocation) return [];
 
-  if (matchStart < 0) return [];
-
-  const matchEnd = matchStart + normalizedQuery.length;
+  const matchEnd = matchLocation.start + normalizedQuery.length;
   const rangesBySpan = new Map<HTMLSpanElement, { start: number; end: number }>();
 
-  for (let index = matchStart; index < matchEnd; index += 1) {
-    const position = searchIndex.positions[index];
+  for (let index = matchLocation.start; index < matchEnd; index += 1) {
+    const position = matchLocation.searchIndex.positions[index];
     if (!position) continue;
     const existing = rangesBySpan.get(position.span);
     if (existing) {
@@ -1836,7 +1859,7 @@ function getSearchHighlightRects(
   });
 }
 
-function buildTextLayerSearchIndex(textLayer: HTMLDivElement) {
+function buildTextLayerSearchIndex(textLayer: HTMLDivElement, separateSpans: boolean) {
   const spans = Array.from(textLayer.querySelectorAll("span"));
   const chars: string[] = [];
   const positions: ({ span: HTMLSpanElement; offset: number } | null)[] = [];
@@ -1859,7 +1882,7 @@ function buildTextLayerSearchIndex(textLayer: HTMLDivElement) {
     for (let offset = 0; offset < text.length; offset += 1) {
       appendNormalizedCharacter(text[offset], { span, offset });
     }
-    if (spanIndex < spans.length - 1) {
+    if (separateSpans && spanIndex < spans.length - 1) {
       appendNormalizedCharacter(" ", null);
     }
   });
@@ -1873,6 +1896,26 @@ function buildTextLayerSearchIndex(textLayer: HTMLDivElement) {
     text: chars.join(""),
     positions
   };
+}
+
+function findSearchMatchLocation(
+  searchIndex: ReturnType<typeof buildTextLayerSearchIndex>,
+  normalizedQuery: string,
+  preferredStart: number,
+  ordinal: number
+) {
+  const lowerText = searchIndex.text.toLowerCase();
+  if (lowerText.slice(preferredStart, preferredStart + normalizedQuery.length) === normalizedQuery) {
+    return { searchIndex, start: preferredStart };
+  }
+
+  const ordinalStart = findNthOccurrence(lowerText, normalizedQuery, ordinal);
+  if (ordinalStart >= 0) {
+    return { searchIndex, start: ordinalStart };
+  }
+
+  const firstStart = lowerText.indexOf(normalizedQuery);
+  return firstStart >= 0 ? { searchIndex, start: firstStart } : null;
 }
 
 function findNthOccurrence(text: string, query: string, ordinal: number) {
