@@ -295,7 +295,8 @@ export default function App() {
   const saveTab = async (tabToSave: PdfTab, saveAs = false, flattenForms = false) => {
     const bytes = await exportPdfBytes(tabToSave.bytes, tabToSave.overlays, tabToSave.formFields, flattenForms, {
       bakeOverlays: flattenForms,
-      persistEditable: !flattenForms
+      persistEditable: !flattenForms,
+      writeStandardAnnotations: !flattenForms
     });
     let targetPath = tabToSave.path;
 
@@ -357,7 +358,10 @@ export default function App() {
 
   const printActiveTab = async () => {
     if (!activeTab) return;
-    const bytes = await exportPdfBytes(activeTab.bytes, activeTab.overlays, activeTab.formFields, false, { bakeOverlays: true });
+    const bytes = await exportPdfBytes(activeTab.bytes, activeTab.overlays, activeTab.formFields, false, {
+      bakeOverlays: true,
+      writeStandardAnnotations: false
+    });
     const printBuffer = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(printBuffer).set(bytes);
     const blob = new Blob([printBuffer], { type: "application/pdf" });

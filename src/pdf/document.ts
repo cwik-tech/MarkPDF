@@ -3,10 +3,13 @@ import pdfWorker from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import {
   PDFArray,
   PDFCheckBox,
+  PDFDict,
   PDFDocument,
   PDFDropdown,
+  PDFHexString,
   PDFName,
   PDFRadioGroup,
+  PDFRef,
   PDFString,
   PDFTextField,
   rgb,
@@ -18,6 +21,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const pdfAssetBase = `${import.meta.env.BASE_URL}pdfjs/`;
 const overlayMetadataPrefix = "open-pdf-reader-overlays:";
+const standardAnnotationNamePrefix = "open-pdf-reader:";
+const standardAnnotationAuthor = "Open PDF Reader";
 
 export async function loadPdfDocument(bytes: Uint8Array, password?: string) {
   return pdfjsLib.getDocument({
@@ -167,7 +172,7 @@ export async function exportPdfBytes(
   overlays: OverlayItem[],
   formFields: FormFieldState[],
   flattenForms: boolean,
-  options: { bakeOverlays?: boolean; persistEditable?: boolean } = {}
+  options: { bakeOverlays?: boolean; persistEditable?: boolean; writeStandardAnnotations?: boolean } = {}
 ) {
   const pdfDoc = await PDFDocument.load(sourceBytes.slice(), { ignoreEncryption: true });
   const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -204,9 +209,20 @@ export async function exportPdfBytes(
 
   const pages = pdfDoc.getPages();
   const bakeOverlays = options.bakeOverlays ?? true;
+  const writeStandardAnnotations = options.writeStandardAnnotations ?? true;
 
   if (options.persistEditable) {
     writeEditableOverlayMetadata(pdfDoc, overlays);
+  } else if (bakeOverlays) {
+    clearEditableOverlayMetadata(pdfDoc);
+  }
+
+  if (writeStandardAnnotations || bakeOverlays) {
+    removeOpenPdfReaderAnnotations(pdfDoc);
+  }
+
+  if (writeStandardAnnotations) {
+    writeOpenPdfReaderAnnotations(pdfDoc, overlays);
   }
 
   for (const overlay of overlays.filter(
@@ -234,7 +250,6 @@ export async function exportPdfBytes(
     }
 
     if (overlay.kind === "comment") {
-      addTextNoteAnnotation(pdfDoc, page, overlay, x, y);
       page.drawRectangle({
         x,
         y,
@@ -287,14 +302,22 @@ export async function exportPdfBytes(
 }
 
 function writeEditableOverlayMetadata(pdfDoc: PDFDocument, overlays: OverlayItem[]) {
-  const existingKeywords = (pdfDoc.getKeywords() ?? "")
+  const existingKeywords = getKeywordsWithoutEditableOverlayMetadata(pdfDoc);
+  const editableOverlays = overlays.filter((overlay) => overlay.kind === "highlight" || overlay.kind === "comment");
+  const encoded = encodeBase64Json(JSON.stringify(editableOverlays));
+  pdfDoc.setKeywords([...existingKeywords, `${overlayMetadataPrefix}${encoded}`]);
+}
+
+function clearEditableOverlayMetadata(pdfDoc: PDFDocument) {
+  pdfDoc.setKeywords(getKeywordsWithoutEditableOverlayMetadata(pdfDoc));
+}
+
+function getKeywordsWithoutEditableOverlayMetadata(pdfDoc: PDFDocument) {
+  return (pdfDoc.getKeywords() ?? "")
     .split(/,\s*/)
     .map((keyword) => keyword.trim())
     .filter(Boolean)
     .filter((keyword) => !keyword.startsWith(overlayMetadataPrefix));
-  const editableOverlays = overlays.filter((overlay) => overlay.kind === "highlight" || overlay.kind === "comment");
-  const encoded = encodeBase64Json(JSON.stringify(editableOverlays));
-  pdfDoc.setKeywords([...existingKeywords, `${overlayMetadataPrefix}${encoded}`]);
 }
 
 export async function insertBlankPageAfter(sourceBytes: Uint8Array, pageNumber: number) {
@@ -330,32 +353,129 @@ export async function movePdfPage(sourceBytes: Uint8Array, pageNumber: number, d
   return pdfDoc.save();
 }
 
-function addTextNoteAnnotation(
+function writeOpenPdfReaderAnnotations(pdfDoc: PDFDocument, overlays: OverlayItem[]) {
+  const pages = pdfDoc.getPages();
+
+  for (const overlay of overlays.filter((item) => item.kind === "comment" || item.kind === "highlight")) {
+    const page = pages[overlay.page - 1];
+    if (!page) continue;
+
+    const rect = overlayToPdfRect(page.getHeight(), overlay);
+    const annots = getPageAnnotations(pdfDoc, page);
+    const annotation =
+      overlay.kind === "comment"
+        ? createTextNoteAnnotation(pdfDoc, overlay, rect)
+        : createHighlightAnnotation(pdfDoc, overlay, rect);
+
+    annots.push(pdfDoc.context.register(annotation));
+  }
+}
+
+function removeOpenPdfReaderAnnotations(pdfDoc: PDFDocument) {
+  for (const page of pdfDoc.getPages()) {
+    const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+    if (!annots) continue;
+
+    for (let index = annots.size() - 1; index >= 0; index -= 1) {
+      const annotation = annots.lookupMaybe(index, PDFDict);
+      if (annotation && isOpenPdfReaderAnnotation(annotation)) {
+        const ref = annots.get(index);
+        annots.remove(index);
+        if (ref instanceof PDFRef) {
+          pdfDoc.context.delete(ref);
+        }
+      }
+    }
+
+    if (annots.size() === 0) {
+      page.node.delete(PDFName.of("Annots"));
+    }
+  }
+}
+
+function getPageAnnotations(
   pdfDoc: PDFDocument,
-  page: ReturnType<PDFDocument["getPages"]>[number],
-  overlay: OverlayItem,
-  x: number,
-  y: number
+  page: ReturnType<PDFDocument["getPages"]>[number]
 ) {
-  const annots =
-    page.node.lookupMaybe(PDFName.of("Annots"), PDFArray) ?? pdfDoc.context.obj([]);
+  const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray) ?? pdfDoc.context.obj([]);
 
   if (!page.node.lookupMaybe(PDFName.of("Annots"), PDFArray)) {
     page.node.set(PDFName.of("Annots"), annots);
   }
 
+  return annots;
+}
+
+function createTextNoteAnnotation(pdfDoc: PDFDocument, overlay: OverlayItem, rect: PdfRect) {
   const noteSize = 24;
-  const annotation = pdfDoc.context.obj({
+  const left = rect.left;
+  const top = rect.top;
+
+  return pdfDoc.context.obj({
     Type: PDFName.of("Annot"),
     Subtype: PDFName.of("Text"),
-    Rect: [x, y + Math.max(0, overlay.height - noteSize), x + noteSize, y + overlay.height],
+    Rect: [left, Math.max(rect.bottom, top - noteSize), left + noteSize, top],
     Contents: PDFString.of(overlay.text || "Comment"),
+    T: PDFString.of(standardAnnotationAuthor),
+    Subj: PDFString.of("Comment"),
+    NM: PDFString.of(`${standardAnnotationNamePrefix}${overlay.id}`),
+    M: PDFString.fromDate(new Date()),
     Name: PDFName.of("Comment"),
     C: [1, 0.88, 0.1],
+    F: 4,
     Open: false
   });
+}
 
-  annots.push(pdfDoc.context.register(annotation));
+function createHighlightAnnotation(pdfDoc: PDFDocument, overlay: OverlayItem, rect: PdfRect) {
+  const color = hexToRgb(overlay.color ?? "#facc15");
+  const contents = overlay.text?.trim() || "Highlight";
+
+  return pdfDoc.context.obj({
+    Type: PDFName.of("Annot"),
+    Subtype: PDFName.of("Highlight"),
+    Rect: [rect.left, rect.bottom, rect.right, rect.top],
+    QuadPoints: [rect.left, rect.top, rect.right, rect.top, rect.left, rect.bottom, rect.right, rect.bottom],
+    Contents: PDFString.of(contents),
+    T: PDFString.of(standardAnnotationAuthor),
+    Subj: PDFString.of("Highlight"),
+    NM: PDFString.of(`${standardAnnotationNamePrefix}${overlay.id}`),
+    M: PDFString.fromDate(new Date()),
+    C: [color.r, color.g, color.b],
+    CA: 0.35,
+    F: 4
+  });
+}
+
+interface PdfRect {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+function overlayToPdfRect(pageHeight: number, overlay: OverlayItem): PdfRect {
+  const left = overlay.x;
+  const right = overlay.x + overlay.width;
+  const top = pageHeight - overlay.y;
+  const bottom = pageHeight - overlay.y - overlay.height;
+
+  return {
+    left: Math.min(left, right),
+    right: Math.max(left, right),
+    top: Math.max(top, bottom),
+    bottom: Math.min(top, bottom)
+  };
+}
+
+function isOpenPdfReaderAnnotation(annotation: PDFDict) {
+  const name = getPdfText(annotation, "NM");
+  return name.startsWith(standardAnnotationNamePrefix);
+}
+
+function getPdfText(dict: PDFDict, key: string) {
+  const value = dict.lookupMaybe(PDFName.of(key), PDFString, PDFHexString);
+  return value?.decodeText() ?? "";
 }
 
 async function embedSignatureImage(pdfDoc: PDFDocument, dataUrl: string) {

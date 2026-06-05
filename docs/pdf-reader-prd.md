@@ -46,8 +46,8 @@ The first version should feel close to a simplified Adobe Acrobat viewer, but av
 - Add pinned comments from selected text.
 - Edit and delete comments.
 - Auto-minimize comment popups.
-- Persist editable highlights/comments after saving and reopening through app metadata.
-- Export standard PDF text-note annotations for comment overlays where supported.
+- Persist editable highlights/comments after saving and reopening.
+- Save comments and highlights as standard PDF annotations visible in Acrobat-compatible readers by default.
 - Detect fillable PDF form fields.
 - Fill text fields, checkboxes, radio groups, and dropdowns where supported.
 - Preserve form values in saved/exported PDFs.
@@ -67,7 +67,7 @@ The first version should feel close to a simplified Adobe Acrobat viewer, but av
 
 ### ⚠️ Partially Implemented
 
-- PDF-compatible annotations: comments export as standard text-note annotations where possible, but editable Adobe-compatible highlights/comments are not fully native yet.
+- PDF-compatible annotations: comments and highlights save as native PDF annotations by default, while the app still uses private metadata to preserve editable overlay geometry.
 - Form filling: basic field types are supported, but complex or malformed form fields may still need hardening.
 - Text editing: adding new text overlays works, but full style controls are incomplete.
 - Opening PDFs from the operating system: OS handoff exists, but the desired new-window versus existing-window behavior still needs product verification.
