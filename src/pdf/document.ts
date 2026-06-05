@@ -239,9 +239,7 @@ export async function exportPdfBytes(
     writeOpenPdfReaderAnnotations(pdfDoc, overlays);
   }
 
-  for (const overlay of overlays.filter(
-    (overlay) => bakeOverlays || overlay.kind === "text" || overlay.kind === "signature"
-  )) {
+  for (const overlay of overlays.filter((overlay) => bakeOverlays || overlay.kind === "text")) {
     const page = pages[overlay.page - 1];
     if (!page) continue;
 
@@ -317,7 +315,9 @@ export async function exportPdfBytes(
 
 function writeEditableOverlayMetadata(pdfDoc: PDFDocument, overlays: OverlayItem[]) {
   const existingKeywords = getKeywordsWithoutEditableOverlayMetadata(pdfDoc);
-  const editableOverlays = overlays.filter((overlay) => overlay.kind === "highlight" || overlay.kind === "comment");
+  const editableOverlays = overlays.filter(
+    (overlay) => overlay.kind === "highlight" || overlay.kind === "comment" || overlay.kind === "signature"
+  );
   const encoded = encodeBase64Json(JSON.stringify(editableOverlays));
   pdfDoc.setKeywords([...existingKeywords, `${overlayMetadataPrefix}${encoded}`]);
 }

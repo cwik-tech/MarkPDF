@@ -81,9 +81,10 @@ interface SignatureAsset {
 
 const signatureFonts = [
   { name: "Classic", family: '"Snell Roundhand", "Brush Script MT", cursive' },
-  { name: "Flow", family: '"Segoe Script", "Lucida Handwriting", cursive' },
-  { name: "Formal", family: '"Apple Chancery", "Palatino", serif' },
-  { name: "Clean", family: '"Bradley Hand", "Comic Sans MS", cursive' }
+  { name: "Script", family: '"Savoye LET", "Snell Roundhand", cursive' },
+  { name: "Flourish", family: '"Zapfino", "Snell Roundhand", cursive' },
+  { name: "Ink", family: '"SignPainter", "Brush Script MT", cursive' },
+  { name: "Handwritten", family: '"Apple Chancery", "Bradley Hand", cursive' }
 ];
 
 function newId(prefix: string) {
@@ -125,6 +126,14 @@ function todaySignatureDate() {
     month: "2-digit",
     day: "2-digit"
   }).format(new Date());
+}
+
+function appendSignedSuffix(pathOrName: string) {
+  return pathOrName.replace(/(\.pdf)?$/i, " - signed.pdf");
+}
+
+function signedDefaultPath(tab: PdfTab) {
+  return appendSignedSuffix(tab.path ?? tab.name);
 }
 
 function renderSignatureText(text: string, fontFamily: string, fontSize: number, padding = 18) {
@@ -560,21 +569,26 @@ export default function App() {
     updateTab(activeTab.id, { fitMode, zoom: Number(zoom.toFixed(2)) });
   };
 
-  const saveTab = async (tabToSave: PdfTab, saveAs = false, flattenForms = false) => {
+  const saveTab = async (
+    tabToSave: PdfTab,
+    saveAs = false,
+    flattenForms = false,
+    options: { targetPath?: string; defaultPath?: string } = {}
+  ) => {
     const bytes = await exportPdfBytes(tabToSave.bytes, tabToSave.overlays, tabToSave.formFields, flattenForms, {
       bakeOverlays: flattenForms,
       persistEditable: !flattenForms,
       writeStandardAnnotations: !flattenForms
     });
-    let targetPath = tabToSave.path;
+    let targetPath = options.targetPath ?? tabToSave.path;
 
     if (!window.pdfReader) {
-      downloadBytes(bytes, tabToSave.name);
+      downloadBytes(bytes, options.defaultPath ?? tabToSave.name);
       return true;
     }
 
     if (!targetPath || saveAs) {
-      const selectedPath = await window.pdfReader.savePdfDialog(tabToSave.name);
+      const selectedPath = await window.pdfReader.savePdfDialog(options.defaultPath ?? tabToSave.name);
       if (!selectedPath) return false;
       targetPath = selectedPath;
     }
@@ -617,10 +631,12 @@ export default function App() {
   };
 
   const saveTabWithSignaturePrompt = async (tabToSave: PdfTab, saveAs = false, flattenForms = false) => {
-    if (flattenForms) return saveTab(tabToSave, saveAs, true);
+    const signedPath = signedDefaultPath(tabToSave);
+    const signedSaveOptions = { targetPath: tabToSave.path ? signedPath : undefined, defaultPath: signedPath };
+    if (flattenForms) return saveTab(tabToSave, false, true, signedSaveOptions);
     const mode = await requestSignatureSaveMode(tabToSave);
     if (mode === "cancel") return false;
-    if (mode === "flattened") return saveTab(tabToSave, true, true);
+    if (mode === "flattened") return saveTab(tabToSave, false, true, signedSaveOptions);
     return saveTab(tabToSave, saveAs, false);
   };
 
@@ -1340,14 +1356,22 @@ export default function App() {
               if (!nextAssets.length) return;
               setSavedSignatures((current) => [...nextAssets, ...current]);
               setSelectedSignatureId(nextAssets[0].id);
+              setSelectedOverlayId(null);
+              setTool("signature");
             }}
-            onSelectSignature={setSelectedSignatureId}
+            onSelectSignature={(id) => {
+              setSelectedSignatureId(id);
+              setSelectedOverlayId(null);
+              setTool("signature");
+            }}
             onDeleteSignature={(id) => {
               setSavedSignatures((current) => current.filter((asset) => asset.id !== id));
             }}
             onSaveSignatureAsset={(asset) => {
               setSavedSignatures((current) => [asset, ...current]);
               setSelectedSignatureId(asset.id);
+              setSelectedOverlayId(null);
+              setTool("signature");
             }}
             onOpenDrawingSignature={() => setDrawingSignatureOpen(true)}
             onModeChange={setSidebar}
