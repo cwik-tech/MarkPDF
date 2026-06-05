@@ -1,0 +1,52 @@
+{
+  "name": "open-pdf-reader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A standalone PDF reader with tabs, viewing controls, lightweight editing, comments, form filling, and visual signing.",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && npm run electron:dev\"",
+    "electron:dev": "tsc -p tsconfig.electron.json && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "build": "npm run typecheck && tsc -p tsconfig.electron.json && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "electron-store": "^11.0.2",
+    "lucide-react": "^0.556.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.4.394",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "playwright": "^1.60.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.6",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "dev.openpdf.reader",
+    "productName": "Open PDF Reader",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity"
+    }
+  }
+}
