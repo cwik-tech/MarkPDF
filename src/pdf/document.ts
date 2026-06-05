@@ -17,6 +17,7 @@ import type { FormFieldState, OutlineItem, OverlayItem, SearchMatch } from "../t
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const pdfAssetBase = `${import.meta.env.BASE_URL}pdfjs/`;
+const overlayMetadataPrefix = "open-pdf-reader-overlays:";
 
 export async function loadPdfDocument(bytes: Uint8Array, password?: string) {
   return pdfjsLib.getDocument({
@@ -143,11 +144,30 @@ export async function findTextMatches(pdfDoc: pdfjsLib.PDFDocumentProxy, query: 
   return matches;
 }
 
+export async function extractEditableOverlays(bytes: Uint8Array): Promise<OverlayItem[]> {
+  try {
+    const pdfDoc = await PDFDocument.load(bytes.slice(), { ignoreEncryption: true });
+    const keywords = pdfDoc.getKeywords() ?? "";
+    const encoded = keywords
+      .split(/,\s*/)
+      .find((keyword) => keyword.startsWith(overlayMetadataPrefix))
+      ?.slice(overlayMetadataPrefix.length);
+
+    if (!encoded) return [];
+    const parsed = JSON.parse(decodeBase64Json(encoded)) as OverlayItem[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((overlay) => typeof overlay.id === "string" && typeof overlay.page === "number");
+  } catch {
+    return [];
+  }
+}
+
 export async function exportPdfBytes(
   sourceBytes: Uint8Array,
   overlays: OverlayItem[],
   formFields: FormFieldState[],
-  flattenForms: boolean
+  flattenForms: boolean,
+  options: { bakeOverlays?: boolean; persistEditable?: boolean } = {}
 ) {
   const pdfDoc = await PDFDocument.load(sourceBytes.slice(), { ignoreEncryption: true });
   const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -183,8 +203,15 @@ export async function exportPdfBytes(
   }
 
   const pages = pdfDoc.getPages();
+  const bakeOverlays = options.bakeOverlays ?? true;
 
-  for (const overlay of overlays) {
+  if (options.persistEditable) {
+    writeEditableOverlayMetadata(pdfDoc, overlays);
+  }
+
+  for (const overlay of overlays.filter(
+    (overlay) => bakeOverlays || overlay.kind === "text" || overlay.kind === "signature"
+  )) {
     const page = pages[overlay.page - 1];
     if (!page) continue;
 
@@ -257,6 +284,17 @@ export async function exportPdfBytes(
   }
 
   return pdfDoc.save();
+}
+
+function writeEditableOverlayMetadata(pdfDoc: PDFDocument, overlays: OverlayItem[]) {
+  const existingKeywords = (pdfDoc.getKeywords() ?? "")
+    .split(/,\s*/)
+    .map((keyword) => keyword.trim())
+    .filter(Boolean)
+    .filter((keyword) => !keyword.startsWith(overlayMetadataPrefix));
+  const editableOverlays = overlays.filter((overlay) => overlay.kind === "highlight" || overlay.kind === "comment");
+  const encoded = encodeBase64Json(JSON.stringify(editableOverlays));
+  pdfDoc.setKeywords([...existingKeywords, `${overlayMetadataPrefix}${encoded}`]);
 }
 
 export async function insertBlankPageAfter(sourceBytes: Uint8Array, pageNumber: number) {
@@ -348,4 +386,22 @@ function hexToRgb(hex: string) {
     g: ((value >> 8) & 255) / 255,
     b: (value & 255) / 255
   };
+}
+
+function encodeBase64Json(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.slice(index, index + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function decodeBase64Json(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new TextDecoder().decode(bytes);
 }

@@ -39,6 +39,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
   deletePdfPage,
   detectFormFields,
+  extractEditableOverlays,
   extractOutline,
   exportPdfBytes,
   findTextMatches,
@@ -128,6 +129,7 @@ export default function App() {
 
       const formFields = await detectFormFields(bytes);
       const outline = await extractOutline(pdfDoc);
+      const overlays = await extractEditableOverlays(bytes);
       const tab: PdfTab = {
         id: newId("tab"),
         name,
@@ -141,7 +143,7 @@ export default function App() {
         viewMode: "single",
         fitMode: "actual",
         scrolling: false,
-        overlays: [],
+        overlays,
         formFields,
         outline,
         searchQuery: "",
@@ -270,7 +272,10 @@ export default function App() {
 
   const saveActiveTab = async (saveAs = false, flattenForms = false) => {
     if (!activeTab) return;
-    const bytes = await exportPdfBytes(activeTab.bytes, activeTab.overlays, activeTab.formFields, flattenForms);
+    const bytes = await exportPdfBytes(activeTab.bytes, activeTab.overlays, activeTab.formFields, flattenForms, {
+      bakeOverlays: flattenForms,
+      persistEditable: !flattenForms
+    });
     let targetPath = activeTab.path;
 
     if (!window.pdfReader) {
@@ -289,6 +294,7 @@ export default function App() {
     const pdfDoc = await loadPdfDocument(nextBytes);
     const formFields = flattenForms ? [] : await detectFormFields(nextBytes);
     const outline = await extractOutline(pdfDoc);
+    const overlays = flattenForms ? [] : await extractEditableOverlays(nextBytes);
 
     updateTab(activeTab.id, {
       path: written.path,
@@ -296,7 +302,7 @@ export default function App() {
       bytes: nextBytes,
       pdfDoc,
       pageCount: pdfDoc.numPages,
-      overlays: [],
+      overlays,
       formFields,
       outline,
       searchMatches: [],
@@ -310,7 +316,7 @@ export default function App() {
 
   const printActiveTab = async () => {
     if (!activeTab) return;
-    const bytes = await exportPdfBytes(activeTab.bytes, activeTab.overlays, activeTab.formFields, false);
+    const bytes = await exportPdfBytes(activeTab.bytes, activeTab.overlays, activeTab.formFields, false, { bakeOverlays: true });
     const printBuffer = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(printBuffer).set(bytes);
     const blob = new Blob([printBuffer], { type: "application/pdf" });
@@ -454,10 +460,11 @@ export default function App() {
       x: selectionAction.x,
       y: selectionAction.y,
       width: selectionAction.width,
-      height: kind === "highlight" ? selectionAction.height : Math.max(72, selectionAction.height + 36),
-      text: kind === "comment" ? selectionAction.text || "Comment" : undefined,
+      height: selectionAction.height,
+      text: kind === "comment" ? "" : undefined,
       fontSize: kind === "comment" ? 12 : undefined,
-      color: kind === "comment" ? "#2f2400" : "#facc15"
+      color: "#facc15",
+      minimized: kind === "comment" ? true : undefined
     };
 
     updateTab(activeTab.id, (tab) => ({
@@ -625,6 +632,12 @@ export default function App() {
         return;
       }
 
+      if (shortcut && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveActiveTab(false, false);
+        return;
+      }
+
       if (shortcut && event.key.toLowerCase() === "z" && !event.shiftKey) {
         event.preventDefault();
         void undoActiveTab();
@@ -657,6 +670,12 @@ export default function App() {
 
       if (isTyping) return;
 
+      if (selectedOverlayId && (event.key === "Delete" || event.key === "Backspace")) {
+        event.preventDefault();
+        deleteOverlay(selectedOverlayId);
+        return;
+      }
+
       if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
         event.preventDefault();
         updateTab(activeTab.id, { currentPage: Math.max(1, activeTab.currentPage - 1) });
@@ -675,7 +694,7 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeTab, updateTab]);
+  }, [activeTab, selectedOverlayId, updateTab]);
 
   return (
     <div className="app-shell" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
@@ -872,6 +891,7 @@ export default function App() {
               onPageClick={addOverlay}
               onSelectOverlay={setSelectedOverlayId}
               onUpdateOverlay={updateOverlay}
+              onDeleteOverlay={deleteOverlay}
               onTextSelection={setSelectionAction}
               onWheelPage={(direction) => {
                 const nextPage = Math.min(activeTab.pageCount, Math.max(1, activeTab.currentPage + direction));
@@ -1178,6 +1198,21 @@ function truncateMiddle(value: string, maxLength: number) {
   return `${value.slice(0, keep)}…${value.slice(-keep)}`;
 }
 
+async function copyTextToClipboard(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+  }
+}
+
 function DocumentView({
   tab,
   tool,
@@ -1185,6 +1220,7 @@ function DocumentView({
   onPageClick,
   onSelectOverlay,
   onUpdateOverlay,
+  onDeleteOverlay,
   onTextSelection,
   onWheelPage
 }: {
@@ -1194,6 +1230,7 @@ function DocumentView({
   onPageClick: (page: number, x: number, y: number) => void;
   onSelectOverlay: (id: string | null) => void;
   onUpdateOverlay: (id: string, patch: Partial<OverlayItem>, recordHistory?: boolean) => void;
+  onDeleteOverlay: (id: string) => void;
   onTextSelection: (selection: {
     page: number;
     x: number;
@@ -1247,6 +1284,7 @@ function DocumentView({
           onPageClick={(x, y) => onPageClick(pageNumber, x, y)}
           onSelectOverlay={onSelectOverlay}
           onUpdateOverlay={onUpdateOverlay}
+          onDeleteOverlay={onDeleteOverlay}
           onTextSelection={onTextSelection}
         />
       ))}
@@ -1265,6 +1303,7 @@ function PdfPage({
   onPageClick,
   onSelectOverlay,
   onUpdateOverlay,
+  onDeleteOverlay,
   onTextSelection
 }: {
   pdfDoc: PDFDocumentProxy;
@@ -1277,6 +1316,7 @@ function PdfPage({
   onPageClick: (x: number, y: number) => void;
   onSelectOverlay: (id: string | null) => void;
   onUpdateOverlay: (id: string, patch: Partial<OverlayItem>) => void;
+  onDeleteOverlay: (id: string) => void;
   onTextSelection: (selection: {
     page: number;
     x: number;
@@ -1364,6 +1404,8 @@ function PdfPage({
           const top = Math.min(...rects.map((rect) => rect.top));
           const right = Math.max(...rects.map((rect) => rect.right));
           const bottom = Math.max(...rects.map((rect) => rect.bottom));
+          const selectedText = selection.toString().trim();
+          if (selectedText) void copyTextToClipboard(selectedText);
           onTextSelection({
             page: pageNumber,
             x: Math.max(0, (left - pageRect.left) / zoom),
@@ -1372,7 +1414,7 @@ function PdfPage({
             height: Math.max(8, (bottom - top) / zoom),
             screenX: left + (right - left) / 2,
             screenY: Math.max(10, top - 10),
-            text: selection.toString().trim()
+            text: selectedText
           });
         }}
         onClick={(event) => {
@@ -1398,7 +1440,9 @@ function PdfPage({
               zoom={zoom}
               selected={selectedOverlayId === overlay.id}
               onSelect={() => onSelectOverlay(overlay.id)}
-          onUpdate={(patch) => onUpdateOverlay(overlay.id, patch)}
+              onDeselect={() => onSelectOverlay(null)}
+              onUpdate={(patch) => onUpdateOverlay(overlay.id, patch)}
+              onDelete={() => onDeleteOverlay(overlay.id)}
             />
           ))}
         </div>
@@ -1412,19 +1456,23 @@ function OverlayBox({
   zoom,
   selected,
   onSelect,
-  onUpdate
+  onDeselect,
+  onUpdate,
+  onDelete
 }: {
   overlay: OverlayItem;
   zoom: number;
   selected: boolean;
   onSelect: () => void;
+  onDeselect: () => void;
   onUpdate: (patch: Partial<OverlayItem>, recordHistory?: boolean) => void;
+  onDelete: () => void;
 }) {
   const dragRef = useRef<{ startX: number; startY: number; originalX: number; originalY: number } | null>(null);
 
   return (
     <div
-      className={`overlay-box ${overlay.kind} ${selected ? "selected" : ""}`}
+      className={`overlay-box ${overlay.kind} ${overlay.minimized ? "minimized" : ""} ${selected ? "selected" : ""}`}
       style={{
         left: overlay.x * zoom,
         top: overlay.y * zoom,
@@ -1450,40 +1498,87 @@ function OverlayBox({
       }}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={() => {
-        if (overlay.kind === "highlight" || overlay.dataUrl) return;
+        if (overlay.kind === "highlight" || overlay.dataUrl || overlay.minimized) return;
         const nextText = window.prompt("Edit text", overlay.text ?? "");
         if (nextText !== null) onUpdate({ text: nextText }, true);
       }}
     >
-      {overlay.kind === "signature" && overlay.dataUrl ? (
+      {overlay.kind === "comment" && overlay.minimized ? (
+        <>
+          <button
+            className="comment-pin"
+            title="Open comment"
+            style={{ left: -(overlay.x * zoom + 34) }}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              onSelect();
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect();
+            }}
+          >
+            <MessageSquarePlus size={15} />
+          </button>
+          {selected && (
+            <div
+              className="comment-popup"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <textarea
+                autoFocus
+                placeholder="Add comment"
+                value={overlay.text ?? ""}
+                onChange={(event) => onUpdate({ text: event.target.value }, true)}
+              />
+              <div className="comment-popup-actions">
+                <button type="button" onClick={onDeselect}>
+                  Minimize
+                </button>
+                <button type="button" onClick={onDelete}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      ) : overlay.kind === "signature" && overlay.dataUrl ? (
         <img src={overlay.dataUrl} alt="Signature" />
       ) : (
         <span style={{ fontSize: (overlay.fontSize ?? 14) * zoom }}>{overlay.text}</span>
       )}
       {selected && (
-        <button
-          className="resize-handle"
-          title="Resize"
-          onPointerDown={(event) => {
-            event.stopPropagation();
-            const startX = event.clientX;
-            const startY = event.clientY;
-            const startWidth = overlay.width;
-            const startHeight = overlay.height;
-            const target = event.currentTarget;
-            target.setPointerCapture(event.pointerId);
-            target.onpointermove = (moveEvent) => {
-              onUpdate({
-                width: Math.max(24, startWidth + (moveEvent.clientX - startX) / zoom),
-                height: Math.max(18, startHeight + (moveEvent.clientY - startY) / zoom)
-              }, false);
-            };
-            target.onpointerup = () => {
-              target.onpointermove = null;
-              target.onpointerup = null;
-            };
-          }}
-        />
+        <>
+          <button className="delete-handle" title="Delete" onPointerDown={(event) => event.stopPropagation()} onClick={onDelete}>
+            <X size={12} />
+          </button>
+          {!overlay.minimized && (
+            <button
+              className="resize-handle"
+              title="Resize"
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                const startX = event.clientX;
+                const startY = event.clientY;
+                const startWidth = overlay.width;
+                const startHeight = overlay.height;
+                const target = event.currentTarget;
+                target.setPointerCapture(event.pointerId);
+                target.onpointermove = (moveEvent) => {
+                  onUpdate({
+                    width: Math.max(24, startWidth + (moveEvent.clientX - startX) / zoom),
+                    height: Math.max(18, startHeight + (moveEvent.clientY - startY) / zoom)
+                  }, false);
+                };
+                target.onpointerup = () => {
+                  target.onpointermove = null;
+                  target.onpointerup = null;
+                };
+              }}
+            />
+          )}
+        </>
       )}
     </div>
   );

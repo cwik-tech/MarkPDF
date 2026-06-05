@@ -19,6 +19,7 @@ export interface OverlayItem {
   fontSize?: number;
   color?: string;
   dataUrl?: string;
+  minimized?: boolean;
 }
 
 export type FormFieldKind = "text" | "checkbox" | "dropdown" | "radio" | "unknown";

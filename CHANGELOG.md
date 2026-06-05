@@ -24,3 +24,4 @@
 - Refined the PDF toolbar with sidebar-local page/bookmark switching, compact page and zoom controls, icon-only fit/view menus, expanding search, and left-aligned page labels.
 - Fixed toolbar hover/search visibility, separated fit/view icons, moved page labels beside pages, removed the unclear forms shortcut, and enabled selectable PDF text in select mode.
 - Restored the single-page icon, constrained recent-file menu labels, repaired wheel scrolling, and added selection actions for highlighting or commenting selected PDF text.
+- Added auto-copy for selected PDF text, Cmd/Ctrl+S saving, editable persisted highlights/comments, and Acrobat-style pinned comment popups.

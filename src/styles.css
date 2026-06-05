@@ -563,7 +563,7 @@ button:disabled {
 
 .pdf-page {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   background: #ffffff;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
 }
@@ -661,6 +661,17 @@ button:disabled {
   color: #302500;
 }
 
+.overlay-box.comment.minimized {
+  overflow: visible;
+  background: rgba(250, 204, 21, 0.22);
+  border-color: rgba(166, 122, 20, 0.28);
+  color: var(--text);
+}
+
+.overlay-box.comment.minimized.selected {
+  background: rgba(250, 204, 21, 0.38);
+}
+
 .overlay-box.highlight {
   background: rgba(250, 204, 21, 0.38);
   mix-blend-mode: multiply;
@@ -690,6 +701,83 @@ button:disabled {
   border-left: 1px solid var(--accent);
   background: var(--accent);
   cursor: nwse-resize;
+}
+
+.delete-handle {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.comment-pin {
+  position: absolute;
+  left: -34px;
+  top: -2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--accent);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+
+.comment-popup {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: -2px;
+  z-index: 8;
+  display: grid;
+  gap: 6px;
+  width: 220px;
+  min-height: 126px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(250, 204, 21, 0.94);
+  color: #1f2937;
+  box-shadow: var(--shadow);
+}
+
+.comment-popup textarea {
+  min-height: 78px;
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.comment-popup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.comment-popup-actions button {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgba(120, 85, 0, 0.28);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.3);
+  color: inherit;
+  cursor: pointer;
 }
 
 .page-list {
