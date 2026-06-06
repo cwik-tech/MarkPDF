@@ -452,13 +452,6 @@ select {
   text-align: left;
 }
 
-.chat-action {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  -webkit-app-region: no-drag;
-}
-
 .toolbar-toast,
 .settings-toast {
   display: flex;
@@ -570,6 +563,12 @@ select {
   border-right: 1px solid var(--border);
 }
 
+.sidebar.right {
+  order: 2;
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+
 .sidebar-switch {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -611,6 +610,58 @@ select {
 
 .sidebar p {
   color: var(--muted);
+}
+
+.sidebar-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--muted);
+}
+
+.sidebar-section-heading h2 {
+  margin: 0;
+}
+
+.semantic-sidebar {
+  display: grid;
+  gap: 10px;
+}
+
+.semantic-result-list {
+  display: grid;
+  gap: 8px;
+}
+
+.semantic-result {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  padding: 10px;
+  text-align: left;
+}
+
+.semantic-result:hover {
+  border-color: var(--accent);
+}
+
+.semantic-result span {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.semantic-result p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .document-stage {
@@ -1738,11 +1789,53 @@ select {
   color: var(--danger);
 }
 
+.danger-button {
+  color: var(--danger);
+}
+
+.semantic-box {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  margin-top: 0;
+  padding: 12px;
+}
+
 .model-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 8px;
   margin-top: 12px;
+}
+
+.chunking-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.chunking-options button {
+  display: grid;
+  gap: 5px;
+  min-height: 86px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  padding: 12px;
+  text-align: left;
+}
+
+.chunking-options button.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent), transparent 88%);
+}
+
+.chunking-options span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .model-row {

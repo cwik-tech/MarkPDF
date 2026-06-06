@@ -14,6 +14,14 @@ import {
   type AIProviderInput,
   type AIStoreSchema
 } from "./ai.js";
+import {
+  clearSemanticDatabase,
+  defaultSemanticSearchSettings,
+  getSemanticDatabaseInfo,
+  loadSemanticDatabase,
+  saveSemanticDatabase,
+  type SemanticSearchSettings
+} from "./semantic.js";
 
 let pendingOpenPaths: string[] = [];
 let openPathFlushTimer: NodeJS.Timeout | null = null;
@@ -23,7 +31,8 @@ const store = new Store<AIStoreSchema>({
   defaults: {
     recentFiles: [],
     aiProviders: [],
-    localAgentEnabled: {}
+    localAgentEnabled: {},
+    semanticSearch: defaultSemanticSearchSettings
   }
 });
 const imageMimeTypes = new Map([
@@ -257,6 +266,54 @@ ipcMain.handle("shell:show-item", async (_event, filePath: string) => {
 ipcMain.handle("recent:list", async () => store.get("recentFiles", []));
 
 ipcMain.handle("recent:remove", async (_event, filePath: string) => removeRecentFile(filePath));
+
+ipcMain.handle("semantic:get-settings", async () => store.get("semanticSearch", defaultSemanticSearchSettings));
+
+ipcMain.handle("semantic:save-settings", async (_event, settings: Partial<SemanticSearchSettings>) => {
+  const current = store.get("semanticSearch", defaultSemanticSearchSettings);
+  const next = {
+    ...current,
+    ...settings,
+    downloadedModelIds: settings.downloadedModelIds ?? current.downloadedModelIds
+  };
+  store.set("semanticSearch", next);
+  return next;
+});
+
+ipcMain.handle("semantic:mark-model-downloaded", async (_event, modelId: string) => {
+  const current = store.get("semanticSearch", defaultSemanticSearchSettings);
+  const next = {
+    ...current,
+    downloadedModelIds: [...new Set([...current.downloadedModelIds, modelId])]
+  };
+  store.set("semanticSearch", next);
+  return next;
+});
+
+ipcMain.handle("semantic:remove-model", async (_event, modelId: string) => {
+  const current = store.get("semanticSearch", defaultSemanticSearchSettings);
+  const downloadedModelIds = current.downloadedModelIds.filter((id) => id !== modelId);
+  const next = {
+    ...current,
+    downloadedModelIds,
+    activeModelId: current.activeModelId === modelId && downloadedModelIds[0] ? downloadedModelIds[0] : current.activeModelId
+  };
+  store.set("semanticSearch", next);
+  return next;
+});
+
+ipcMain.handle("semantic:load-db", async () => loadSemanticDatabase());
+
+ipcMain.handle("semantic:save-db", async (_event, bytes: number[]) => {
+  await saveSemanticDatabase(bytes);
+});
+
+ipcMain.handle("semantic:clear-db", async () => {
+  await clearSemanticDatabase();
+  return getSemanticDatabaseInfo();
+});
+
+ipcMain.handle("semantic:db-info", async () => getSemanticDatabaseInfo());
 
 ipcMain.handle("recent:clear", async () => {
   store.set("recentFiles", []);

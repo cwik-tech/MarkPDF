@@ -2,6 +2,7 @@ import { safeStorage } from "electron";
 import Store from "electron-store";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { SemanticStoreSchema } from "./semantic.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -62,7 +63,7 @@ export interface LocalAgentInfo {
   error?: string;
 }
 
-export interface AIStoreSchema {
+export interface AIStoreSchema extends SemanticStoreSchema {
   recentFiles: string[];
   aiProviders: AIProviderRecord[];
   localAgentEnabled: Record<string, boolean>;
