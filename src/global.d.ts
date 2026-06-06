@@ -44,6 +44,19 @@ export interface LocalAgentInfo {
   error?: string;
 }
 
+export type SemanticChunkingProfile = "precise" | "balanced" | "contextual";
+
+export interface SemanticSearchSettings {
+  enabled: boolean;
+  activeModelId: string;
+  chunkingProfile: SemanticChunkingProfile;
+  downloadedModelIds: string[];
+}
+
+export interface SemanticDatabaseInfo {
+  sizeBytes: number;
+}
+
 declare global {
   interface Window {
     pdfReader?: {
@@ -70,6 +83,16 @@ declare global {
         listLocalAgents: () => Promise<LocalAgentInfo[]>;
         refreshLocalAgents: () => Promise<LocalAgentInfo[]>;
         setLocalAgentEnabled: (id: string, enabled: boolean) => Promise<LocalAgentInfo[]>;
+      };
+      semantic: {
+        getSettings: () => Promise<SemanticSearchSettings>;
+        saveSettings: (settings: Partial<SemanticSearchSettings>) => Promise<SemanticSearchSettings>;
+        markModelDownloaded: (modelId: string) => Promise<SemanticSearchSettings>;
+        removeModel: (modelId: string) => Promise<SemanticSearchSettings>;
+        loadDatabase: () => Promise<number[] | null>;
+        saveDatabase: (bytes: number[]) => Promise<void>;
+        clearDatabase: () => Promise<SemanticDatabaseInfo>;
+        databaseInfo: () => Promise<SemanticDatabaseInfo>;
       };
       onFullScreenChange: (callback: (enabled: boolean) => void) => () => void;
       onWindowRequestClose: (callback: () => void) => () => void;

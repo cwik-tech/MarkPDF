@@ -19,11 +19,12 @@ Included:
 - Local CLI agent detection.
 - Enable/disable state for providers and detected agents.
 - `Command+K` for search.
-- `Command+N` for opening the future chat surface or reserved command.
+- The reserved chat shortcut and toolbar affordance are replaced by Semantic Search.
 
 Excluded for now:
 
 - Chat panel integration.
+- Semantic Search implementation details, covered separately in `semantic-search-plan.md`.
 - PDF document context sent to models.
 - Streaming chat UI.
 - Agent execution workflows.
@@ -188,7 +189,7 @@ The screenshot direction is good: dense settings page, restrained dark styling, 
 3. Local server add/test/model discovery.
 4. CLI detection and enablement.
 5. Provider registry cleanup and tests.
-6. Later: chat panel consuming this registry.
+6. Later: document actions consuming this registry.
 
 ## Difficulty
 

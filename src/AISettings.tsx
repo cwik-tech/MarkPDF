@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Eye,
   KeyRound,
+  PanelRight,
   Plus,
   RefreshCw,
   Settings,
@@ -10,7 +11,17 @@ import {
   XCircle
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { AIModelInfo, AIProviderInput, AIProviderKind, AIProviderView, LocalAgentInfo } from "./global";
+import type {
+  AIModelInfo,
+  AIProviderInput,
+  AIProviderKind,
+  AIProviderView,
+  LocalAgentInfo,
+  SemanticDatabaseInfo,
+  SemanticSearchSettings
+} from "./global";
+import { clearSemanticIndex, downloadSemanticModel } from "./semanticIndex";
+import { chunkingPresets, curatedEmbeddingModels, recommendedEmbeddingModelId } from "./semanticModels";
 
 const providerKindLabels: Record<AIProviderKind, string> = {
   "openai-compatible": "OpenAI Compatible",
@@ -32,7 +43,18 @@ const providerDefaults: Record<AIProviderKind, { name: string; baseUrl: string }
 
 interface AISettingsDialogProps {
   onClose: () => void;
+  onSemanticSettingsChange?: (settings: SemanticSearchSettings) => void;
+  onSemanticIndexCleared?: () => void;
 }
+
+type SettingsPage = "providers" | "semantic";
+
+const defaultSemanticSettings: SemanticSearchSettings = {
+  enabled: true,
+  activeModelId: recommendedEmbeddingModelId,
+  chunkingProfile: "balanced",
+  downloadedModelIds: []
+};
 
 interface ProviderDraft {
   id?: string;
@@ -79,13 +101,17 @@ function formatCheckedAt(value?: string) {
   }).format(new Date(value));
 }
 
-export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
+export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemanticIndexCleared }: AISettingsDialogProps) {
+  const [page, setPage] = useState<SettingsPage>("providers");
   const [providers, setProviders] = useState<AIProviderView[]>([]);
   const [localAgents, setLocalAgents] = useState<LocalAgentInfo[]>([]);
+  const [semanticSettings, setSemanticSettings] = useState<SemanticSearchSettings>(defaultSemanticSettings);
+  const [databaseInfo, setDatabaseInfo] = useState<SemanticDatabaseInfo>({ sizeBytes: 0 });
   const [draft, setDraft] = useState<ProviderDraft | null>(null);
   const [loadingProviders, setLoadingProviders] = useState(true);
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
+  const [busySemanticModelId, setBusySemanticModelId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
 
   const enabledModels = useMemo(
@@ -121,9 +147,16 @@ export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
     }
   };
 
+  const loadSemanticSettings = async () => {
+    if (!window.pdfReader?.semantic) return;
+    setSemanticSettings(await window.pdfReader.semantic.getSettings());
+    setDatabaseInfo(await window.pdfReader.semantic.databaseInfo());
+  };
+
   useEffect(() => {
     void loadProviders();
     void loadAgents();
+    void loadSemanticSettings();
   }, []);
 
   useEffect(() => {
@@ -221,6 +254,52 @@ export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
     }
   };
 
+  const saveSemanticSettings = async (patch: Partial<SemanticSearchSettings>) => {
+    if (!window.pdfReader?.semantic) return;
+    const nextSettings = await window.pdfReader.semantic.saveSettings(patch);
+    setSemanticSettings(nextSettings);
+    onSemanticSettingsChange?.(nextSettings);
+    showToast("Semantic search settings saved.");
+  };
+
+  const downloadModel = async (modelId: string) => {
+    setBusySemanticModelId(modelId);
+    try {
+      const settings = await downloadSemanticModel(modelId, (progress) => {
+        if (progress.status === "downloading" && progress.current && progress.total) {
+          const percent = Math.round((progress.current / progress.total) * 100);
+          showToast(`Downloading model ${percent}%`);
+        }
+      });
+      if (settings) {
+        setSemanticSettings(settings);
+        onSemanticSettingsChange?.(settings);
+      }
+      showToast("Embedding model ready.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Model download failed.");
+    } finally {
+      setBusySemanticModelId(null);
+      await loadSemanticSettings();
+    }
+  };
+
+  const removeModel = async (modelId: string) => {
+    if (!window.pdfReader?.semantic) return;
+    const nextSettings = await window.pdfReader.semantic.removeModel(modelId);
+    setSemanticSettings(nextSettings);
+    onSemanticSettingsChange?.(nextSettings);
+    showToast("Model removed from downloaded list.");
+  };
+
+  const clearIndex = async () => {
+    if (!window.confirm("Clear the local semantic index? PDFs and downloaded models will not be deleted.")) return;
+    await clearSemanticIndex();
+    await loadSemanticSettings();
+    onSemanticIndexCleared?.();
+    showToast("Semantic index cleared.");
+  };
+
   return (
     <div className="settings-backdrop" role="presentation" onMouseDown={(event) => event.currentTarget === event.target && onClose()}>
       <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -237,29 +316,47 @@ export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
             <Settings size={18} />
             <span>Settings</span>
           </div>
-          <button className="settings-nav-item active">
+          <button className={`settings-nav-item ${page === "providers" ? "active" : ""}`} onClick={() => setPage("providers")}>
             <Bot size={16} />
             <span>AI Providers</span>
+          </button>
+          <button className={`settings-nav-item ${page === "semantic" ? "active" : ""}`} onClick={() => setPage("semantic")}>
+            <PanelRight size={16} />
+            <span>Semantic Search</span>
           </button>
         </aside>
 
         <div className="settings-content">
           <header className="settings-header">
             <div>
-              <h2 id="settings-title">AI Providers</h2>
-              <p>Manage model providers, local servers, and detected CLI agents.</p>
+              <h2 id="settings-title">{page === "providers" ? "AI Providers" : "Semantic Search"}</h2>
+              <p>
+                {page === "providers"
+                  ? "Manage model providers, local servers, and detected CLI agents."
+                  : "Manage local embedding models and the private document index."}
+              </p>
             </div>
             <button className="icon-button" title="Close settings" onClick={onClose}>
               <XCircle size={18} />
             </button>
           </header>
 
-          <div className="settings-summary">
-            <span>{providers.length} providers</span>
-            <span>{enabledModels} models enabled</span>
-            <span>{localAgents.filter((agent) => agent.available && agent.enabled).length} CLI agents enabled</span>
-          </div>
+          {page === "providers" ? (
+            <div className="settings-summary">
+              <span>{providers.length} providers</span>
+              <span>{enabledModels} models enabled</span>
+              <span>{localAgents.filter((agent) => agent.available && agent.enabled).length} CLI agents enabled</span>
+            </div>
+          ) : (
+            <div className="settings-summary">
+              <span>{semanticSettings.enabled ? "Enabled" : "Disabled"}</span>
+              <span>{semanticSettings.downloadedModelIds.length} models downloaded</span>
+              <span>{formatBytes(databaseInfo.sizeBytes)} index</span>
+            </div>
+          )}
 
+          {page === "providers" && (
+            <>
           <section className="settings-section">
             <div className="settings-section-heading">
               <div>
@@ -346,9 +443,148 @@ export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
               )}
             </div>
           </section>
+            </>
+          )}
+
+          {page === "semantic" && (
+            <SemanticSettingsPage
+              settings={semanticSettings}
+              databaseInfo={databaseInfo}
+              busyModelId={busySemanticModelId}
+              onToggleEnabled={(enabled) => void saveSemanticSettings({ enabled })}
+              onSelectModel={(activeModelId) => void saveSemanticSettings({ activeModelId })}
+              onSelectChunkingProfile={(chunkingProfile) => void saveSemanticSettings({ chunkingProfile })}
+              onDownload={(modelId) => void downloadModel(modelId)}
+              onRemoveModel={(modelId) => void removeModel(modelId)}
+              onClearIndex={() => void clearIndex()}
+            />
+          )}
         </div>
       </section>
     </div>
+  );
+}
+
+function SemanticSettingsPage({
+  settings,
+  databaseInfo,
+  busyModelId,
+  onToggleEnabled,
+  onSelectModel,
+  onSelectChunkingProfile,
+  onDownload,
+  onRemoveModel,
+  onClearIndex
+}: {
+  settings: SemanticSearchSettings;
+  databaseInfo: SemanticDatabaseInfo;
+  busyModelId: string | null;
+  onToggleEnabled: (enabled: boolean) => void;
+  onSelectModel: (modelId: string) => void;
+  onSelectChunkingProfile: (profile: SemanticSearchSettings["chunkingProfile"]) => void;
+  onDownload: (modelId: string) => void;
+  onRemoveModel: (modelId: string) => void;
+  onClearIndex: () => void;
+}) {
+  return (
+    <>
+      <section className="settings-section">
+        <div className="settings-section-heading">
+          <div>
+            <h3>Local Indexing</h3>
+            <p>Runs locally. PDF text and search queries are not sent to AI providers.</p>
+          </div>
+          <label className="switch-control" title="Enable semantic search">
+            <input type="checkbox" checked={settings.enabled} onChange={(event) => onToggleEnabled(event.target.checked)} />
+            <span />
+          </label>
+        </div>
+        <div className="settings-summary semantic-box">
+          <span>Active model: {curatedEmbeddingModels.find((model) => model.id === settings.activeModelId)?.name ?? settings.activeModelId}</span>
+          <span>Index size: {formatBytes(databaseInfo.sizeBytes)}</span>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-heading">
+          <div>
+            <h3>Embedding Models</h3>
+            <p>Download multiple curated models, but use only one at a time.</p>
+          </div>
+        </div>
+        <div className="provider-list">
+          {curatedEmbeddingModels.map((model) => {
+            const downloaded = settings.downloadedModelIds.includes(model.id);
+            const active = settings.activeModelId === model.id;
+            return (
+              <article className="provider-row" key={model.id}>
+                <div className="provider-row-header">
+                  <div className="provider-title">
+                    <span className={`status-dot ${downloaded ? "connected" : "unknown"}`} />
+                    <div>
+                      <strong>{model.name}</strong>
+                      <span>
+                        {model.dimensions} dimensions · about {model.approxSizeMb} MB · {model.description}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="provider-actions">
+                    {model.badge && <span className="api-key-chip">{model.badge}</span>}
+                    <button className="secondary-button" disabled={active} onClick={() => onSelectModel(model.id)}>
+                      {active ? "Active" : "Use"}
+                    </button>
+                    {downloaded ? (
+                      <button className="secondary-button" onClick={() => onRemoveModel(model.id)}>
+                        Remove
+                      </button>
+                    ) : (
+                      <button className="primary-button" disabled={busyModelId === model.id} onClick={() => onDownload(model.id)}>
+                        {busyModelId === model.id ? <RefreshCw size={15} /> : <Plus size={15} />}
+                        Download
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-heading">
+          <div>
+            <h3>Document Index</h3>
+            <p>Clearing the index does not delete PDFs or downloaded models.</p>
+          </div>
+          <button className="secondary-button danger-button" onClick={onClearIndex}>
+            <Trash2 size={15} />
+            Clear Index
+          </button>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-heading">
+          <div>
+            <h3>Advanced</h3>
+            <p>Changing chunking requires documents to be indexed again.</p>
+          </div>
+        </div>
+        <div className="chunking-options">
+          {chunkingPresets.map((preset) => (
+            <button
+              key={preset.id}
+              className={settings.chunkingProfile === preset.id ? "active" : ""}
+              onClick={() => onSelectChunkingProfile(preset.id)}
+            >
+              <strong>{preset.name}</strong>
+              <span>{preset.description}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -433,6 +669,18 @@ function ProviderEditor({
       </div>
     </div>
   );
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
 function ProviderRow({

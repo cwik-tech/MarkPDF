@@ -16,6 +16,7 @@
     "dist": "npm run build && electron-builder"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@vitejs/plugin-react": "^5.1.1",
     "electron-store": "^11.0.2",
     "lucide-react": "^0.556.0",
@@ -23,12 +24,14 @@
     "pdfjs-dist": "^5.4.394",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
+    "sql.js": "^1.14.1",
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.0.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@types/sql.js": "^1.4.11",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^39.2.7",

@@ -39,6 +39,22 @@ export interface SearchMatch {
   source: "pdf" | "ocr";
 }
 
+export type SemanticIndexStatus = "idle" | "checking" | "downloading" | "indexing" | "ready" | "error";
+
+export interface SemanticIndexProgress {
+  status: SemanticIndexStatus;
+  current?: number;
+  total?: number;
+  message?: string;
+}
+
+export interface SemanticSearchResult {
+  id: string;
+  page: number;
+  snippet: string;
+  score: number;
+}
+
 export interface OutlineItem {
   id: string;
   title: string;
@@ -105,6 +121,10 @@ export interface PdfTab {
   searchQuery: string;
   searchMatches: SearchMatch[];
   activeSearchMatch: number;
+  semanticResults: SemanticSearchResult[];
+  semanticIndexStatus?: SemanticIndexStatus;
+  semanticIndexProgress?: SemanticIndexProgress;
+  semanticIndexError?: string;
   ocrStatus?: OcrStatus;
   ocrProgress?: OcrProgress;
   ocrPages: OcrPageText[];
