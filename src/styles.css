@@ -124,6 +124,22 @@ button {
   white-space: nowrap;
 }
 
+.tab .tab-close-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  color: var(--muted);
+}
+
+.tab .tab-close-icon:hover {
+  background: color-mix(in srgb, var(--text), transparent 88%);
+  color: var(--text);
+}
+
 .tab i {
   width: 7px;
   height: 7px;
@@ -1306,6 +1322,47 @@ select {
 
 .save-signature-modal {
   width: min(440px, 94vw);
+}
+
+.operation-progress-modal {
+  display: grid;
+  gap: 12px;
+  width: min(420px, 90vw);
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.operation-progress-modal h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.operation-progress-modal p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.operation-progress-modal small {
+  color: var(--muted);
+  text-align: right;
+}
+
+.operation-progress-bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--chrome-2);
+}
+
+.operation-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 140ms ease;
 }
 
 .modal-header {

@@ -313,10 +313,14 @@ export async function exportPdfBytes(
   return pdfDoc.save();
 }
 
-export async function createPdfFromImages(images: ImagePdfSource[]) {
+export async function createPdfFromImages(
+  images: ImagePdfSource[],
+  onProgress?: (progress: { current: number; total: number; imageName: string }) => void | Promise<void>
+) {
   const pdfDoc = await PDFDocument.create();
 
-  for (const image of images) {
+  for (const [index, image] of images.entries()) {
+    await onProgress?.({ current: index + 1, total: images.length, imageName: image.name });
     const embedded = await embedPageImage(pdfDoc, image);
     const { width, height } = scaleImagePage(embedded.width, embedded.height);
     const page = pdfDoc.addPage([width, height]);

@@ -9,6 +9,7 @@ import {
   ArrowUp,
   FilePlus2,
   FileText,
+  FolderOpen,
   GripVertical,
   Highlighter,
   Image as ImageIcon,
@@ -72,6 +73,7 @@ const supportedImageExtensions = new Set(["gif", "jpeg", "jpg", "png", "webp"]);
 const signatureStorageKey = "open-pdf-reader-signatures";
 
 type SignatureAssetKind = "typed-signature" | "typed-initials" | "date" | "drawn" | "image";
+type ToolbarMenu = "fit" | "view" | "recent" | "save";
 
 interface SignatureAsset {
   id: string;
@@ -83,6 +85,13 @@ interface SignatureAsset {
   createdAt: string;
   sourceText?: string;
   fontFamily?: string;
+}
+
+interface OperationProgress {
+  title: string;
+  message: string;
+  current?: number;
+  total?: number;
 }
 
 const signatureFonts = [
@@ -116,6 +125,18 @@ function mimeTypeFromImageName(name: string) {
   if (extension === "webp") return "image/webp";
   if (extension === "gif") return "image/gif";
   return "application/octet-stream";
+}
+
+function waitForUiPaint() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
 }
 
 function loadSavedSignatureAssets() {
@@ -262,7 +283,8 @@ export default function App() {
   const [searchText, setSearchText] = useState("");
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
-  const [openMenu, setOpenMenu] = useState<"fit" | "view" | null>(null);
+  const [operationProgress, setOperationProgress] = useState<OperationProgress | null>(null);
+  const [openMenu, setOpenMenu] = useState<ToolbarMenu | null>(null);
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [selectionAction, setSelectionAction] = useState<{
     page: number;
@@ -277,6 +299,8 @@ export default function App() {
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const menuCloseTimerRef = useRef<number | null>(null);
+  const searchCloseTimerRef = useRef<number | null>(null);
+  const searchPinnedRef = useRef(false);
   const autoSearchTimerRef = useRef<number | null>(null);
   const searchRequestIdRef = useRef(0);
   const ocrJobsRef = useRef(new Map<string, { cancelled: boolean }>());
@@ -285,10 +309,17 @@ export default function App() {
     () => tabs.find((tab) => tab.id === activeTabId) ?? null,
     [activeTabId, tabs]
   );
+  const hasActiveDocument = Boolean(activeTab);
   const selectedSignature = useMemo(
     () => savedSignatures.find((asset) => asset.id === selectedSignatureId) ?? savedSignatures[0] ?? null,
     [savedSignatures, selectedSignatureId]
   );
+
+  useEffect(() => {
+    if (!activeTab && sidebar !== null) {
+      setSidebar(null);
+    }
+  }, [activeTab, sidebar]);
 
   useEffect(() => {
     localStorage.setItem(signatureStorageKey, JSON.stringify(savedSignatures));
@@ -309,11 +340,12 @@ export default function App() {
   useEffect(() => {
     return () => {
       if (menuCloseTimerRef.current !== null) window.clearTimeout(menuCloseTimerRef.current);
+      if (searchCloseTimerRef.current !== null) window.clearTimeout(searchCloseTimerRef.current);
       if (autoSearchTimerRef.current !== null) window.clearTimeout(autoSearchTimerRef.current);
     };
   }, []);
 
-  const openToolbarMenu = (menu: "fit" | "view" | null) => {
+  const openToolbarMenu = (menu: ToolbarMenu | null) => {
     if (menuCloseTimerRef.current !== null) {
       window.clearTimeout(menuCloseTimerRef.current);
       menuCloseTimerRef.current = null;
@@ -329,6 +361,23 @@ export default function App() {
     }, 500);
   };
 
+  const clearSearchCloseTimer = () => {
+    if (searchCloseTimerRef.current !== null) {
+      window.clearTimeout(searchCloseTimerRef.current);
+      searchCloseTimerRef.current = null;
+    }
+  };
+
+  const scheduleSearchClose = () => {
+    clearSearchCloseTimer();
+    if (searchText || activeTab?.searchQuery || searchPinnedRef.current) return;
+    searchCloseTimerRef.current = window.setTimeout(() => {
+      searchInputRef.current?.blur();
+      setSearchExpanded(false);
+      searchCloseTimerRef.current = null;
+    }, 2000);
+  };
+
   const updateTab = useCallback((tabId: string, patch: Partial<PdfTab> | ((tab: PdfTab) => Partial<PdfTab>)) => {
     setTabs((current) =>
       current.map((tab) => {
@@ -337,6 +386,19 @@ export default function App() {
         return { ...tab, ...nextPatch };
       })
     );
+  }, []);
+
+  const showOperationProgress = useCallback(async (progress: OperationProgress) => {
+    setOperationProgress(progress);
+    await waitForUiPaint();
+  }, []);
+
+  const hideOperationProgress = useCallback(async (startedAt: number) => {
+    const remaining = Math.max(0, 1000 - (Date.now() - startedAt));
+    if (remaining > 0) {
+      await delay(remaining);
+    }
+    setOperationProgress(null);
   }, []);
 
   const startAutoOcr = useCallback(
@@ -488,12 +550,31 @@ export default function App() {
   const addImagePdfTab = useCallback(
     async (images: ImagePdfSource[]) => {
       if (images.length === 0) return;
-      const bytes = await createPdfFromImages(images);
+      await showOperationProgress({
+        title: "Please wait, loading images",
+        message: "Creating PDF pages",
+        current: 0,
+        total: images.length
+      });
+      const bytes = await createPdfFromImages(images, async (progress) => {
+        await showOperationProgress({
+          title: "Please wait, loading images",
+          message: `Creating PDF page ${progress.current} of ${progress.total}`,
+          current: progress.current,
+          total: progress.total
+        });
+      });
+      await showOperationProgress({
+        title: "Please wait, loading images",
+        message: "Opening generated PDF",
+        current: images.length,
+        total: images.length
+      });
       const name = images.length === 1 ? `${images[0].name.replace(/\.[^.]+$/, "") || "Image"}.pdf` : "Images.pdf";
       await addTabFromBytes(Uint8Array.from(bytes), name, undefined, { autoOcr: false, dirty: true });
       setSidebar("pages");
     },
-    [addTabFromBytes]
+    [addTabFromBytes, showOperationProgress]
   );
 
   const openFilePaths = useCallback(
@@ -517,33 +598,45 @@ export default function App() {
       }
 
       if (imagePaths.length > 0) {
+        const progressStartedAt = Date.now();
         const images: ImagePdfSource[] = [];
 
-        for (const path of imagePaths) {
-          try {
-            const result = await window.pdfReader.readImage(path);
-            images.push({
-              id: newId("image"),
-              name: result.name,
-              path: result.path,
-              mimeType: result.mimeType,
-              bytes: Uint8Array.from(result.bytes)
-            });
-          } catch (error) {
-            window.alert(error instanceof Error ? error.message : `Could not open "${path}".`);
-          }
-        }
-
         try {
-          await addImagePdfTab(images);
-        } catch (error) {
-          window.alert(error instanceof Error ? error.message : "Could not create PDF from images.");
+          for (const [index, path] of imagePaths.entries()) {
+            await showOperationProgress({
+              title: "Please wait, loading images",
+              message: `Loading image ${index + 1} of ${imagePaths.length}`,
+              current: index,
+              total: imagePaths.length
+            });
+
+            try {
+              const result = await window.pdfReader.readImage(path);
+              images.push({
+                id: newId("image"),
+                name: result.name,
+                path: result.path,
+                mimeType: result.mimeType,
+                bytes: Uint8Array.from(result.bytes)
+              });
+            } catch (error) {
+              window.alert(error instanceof Error ? error.message : `Could not open "${path}".`);
+            }
+          }
+
+          try {
+            await addImagePdfTab(images);
+          } catch (error) {
+            window.alert(error instanceof Error ? error.message : "Could not create PDF from images.");
+          }
+        } finally {
+          await hideOperationProgress(progressStartedAt);
         }
       }
 
       setRecentFiles(await window.pdfReader.listRecentFiles());
     },
-    [addImagePdfTab, addTabFromBytes]
+    [addImagePdfTab, addTabFromBytes, hideOperationProgress, showOperationProgress]
   );
 
   const loadRecentFiles = useCallback(async () => {
@@ -609,19 +702,30 @@ export default function App() {
     }
 
     if (imageFiles.length > 0) {
+      const progressStartedAt = Date.now();
       try {
-        await addImagePdfTab(
-          await Promise.all(
-            imageFiles.map(async (file) => ({
-              id: newId("image"),
-              name: file.name,
-              mimeType: file.type || mimeTypeFromImageName(file.name),
-              bytes: new Uint8Array(await file.arrayBuffer())
-            }))
-          )
-        );
+        const images: ImagePdfSource[] = [];
+
+        for (const [index, file] of imageFiles.entries()) {
+          await showOperationProgress({
+            title: "Please wait, loading images",
+            message: `Loading image ${index + 1} of ${imageFiles.length}`,
+            current: index,
+            total: imageFiles.length
+          });
+          images.push({
+            id: newId("image"),
+            name: file.name,
+            mimeType: file.type || mimeTypeFromImageName(file.name),
+            bytes: new Uint8Array(await file.arrayBuffer())
+          });
+        }
+
+        await addImagePdfTab(images);
       } catch (error) {
         window.alert(error instanceof Error ? error.message : "Could not create PDF from images.");
+      } finally {
+        await hideOperationProgress(progressStartedAt);
       }
     }
   };
@@ -678,52 +782,93 @@ export default function App() {
     flattenForms = false,
     options: { targetPath?: string; defaultPath?: string } = {}
   ) => {
-    const bytes = await exportPdfBytes(tabToSave.bytes, tabToSave.overlays, tabToSave.formFields, flattenForms, {
-      bakeOverlays: flattenForms,
-      persistEditable: !flattenForms,
-      writeStandardAnnotations: !flattenForms
-    });
     let targetPath = options.targetPath ?? tabToSave.path;
 
-    if (!window.pdfReader) {
-      downloadBytes(bytes, options.defaultPath ?? tabToSave.name);
-      return true;
-    }
-
-    if (!targetPath || saveAs) {
+    if (window.pdfReader && (!targetPath || saveAs)) {
       const selectedPath = await window.pdfReader.savePdfDialog(options.defaultPath ?? tabToSave.name);
       if (!selectedPath) return false;
       targetPath = selectedPath;
     }
 
-    const written = await window.pdfReader.writePdf(targetPath, Array.from(bytes));
-    const nextBytes = Uint8Array.from(bytes);
-    const pdfDoc = await loadPdfDocument(nextBytes);
-    const formFields = flattenForms ? [] : await detectFormFields(nextBytes);
-    const outline = await extractOutline(pdfDoc);
-    const overlays = flattenForms ? [] : await extractEditableOverlays(nextBytes);
+    if (window.pdfReader && !targetPath) return false;
 
-    updateTab(tabToSave.id, {
-      path: written.path,
-      name: written.name,
-      bytes: nextBytes,
-      pdfDoc,
-      pageCount: pdfDoc.numPages,
-      overlays,
-      formFields,
-      outline,
-      searchMatches: [],
-      activeSearchMatch: -1,
-      ocrPages: [],
-      ocrStatus: "checking",
-      ocrProgress: { status: "checking", message: "Checking text layer" },
-      undoStack: [],
-      redoStack: [],
-      dirty: false
-    });
-    void startAutoOcr(tabToSave.id, pdfDoc);
-    await loadRecentFiles();
-    return true;
+    const progressStartedAt = Date.now();
+
+    try {
+      await showOperationProgress({
+        title: "Saving PDF",
+        message: "Preparing document",
+        current: 0,
+        total: 3
+      });
+      const bytes = await exportPdfBytes(tabToSave.bytes, tabToSave.overlays, tabToSave.formFields, flattenForms, {
+        bakeOverlays: flattenForms,
+        persistEditable: !flattenForms,
+        writeStandardAnnotations: !flattenForms
+      });
+
+      if (!window.pdfReader) {
+        await showOperationProgress({
+          title: "Saving PDF",
+          message: "Downloading PDF",
+          current: 2,
+          total: 3
+        });
+        downloadBytes(bytes, options.defaultPath ?? tabToSave.name);
+        return true;
+      }
+
+      if (!targetPath) return false;
+
+      await showOperationProgress({
+        title: "Saving PDF",
+        message: "Writing file",
+        current: 1,
+        total: 3
+      });
+      const written = await window.pdfReader.writePdf(targetPath, Array.from(bytes));
+      const nextBytes = Uint8Array.from(bytes);
+      await showOperationProgress({
+        title: "Saving PDF",
+        message: "Refreshing document",
+        current: 2,
+        total: 3
+      });
+      const pdfDoc = await loadPdfDocument(nextBytes);
+      const formFields = flattenForms ? [] : await detectFormFields(nextBytes);
+      const outline = await extractOutline(pdfDoc);
+      const overlays = flattenForms ? [] : await extractEditableOverlays(nextBytes);
+
+      updateTab(tabToSave.id, {
+        path: written.path,
+        name: written.name,
+        bytes: nextBytes,
+        pdfDoc,
+        pageCount: pdfDoc.numPages,
+        overlays,
+        formFields,
+        outline,
+        searchMatches: [],
+        activeSearchMatch: -1,
+        ocrPages: [],
+        ocrStatus: "checking",
+        ocrProgress: { status: "checking", message: "Checking text layer" },
+        undoStack: [],
+        redoStack: [],
+        dirty: false
+      });
+      await showOperationProgress({
+        title: "Saving PDF",
+        message: "Save complete",
+        current: 3,
+        total: 3
+      });
+      void startAutoOcr(tabToSave.id, pdfDoc);
+      await loadRecentFiles();
+      return true;
+    } finally {
+      await hideOperationProgress(progressStartedAt);
+    }
   };
 
   const requestSignatureSaveMode = async (tabToSave: PdfTab) => {
@@ -1285,22 +1430,31 @@ export default function App() {
           if (!window.pdfReader) return;
           setRecentFiles(await window.pdfReader.clearRecentFiles());
         }}
+        openMenu={openMenu}
+        onOpenMenu={openToolbarMenu}
+        onCloseMenu={scheduleToolbarMenuClose}
       />
 
       <div className="toolbar">
-        <button className="icon-button" title="Pages" onClick={() => setSidebar(sidebar === "pages" ? null : "pages")}>
+        <button
+          className="icon-button"
+          title="Pages"
+          disabled={!hasActiveDocument}
+          onClick={() => setSidebar(sidebar === "pages" ? null : "pages")}
+        >
           <PanelLeft size={18} />
         </button>
         <div className="divider" />
         <ToolButton active={tool === "select"} title="Select text" onClick={() => setTool("select")}>
           <MousePointer2 size={18} />
         </ToolButton>
-        <ToolButton active={tool === "text"} title="Add text" onClick={() => setTool("text")}>
+        <ToolButton active={tool === "text"} title="Add text" disabled={!hasActiveDocument} onClick={() => setTool("text")}>
           <Type size={18} />
         </ToolButton>
         <ToolButton
           active={tool === "signature"}
           title="Sign"
+          disabled={!hasActiveDocument}
           onClick={() => {
             setTool("signature");
             setSidebar("signature");
@@ -1383,16 +1537,17 @@ export default function App() {
         <div className="toolbar-spacer" />
         <div
           className={`search-box ${searchExpanded || searchText || activeTab?.searchQuery ? "active" : ""}`}
+          title="Find text"
           onMouseEnter={() => {
+            clearSearchCloseTimer();
+            searchPinnedRef.current = false;
             setSearchExpanded(true);
             searchInputRef.current?.focus();
           }}
-          onMouseLeave={() => {
-            if (!searchText && !activeTab?.searchQuery && document.activeElement !== searchInputRef.current) {
-              setSearchExpanded(false);
-            }
-          }}
+          onMouseLeave={scheduleSearchClose}
           onClick={() => {
+            clearSearchCloseTimer();
+            searchPinnedRef.current = true;
             setSearchExpanded(true);
             searchInputRef.current?.focus();
           }}
@@ -1401,7 +1556,11 @@ export default function App() {
           <input
             ref={searchInputRef}
             value={searchText}
-            onChange={(event) => setSearchText(event.target.value)}
+            onChange={(event) => {
+              clearSearchCloseTimer();
+              searchPinnedRef.current = true;
+              setSearchText(event.target.value);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
@@ -1420,6 +1579,7 @@ export default function App() {
               onMouseDown={(event) => event.preventDefault()}
               onClick={(event) => {
                 event.stopPropagation();
+                searchPinnedRef.current = false;
                 clearSearch();
               }}
             >
@@ -1453,7 +1613,7 @@ export default function App() {
       </div>
 
       <main className="workspace">
-        {sidebar && (
+        {activeTab && sidebar && (
           <Sidebar
             mode={sidebar}
             tab={activeTab}
@@ -1462,9 +1622,7 @@ export default function App() {
             signatureFont={signatureFont}
             savedSignatures={savedSignatures}
             selectedSignatureId={selectedSignature?.id ?? null}
-            recentFiles={recentFiles}
             onSelectPage={(page) => activeTab && updateTab(activeTab.id, { currentPage: page })}
-            onOpenRecent={(path) => void openFilePaths([path])}
             onUpdateOverlay={updateOverlay}
             onDeleteOverlay={deleteOverlay}
             onUpdateFormField={updateFormField}
@@ -1574,6 +1732,8 @@ export default function App() {
           }}
         />
       )}
+
+      {operationProgress && <OperationProgressDialog progress={operationProgress} />}
     </div>
   );
 }
@@ -1598,6 +1758,29 @@ function downloadBytes(bytes: Uint8Array, name: string) {
   URL.revokeObjectURL(url);
 }
 
+function OperationProgressDialog({ progress }: { progress: OperationProgress }) {
+  const hasTotal = typeof progress.total === "number" && progress.total > 0;
+  const current = hasTotal ? Math.min(progress.current ?? 0, progress.total ?? 0) : 0;
+  const percent = hasTotal ? Math.round((current / (progress.total ?? 1)) * 100) : 0;
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="operation-progress-modal" role="dialog" aria-modal="true" aria-labelledby="operation-progress-title">
+        <h2 id="operation-progress-title">{progress.title}</h2>
+        <p>{progress.message}</p>
+        <div className="operation-progress-bar" aria-label={hasTotal ? `${percent}% complete` : "Working"}>
+          <span style={{ width: `${hasTotal ? percent : 24}%` }} />
+        </div>
+        {hasTotal && (
+          <small>
+            {current} / {progress.total}
+          </small>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TopBar({
   tabs,
   activeTabId,
@@ -1614,7 +1797,10 @@ function TopBar({
   onToggleFullScreen,
   recentFiles,
   onOpenRecent,
-  onClearRecent
+  onClearRecent,
+  openMenu,
+  onOpenMenu,
+  onCloseMenu
 }: {
   tabs: PdfTab[];
   activeTabId: string | null;
@@ -1632,6 +1818,9 @@ function TopBar({
   recentFiles: string[];
   onOpenRecent: (path: string) => void;
   onClearRecent: () => void;
+  openMenu: ToolbarMenu | null;
+  onOpenMenu: (menu: ToolbarMenu | null) => void;
+  onCloseMenu: () => void;
 }) {
   return (
     <header className="top-bar">
@@ -1646,46 +1835,71 @@ function TopBar({
             <FileText size={16} />
             <span>{tab.name}</span>
             {tab.dirty && <i />}
-            <X
-              size={14}
+            <span
+              className="tab-close-icon"
+              title={`Close ${tab.name}`}
+              aria-label={`Close ${tab.name}`}
               onClick={(event) => {
                 event.stopPropagation();
                 onCloseTab(tab.id);
               }}
-            />
+            >
+              <X size={14} />
+            </span>
           </button>
         ))}
       </div>
       <div className="top-actions">
-        <button className="text-button" onClick={onOpen}>
-          <FilePlus2 size={16} />
-          Open
+        <button className="icon-button" title="Open" aria-label="Open" onClick={onOpen}>
+          <FolderOpen size={17} />
         </button>
-        <div className="menu-button">
-          <button className="text-button" disabled={recentFiles.length === 0}>
+        <div
+          className={`menu-button ${openMenu === "recent" ? "open" : ""}`}
+          onMouseEnter={() => recentFiles.length > 0 && onOpenMenu("recent")}
+          onMouseLeave={onCloseMenu}
+        >
+          <button
+            className="text-button menu-trigger"
+            title="Recent files"
+            disabled={recentFiles.length === 0}
+            onClick={() => recentFiles.length > 0 && onOpenMenu(openMenu === "recent" ? null : "recent")}
+          >
             Recent
             <ChevronDown size={15} />
           </button>
-          <div className="menu-popover right wide">
-            {recentFiles.map((path) => (
-              <button key={path} onClick={() => onOpenRecent(path)} title={path}>
-                <span className="menu-title">{truncateMiddle(fileNameFromPath(path), 36)}</span>
-              </button>
-            ))}
-            <button onClick={onClearRecent}>Clear recent files</button>
-          </div>
+          {recentFiles.length > 0 && (
+            <div className="menu-popover right wide">
+              {recentFiles.map((path) => (
+                <button key={path} onClick={() => onOpenRecent(path)} title={path}>
+                  <span className="menu-title">{truncateMiddle(fileNameFromPath(path), 36)}</span>
+                </button>
+              ))}
+              <button onClick={onClearRecent}>Clear recent files</button>
+            </div>
+          )}
         </div>
         <button className="icon-button" title="Save" onClick={onSave} disabled={tabs.length === 0}>
           <Save size={17} />
         </button>
-        <div className="menu-button">
-          <button className="icon-button" title="Save options" disabled={tabs.length === 0}>
+        <div
+          className={`menu-button ${openMenu === "save" ? "open" : ""}`}
+          onMouseEnter={() => tabs.length > 0 && onOpenMenu("save")}
+          onMouseLeave={onCloseMenu}
+        >
+          <button
+            className="icon-button menu-trigger"
+            title="Save options"
+            disabled={tabs.length === 0}
+            onClick={() => tabs.length > 0 && onOpenMenu(openMenu === "save" ? null : "save")}
+          >
             <ChevronDown size={17} />
           </button>
-          <div className="menu-popover right">
-            <button onClick={onSaveAs}>Save as</button>
-            <button onClick={onExportFlattened}>Export flattened PDF</button>
-          </div>
+          {tabs.length > 0 && (
+            <div className="menu-popover right">
+              <button onClick={onSaveAs}>Save as</button>
+              <button onClick={onExportFlattened}>Export flattened PDF</button>
+            </div>
+          )}
         </div>
         <button className="icon-button" title="Print" onClick={onPrint} disabled={tabs.length === 0}>
           <Printer size={17} />
@@ -1704,16 +1918,18 @@ function TopBar({
 function ToolButton({
   active,
   title,
+  disabled,
   onClick,
   children
 }: {
   active: boolean;
   title: string;
+  disabled?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <button className={`icon-button ${active ? "active" : ""}`} title={title} onClick={onClick}>
+    <button className={`icon-button ${active ? "active" : ""}`} title={title} disabled={disabled} onClick={onClick}>
       {children}
     </button>
   );
@@ -1754,8 +1970,8 @@ function FitMenu({
   onFit
 }: {
   activeTab: PdfTab | null;
-  openMenu: "fit" | "view" | null;
-  onOpenMenu: (menu: "fit" | "view" | null) => void;
+  openMenu: ToolbarMenu | null;
+  onOpenMenu: (menu: ToolbarMenu | null) => void;
   onCloseMenu: () => void;
   onFit: (fitMode: FitMode) => void;
 }) {
@@ -1816,8 +2032,8 @@ function ViewMenu({
   onChange: (patch: Partial<PdfTab>) => void;
   isFullScreen: boolean;
   onToggleFullScreen: () => void;
-  openMenu: "fit" | "view" | null;
-  onOpenMenu: (menu: "fit" | "view" | null) => void;
+  openMenu: ToolbarMenu | null;
+  onOpenMenu: (menu: ToolbarMenu | null) => void;
   onCloseMenu: () => void;
 }) {
   const activeViewIcon = activeTab?.viewMode === "two" ? <Columns2 size={18} /> : <FileText size={18} />;
@@ -2665,9 +2881,7 @@ function Sidebar({
   signatureFont,
   savedSignatures,
   selectedSignatureId,
-  recentFiles,
   onSelectPage,
-  onOpenRecent,
   onUpdateOverlay,
   onDeleteOverlay,
   onUpdateFormField,
@@ -2691,9 +2905,7 @@ function Sidebar({
   signatureFont: string;
   savedSignatures: SignatureAsset[];
   selectedSignatureId: string | null;
-  recentFiles: string[];
   onSelectPage: (page: number) => void;
-  onOpenRecent: (path: string) => void;
   onUpdateOverlay: (id: string, patch: Partial<OverlayItem>) => void;
   onDeleteOverlay: (id: string) => void;
   onUpdateFormField: (name: string, value: string | boolean) => void;
@@ -2775,21 +2987,7 @@ function Sidebar({
                   <span>{page}</span>
                 </button>
               ))
-            ) : (
-              <>
-                <p>No document open.</p>
-                {recentFiles.length > 0 && (
-                  <div className="stack">
-                    {recentFiles.slice(0, 6).map((path) => (
-                      <button className="comment-row" key={path} onClick={() => onOpenRecent(path)} title={path}>
-                        <strong>{fileNameFromPath(path)}</strong>
-                        <span>{path}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
+            ) : null}
           </div>
         </>
       )}

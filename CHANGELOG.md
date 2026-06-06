@@ -2,6 +2,9 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Fixed top-bar dropdown hover retention, delayed idle search collapse, and changed Open to a titled folder icon button.
+- Added progress dialogs for large image imports and PDF saves, with a minimum visible duration for save feedback.
+- Disabled the left sidebar when no PDF is open and stopped the Pages panel from showing recent documents in the empty-document state.
 - Fixed non-scrolling page views so mouse wheel input changes pages instead of nudging within the current page.
 - Changed the typed signature preview to stack signature and initials vertically and removed the date preview.
 - Added image-to-PDF import for Finder/Open With, file dialog, and drag/drop image batches, with generated PDFs opened as unsaved tabs.
