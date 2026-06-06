@@ -1175,6 +1175,7 @@ export default function App() {
       const settings = (await window.pdfReader?.markdown.getSettings()) ?? defaultMarkdownSettings;
       const result = await convertDocumentToMarkdown({
         name: activeTab.name,
+        bytes: activeTab.bytes,
         pdfDoc: activeTab.pdfDoc,
         ocrPages: activeTab.ocrPages,
         overlays: activeTab.overlays,
@@ -1204,7 +1205,7 @@ export default function App() {
 
       await showOperationProgress({
         title: "Saving Markdown",
-        message: result.warnings.length > 0 ? "Markdown saved with warnings" : "Markdown saved",
+        message: result.warnings.length > 0 ? `Markdown saved with warnings: ${result.warnings[0].slice(0, 120)}` : "Markdown saved",
         current: activeTab.pageCount + 3,
         total: activeTab.pageCount + 3
       });

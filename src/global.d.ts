@@ -58,8 +58,16 @@ export interface SemanticDatabaseInfo {
   sizeBytes: number;
 }
 
-export type MarkdownEngineId = "builtin-text";
+export type MarkdownEngineId = "builtin-text" | "docling-managed";
 export type MarkdownExportMode = "readable" | "page-preserving";
+
+export interface MarkdownEngineAvailability {
+  id: MarkdownEngineId;
+  name: string;
+  available: boolean;
+  version?: string;
+  error?: string;
+}
 
 export interface MarkdownExportSettings {
   defaultEngine: MarkdownEngineId;
@@ -112,6 +120,9 @@ declare global {
       markdown: {
         getSettings: () => Promise<MarkdownExportSettings>;
         saveSettings: (settings: Partial<MarkdownExportSettings>) => Promise<MarkdownExportSettings>;
+        listEngines: () => Promise<MarkdownEngineAvailability[]>;
+        installDocling: () => Promise<MarkdownEngineAvailability[]>;
+        convertWithDocling: (bytes: number[], settings: MarkdownExportSettings) => Promise<{ markdown: string; engineId: MarkdownEngineId; warnings: string[] }>;
       };
       onFullScreenChange: (callback: (enabled: boolean) => void) => () => void;
       onWindowRequestClose: (callback: () => void) => () => void;

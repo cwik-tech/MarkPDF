@@ -23,7 +23,13 @@ import {
   saveSemanticDatabase,
   type SemanticSearchSettings
 } from "./semantic.js";
-import { defaultMarkdownExportSettings, type MarkdownExportSettings } from "./documentConversion.js";
+import {
+  convertPdfWithDocling,
+  defaultMarkdownExportSettings,
+  getMarkdownEngineAvailability,
+  installManagedDocling,
+  type MarkdownExportSettings
+} from "./documentConversion.js";
 
 let pendingOpenPaths: string[] = [];
 let openPathFlushTimer: NodeJS.Timeout | null = null;
@@ -348,6 +354,14 @@ ipcMain.handle("markdown:save-settings", async (_event, settings: Partial<Markdo
   store.set("markdownExport", next);
   return next;
 });
+
+ipcMain.handle("markdown:list-engines", async () => getMarkdownEngineAvailability());
+
+ipcMain.handle("markdown:install-docling", async () => installManagedDocling());
+
+ipcMain.handle("markdown:convert-docling", async (_event, bytes: number[], settings: MarkdownExportSettings) =>
+  convertPdfWithDocling(bytes, settings)
+);
 
 ipcMain.handle("recent:clear", async () => {
   store.set("recentFiles", []);

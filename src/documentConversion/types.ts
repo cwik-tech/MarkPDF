@@ -17,6 +17,7 @@ export interface MarkdownConversionProgress {
 
 export interface MarkdownConversionInput {
   name: string;
+  bytes: Uint8Array;
   pdfDoc: PDFDocumentProxy;
   ocrPages: OcrPageText[];
   overlays: OverlayItem[];

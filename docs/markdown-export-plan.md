@@ -201,6 +201,7 @@ The first Markdown export should work without an LLM.
 
 ### Phase 3: Engine Expansion
 
+- Add Docling as the first layout-aware optional engine, installed into an app-managed runtime instead of relying on a global CLI.
 - Add PyMuPDF4LLM as a lightweight fallback or alternate engine.
 - Add installed-engine detection.
 - Add engine availability messages in Markdown settings.
