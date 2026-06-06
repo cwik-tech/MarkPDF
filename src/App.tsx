@@ -289,7 +289,7 @@ export default function App() {
   const [operationProgress, setOperationProgress] = useState<OperationProgress | null>(null);
   const [openMenu, setOpenMenu] = useState<ToolbarMenu | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [chatNotice, setChatNotice] = useState<string | null>(null);
+  const [chatToast, setChatToast] = useState<{ id: number; message: string } | null>(null);
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [selectionAction, setSelectionAction] = useState<{
     page: number;
@@ -1328,9 +1328,17 @@ export default function App() {
   }, []);
 
   const openReservedChat = useCallback(() => {
-    setChatNotice("Chat will use the configured AI provider layer, but the chat panel is intentionally not connected yet.");
-    window.setTimeout(() => setChatNotice(null), 3800);
+    setChatToast({
+      id: Date.now(),
+      message: "Chat will use the configured AI provider layer, but the chat panel is intentionally not connected yet."
+    });
   }, []);
+
+  useEffect(() => {
+    if (!chatToast) return undefined;
+    const timer = window.setTimeout(() => setChatToast(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [chatToast]);
 
   useEffect(() => {
     if (selectedOverlay?.kind !== "comment" || !selectedOverlay.minimized) return undefined;
@@ -1557,7 +1565,6 @@ export default function App() {
           />
         </div>
         <div className="toolbar-spacer" />
-        {chatNotice && <span className="chat-notice">{chatNotice}</span>}
         <div
           className={`search-box ${searchExpanded || searchText || activeTab?.searchQuery ? "active" : ""}`}
           title="Find text"
@@ -1610,9 +1617,19 @@ export default function App() {
             </button>
           )}
         </div>
-        <button className="icon-button" title="Chat (Command+N)" onClick={openReservedChat}>
-          <MessageSquare size={17} />
-        </button>
+        <div className="chat-action">
+          <button className="icon-button" title="Chat (Command+N)" onClick={openReservedChat}>
+            <MessageSquare size={17} />
+          </button>
+          {chatToast && (
+            <div className="toolbar-toast" role="status">
+              <span>{chatToast.message}</span>
+              <button className="toast-close-button" title="Dismiss" onClick={() => setChatToast(null)}>
+                <X size={14} />
+              </button>
+            </div>
+          )}
+        </div>
         {(searchText || activeTab?.searchQuery) && (
           <>
             <button className="icon-button" title="Previous match" disabled={!activeTab?.searchMatches.length} onClick={() => stepSearch(-1)}>

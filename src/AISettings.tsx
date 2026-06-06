@@ -1,13 +1,10 @@
 import {
   Bot,
   CheckCircle2,
-  Cloud,
-  Cpu,
   Eye,
   KeyRound,
   Plus,
   RefreshCw,
-  Server,
   Settings,
   Trash2,
   XCircle
@@ -89,7 +86,7 @@ export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
   const [loadingProviders, setLoadingProviders] = useState(true);
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
 
   const enabledModels = useMemo(
     () => providers.reduce((total, provider) => total + provider.models.filter((model) => model.enabled).length, 0),
@@ -129,6 +126,16 @@ export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
     void loadAgents();
   }, []);
 
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = window.setTimeout(() => setToast(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  const showToast = (message: string) => {
+    setToast({ id: Date.now(), message });
+  };
+
   const saveDraft = async (validateAfterSave: boolean) => {
     if (!draft || !window.pdfReader?.ai) return;
     const input: AIProviderInput = {
@@ -145,12 +152,12 @@ export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
 
     const saved = await window.pdfReader.ai.saveProvider(input);
     setDraft(null);
-    setMessage(validateAfterSave ? "Provider saved. Validating connection..." : "Provider saved.");
+    showToast(validateAfterSave ? "Provider saved. Validating connection..." : "Provider saved.");
     if (validateAfterSave) {
       setBusyProviderId(saved.id);
       const validated = await window.pdfReader.ai.validateProvider(saved.id);
       setBusyProviderId(null);
-      setMessage(validated.status === "connected" ? "Provider connected." : validated.error ?? "Provider validation failed.");
+      showToast(validated.status === "connected" ? "Provider connected." : validated.error ?? "Provider validation failed.");
     }
     await loadProviders();
   };
@@ -160,14 +167,14 @@ export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
     setBusyProviderId(providerId);
     const validated = await window.pdfReader.ai.validateProvider(providerId);
     setBusyProviderId(null);
-    setMessage(validated.status === "connected" ? "Provider connected." : validated.error ?? "Provider validation failed.");
+    showToast(validated.status === "connected" ? "Provider connected." : validated.error ?? "Provider validation failed.");
     await loadProviders();
   };
 
   const deleteProvider = async (providerId: string) => {
     if (!window.pdfReader?.ai || !window.confirm("Delete this AI provider?")) return;
     await window.pdfReader.ai.deleteProvider(providerId);
-    setMessage("Provider deleted.");
+    showToast("Provider deleted.");
     await loadProviders();
   };
 
@@ -208,15 +215,23 @@ export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
     setLoadingAgents(true);
     try {
       setLocalAgents(await window.pdfReader.ai.refreshLocalAgents());
-      setMessage("Local CLI detection refreshed.");
+      showToast("Local CLI detection refreshed.");
     } finally {
       setLoadingAgents(false);
     }
   };
 
   return (
-    <div className="settings-backdrop" role="presentation">
-      <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div className="settings-backdrop" role="presentation" onMouseDown={(event) => event.currentTarget === event.target && onClose()}>
+      <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}>
+        {toast && (
+          <div className="settings-toast" role="status">
+            <span>{toast.message}</span>
+            <button className="toast-close-button" title="Dismiss" onClick={() => setToast(null)}>
+              <XCircle size={14} />
+            </button>
+          </div>
+        )}
         <aside className="settings-sidebar">
           <div className="settings-sidebar-title">
             <Settings size={18} />
@@ -245,8 +260,6 @@ export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
             <span>{localAgents.filter((agent) => agent.available && agent.enabled).length} CLI agents enabled</span>
           </div>
 
-          {message && <div className="settings-message">{message}</div>}
-
           <section className="settings-section">
             <div className="settings-section-heading">
               <div>
@@ -254,18 +267,6 @@ export function AISettingsDialog({ onClose }: AISettingsDialogProps) {
                 <p>Add OpenRouter, OpenAI-compatible endpoints, Ollama, or LM Studio.</p>
               </div>
               <div className="settings-button-row">
-                <button className="secondary-button" onClick={() => setDraft(draftFromKind("ollama"))}>
-                  <Server size={15} />
-                  Ollama
-                </button>
-                <button className="secondary-button" onClick={() => setDraft(draftFromKind("lmstudio"))}>
-                  <Cpu size={15} />
-                  LM Studio
-                </button>
-                <button className="secondary-button" onClick={() => setDraft(draftFromKind("openrouter"))}>
-                  <Cloud size={15} />
-                  OpenRouter
-                </button>
                 <button className="primary-button" onClick={() => setDraft(draftFromKind("openai-compatible"))}>
                   <Plus size={15} />
                   Add

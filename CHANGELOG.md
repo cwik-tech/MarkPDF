@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Replaced inline AI status messages with dismissible auto-closing toasts, simplified provider creation to one Add action, and allowed settings to close from the backdrop.
 - Fixed top-bar dropdown hover retention, delayed idle search collapse, and changed Open to a titled folder icon button.
 - Added progress dialogs for large image imports and PDF saves, with a minimum visible duration for save feedback.
 - Disabled the left sidebar when no PDF is open and stopped the Pages panel from showing recent documents in the empty-document state.
