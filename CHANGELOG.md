@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Added an AI Providers settings page with provider persistence, local server presets, model validation, model enablement, CLI agent detection, toolbar settings access, and reserved search/chat shortcuts.
 - Fixed non-scrolling page views so mouse wheel input changes pages instead of nudging within the current page.
 - Changed the typed signature preview to stack signature and initials vertically and removed the date preview.
 - Added image-to-PDF import for Finder/Open With, file dialog, and drag/drop image batches, with generated PDFs opened as unsaved tabs.

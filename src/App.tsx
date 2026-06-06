@@ -12,6 +12,7 @@ import {
   GripVertical,
   Highlighter,
   Image as ImageIcon,
+  MessageSquare,
   MessageSquarePlus,
   Maximize2,
   Minus,
@@ -26,6 +27,7 @@ import {
   Save,
   ScanText,
   Search,
+  Settings as SettingsIcon,
   Signature,
   ScrollText,
   StretchHorizontal,
@@ -66,6 +68,7 @@ import type {
   ToolMode,
   ViewMode
 } from "./types";
+import { AISettingsDialog } from "./AISettings";
 
 const defaultTextColor = "#1f2937";
 const supportedImageExtensions = new Set(["gif", "jpeg", "jpg", "png", "webp"]);
@@ -263,6 +266,8 @@ export default function App() {
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [openMenu, setOpenMenu] = useState<"fit" | "view" | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [chatNotice, setChatNotice] = useState<string | null>(null);
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [selectionAction, setSelectionAction] = useState<{
     page: number;
@@ -1172,6 +1177,16 @@ export default function App() {
 
   const selectedOverlay = activeTab?.overlays.find((overlay) => overlay.id === selectedOverlayId) ?? null;
 
+  const focusSearch = useCallback(() => {
+    setSearchExpanded(true);
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
+  }, []);
+
+  const openReservedChat = useCallback(() => {
+    setChatNotice("Chat will use the configured AI provider layer, but the chat panel is intentionally not connected yet.");
+    window.setTimeout(() => setChatNotice(null), 3800);
+  }, []);
+
   useEffect(() => {
     if (selectedOverlay?.kind !== "comment" || !selectedOverlay.minimized) return undefined;
 
@@ -1187,17 +1202,23 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!activeTab) return;
       const target = event.target as HTMLElement | null;
       const isTyping = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.tagName === "SELECT";
       const shortcut = event.metaKey || event.ctrlKey;
 
-      if (shortcut && event.key.toLowerCase() === "f") {
+      if (shortcut && (event.key.toLowerCase() === "f" || event.key.toLowerCase() === "k")) {
         event.preventDefault();
-        setSearchExpanded(true);
-        window.requestAnimationFrame(() => searchInputRef.current?.focus());
+        focusSearch();
         return;
       }
+
+      if (shortcut && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        openReservedChat();
+        return;
+      }
+
+      if (!activeTab) return;
 
       if (shortcut && event.key.toLowerCase() === "s") {
         event.preventDefault();
@@ -1261,7 +1282,7 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeTab, selectedOverlayId, updateTab]);
+  }, [activeTab, selectedOverlayId, updateTab, focusSearch, openReservedChat]);
 
   return (
     <div className="app-shell" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
@@ -1279,6 +1300,7 @@ export default function App() {
         onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
         isFullScreen={isFullScreen}
         onToggleFullScreen={() => void toggleFullScreen()}
+        onOpenSettings={() => setSettingsOpen(true)}
         recentFiles={recentFiles}
         onOpenRecent={(path) => void openFilePaths([path])}
         onClearRecent={async () => {
@@ -1381,6 +1403,7 @@ export default function App() {
           />
         </div>
         <div className="toolbar-spacer" />
+        {chatNotice && <span className="chat-notice">{chatNotice}</span>}
         <div
           className={`search-box ${searchExpanded || searchText || activeTab?.searchQuery ? "active" : ""}`}
           onMouseEnter={() => {
@@ -1427,6 +1450,9 @@ export default function App() {
             </button>
           )}
         </div>
+        <button className="icon-button" title="Chat (Command+N)" onClick={openReservedChat}>
+          <MessageSquare size={17} />
+        </button>
         {(searchText || activeTab?.searchQuery) && (
           <>
             <button className="icon-button" title="Previous match" disabled={!activeTab?.searchMatches.length} onClick={() => stepSearch(-1)}>
@@ -1574,6 +1600,8 @@ export default function App() {
           }}
         />
       )}
+
+      {settingsOpen && <AISettingsDialog onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
@@ -1612,6 +1640,7 @@ function TopBar({
   onToggleTheme,
   isFullScreen,
   onToggleFullScreen,
+  onOpenSettings,
   recentFiles,
   onOpenRecent,
   onClearRecent
@@ -1629,6 +1658,7 @@ function TopBar({
   onToggleTheme: () => void;
   isFullScreen: boolean;
   onToggleFullScreen: () => void;
+  onOpenSettings: () => void;
   recentFiles: string[];
   onOpenRecent: (path: string) => void;
   onClearRecent: () => void;
@@ -1695,6 +1725,9 @@ function TopBar({
         </button>
         <button className="icon-button" title={isFullScreen ? "Exit full screen" : "Full screen"} onClick={onToggleFullScreen}>
           {isFullScreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+        </button>
+        <button className="icon-button" title="Settings" onClick={onOpenSettings}>
+          <SettingsIcon size={17} />
         </button>
       </div>
     </header>
