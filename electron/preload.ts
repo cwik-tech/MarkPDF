@@ -15,6 +15,16 @@ contextBridge.exposeInMainWorld("pdfReader", {
   listRecentFiles: () => ipcRenderer.invoke("recent:list"),
   removeRecentFile: (filePath: string) => ipcRenderer.invoke("recent:remove", filePath),
   clearRecentFiles: () => ipcRenderer.invoke("recent:clear"),
+  ai: {
+    listProviders: () => ipcRenderer.invoke("ai:list-providers"),
+    saveProvider: (provider: unknown) => ipcRenderer.invoke("ai:save-provider", provider),
+    deleteProvider: (id: string) => ipcRenderer.invoke("ai:delete-provider", id),
+    validateProvider: (id: string) => ipcRenderer.invoke("ai:validate-provider", id),
+    fetchProviderModels: (id: string) => ipcRenderer.invoke("ai:fetch-provider-models", id),
+    listLocalAgents: () => ipcRenderer.invoke("ai:list-local-agents"),
+    refreshLocalAgents: () => ipcRenderer.invoke("ai:refresh-local-agents"),
+    setLocalAgentEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke("ai:set-local-agent-enabled", id, enabled)
+  },
   onFullScreenChange: (callback: (enabled: boolean) => void) => {
     const listener = (_event: unknown, enabled: boolean) => callback(enabled);
     ipcRenderer.on("window:full-screen-change", listener);

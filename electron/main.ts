@@ -4,14 +4,26 @@ import Store from "electron-store";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  deleteAIProvider,
+  detectLocalAgents,
+  listAIProviders,
+  saveAIProvider,
+  setLocalAgentEnabled,
+  validateAIProvider,
+  type AIProviderInput,
+  type AIStoreSchema
+} from "./ai.js";
 
 let pendingOpenPaths: string[] = [];
 let openPathFlushTimer: NodeJS.Timeout | null = null;
 const appIconPath = fileURLToPath(new URL("../build/icon.png", import.meta.url));
 const confirmedCloseWindows = new WeakSet<BrowserWindow>();
-const store = new Store<{ recentFiles: string[] }>({
+const store = new Store<AIStoreSchema>({
   defaults: {
-    recentFiles: []
+    recentFiles: [],
+    aiProviders: [],
+    localAgentEnabled: {}
   }
 });
 const imageMimeTypes = new Map([
@@ -249,4 +261,25 @@ ipcMain.handle("recent:remove", async (_event, filePath: string) => removeRecent
 ipcMain.handle("recent:clear", async () => {
   store.set("recentFiles", []);
   return [];
+});
+
+ipcMain.handle("ai:list-providers", async () => listAIProviders(store));
+
+ipcMain.handle("ai:save-provider", async (_event, provider: AIProviderInput) => saveAIProvider(store, provider));
+
+ipcMain.handle("ai:delete-provider", async (_event, id: string) => {
+  deleteAIProvider(store, id);
+});
+
+ipcMain.handle("ai:validate-provider", async (_event, id: string) => validateAIProvider(store, id));
+
+ipcMain.handle("ai:fetch-provider-models", async (_event, id: string) => validateAIProvider(store, id));
+
+ipcMain.handle("ai:list-local-agents", async () => detectLocalAgents(store));
+
+ipcMain.handle("ai:refresh-local-agents", async () => detectLocalAgents(store));
+
+ipcMain.handle("ai:set-local-agent-enabled", async (_event, id: string, enabled: boolean) => {
+  setLocalAgentEnabled(store, id, enabled);
+  return detectLocalAgents(store);
 });
