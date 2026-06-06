@@ -50,6 +50,7 @@ export interface SemanticSearchSettings {
   enabled: boolean;
   activeModelId: string;
   chunkingProfile: SemanticChunkingProfile;
+  minSemanticScore: number;
   downloadedModelIds: string[];
 }
 

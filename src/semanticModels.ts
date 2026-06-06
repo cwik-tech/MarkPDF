@@ -18,27 +18,35 @@ export interface ChunkingPreset {
   overlapTokens: number;
 }
 
-export const recommendedEmbeddingModelId = "BAAI/bge-small-en-v1.5";
+export interface SemanticScoreThresholdPreset {
+  id: "loose" | "balanced" | "strict";
+  name: string;
+  description: string;
+  value: number;
+}
+
+export const legacyRecommendedEmbeddingModelId = "BAAI/bge-small-en-v1.5";
+export const recommendedEmbeddingModelId = "Xenova/bge-small-en-v1.5";
 
 export const curatedEmbeddingModels: CuratedEmbeddingModel[] = [
   {
-    id: "BAAI/bge-small-en-v1.5",
+    id: "Xenova/bge-small-en-v1.5",
     name: "BGE Small EN v1.5",
-    description: "Recommended balance for local PDF semantic search.",
+    description: "Recommended ONNX-ready balance for local PDF semantic search.",
     dimensions: 384,
     approxSizeMb: 133,
     badge: "Recommended",
     queryPrefix: "Represent this sentence for searching relevant passages: "
   },
   {
-    id: "sentence-transformers/all-MiniLM-L6-v2",
+    id: "Xenova/all-MiniLM-L6-v2",
     name: "MiniLM L6 v2",
     description: "Smaller and faster, with lighter retrieval quality.",
     dimensions: 384,
     approxSizeMb: 90
   },
   {
-    id: "BAAI/bge-base-en-v1.5",
+    id: "Xenova/bge-base-en-v1.5",
     name: "BGE Base EN v1.5",
     description: "Higher quality, slower indexing, and larger storage.",
     dimensions: 768,
@@ -72,6 +80,29 @@ export const chunkingPresets: ChunkingPreset[] = [
 ];
 
 export const semanticChunkingVersion = 1;
+
+export const defaultSemanticScoreThreshold = 0.3;
+
+export const semanticScoreThresholdPresets: SemanticScoreThresholdPreset[] = [
+  {
+    id: "loose",
+    name: "Loose",
+    description: "Shows broader, weaker related passages.",
+    value: 0.24
+  },
+  {
+    id: "balanced",
+    name: "Balanced",
+    description: "Default cutoff for related passages.",
+    value: defaultSemanticScoreThreshold
+  },
+  {
+    id: "strict",
+    name: "Strict",
+    description: "Shows fewer, stronger matches.",
+    value: 0.36
+  }
+];
 
 export function getCuratedEmbeddingModel(modelId: string) {
   return curatedEmbeddingModels.find((model) => model.id === modelId) ?? curatedEmbeddingModels[0];

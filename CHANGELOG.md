@@ -3,6 +3,14 @@
 ## 0.1.0 - 2026-06-04
 
 - Added Save as Markdown with a dedicated document-conversion layer, Markdown export settings, OCR fallback, annotation inclusion, and save progress feedback.
+- Added Semantic Search score display and configurable relevance cutoff presets, with Balanced defaulting to a stricter 0.30 minimum score.
+- Fixed scrolling view activation so semantic navigation scrolls only the document pane, and sorted Semantic Search results by page order.
+- Fixed single-page document overflow after adding the resizable Semantic Search sidebar and restored semantic result page jumps in scrolling view.
+- Fixed Semantic Search resizing by using percentage panel sizes, preventing workspace overflow, and reducing the resize handle to a thin hover-highlighted separator.
+- Widened the Semantic Search sidebar to 25% by default, made it resizable up to half the window, added temporary blue result highlighting on the PDF, closed the sidebar when search clears, and simplified Semantic Search settings layout.
+- Fixed submitted semantic search so Enter opens the right sidebar reliably, delayed automatic indexing after model readiness, and yielded between embedding chunks to reduce UI freezes during scrolling.
+- Fixed Semantic Search startup download by switching curated defaults to Transformers.js-compatible `Xenova/*` ONNX models, hiding startup download errors from the no-document toolbar, and removing the icon from the semantic status chip.
+- Changed Semantic Search to auto-download the recommended model at app startup, use the search lens icon, show model download progress in the toolbar status chip, and open the semantic sidebar from submitted search instead of a standalone sidebar button.
 - Added local semantic search with curated embedding models, SQLite-backed document indexing, right-sidebar semantic results, automatic text/OCR indexing, and Semantic Search settings.
 - Replaced inline AI status messages with dismissible auto-closing toasts, simplified provider creation to one Add action, and allowed settings to close from the backdrop.
 - Fixed top-bar dropdown hover retention, delayed idle search collapse, and changed Open to a titled folder icon button.

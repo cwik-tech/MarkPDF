@@ -20,7 +20,6 @@ import {
   Moon,
   MousePointer2,
   PanelLeft,
-  PanelRight,
   PenLine,
   Plus,
   Printer,
@@ -71,9 +70,15 @@ import type {
   ViewMode
 } from "./types";
 import { AISettingsDialog } from "./AISettings";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./components/resizable";
 import type { MarkdownExportSettings, SemanticSearchSettings } from "./global";
-import { indexSemanticDocument, searchSemanticDocument } from "./semanticIndex";
-import { recommendedEmbeddingModelId } from "./semanticModels";
+import { downloadSemanticModel, indexSemanticDocument, searchSemanticDocument } from "./semanticIndex";
+import {
+  curatedEmbeddingModels,
+  defaultSemanticScoreThreshold,
+  legacyRecommendedEmbeddingModelId,
+  recommendedEmbeddingModelId
+} from "./semanticModels";
 
 const defaultTextColor = "#1f2937";
 const supportedImageExtensions = new Set(["gif", "jpeg", "jpg", "png", "webp"]);
@@ -87,6 +92,7 @@ const defaultSemanticSettings: SemanticSearchSettings = {
   enabled: true,
   activeModelId: recommendedEmbeddingModelId,
   chunkingProfile: "balanced",
+  minSemanticScore: defaultSemanticScoreThreshold,
   downloadedModelIds: []
 };
 
@@ -98,6 +104,24 @@ const defaultMarkdownSettings: MarkdownExportSettings = {
   includeAnnotations: true,
   aiCleanup: false
 };
+
+function normalizeSemanticSettings(settings: SemanticSearchSettings): SemanticSearchSettings {
+  const curatedModelIds = new Set(curatedEmbeddingModels.map((model) => model.id));
+  const activeModelId =
+    settings.activeModelId === legacyRecommendedEmbeddingModelId || !curatedModelIds.has(settings.activeModelId)
+      ? recommendedEmbeddingModelId
+      : settings.activeModelId;
+
+  return {
+    ...settings,
+    activeModelId,
+    minSemanticScore:
+      typeof settings.minSemanticScore === "number" && Number.isFinite(settings.minSemanticScore)
+        ? Math.min(0.95, Math.max(0, settings.minSemanticScore))
+        : defaultSemanticScoreThreshold,
+    downloadedModelIds: settings.downloadedModelIds.filter((modelId) => curatedModelIds.has(modelId))
+  };
+}
 
 interface SignatureAsset {
   id: string;
@@ -311,6 +335,7 @@ export default function App() {
   const [openMenu, setOpenMenu] = useState<ToolbarMenu | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [semanticSettings, setSemanticSettings] = useState<SemanticSearchSettings>(defaultSemanticSettings);
+  const [semanticModelDownloadProgress, setSemanticModelDownloadProgress] = useState<PdfTab["semanticIndexProgress"] | null>(null);
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [selectionAction, setSelectionAction] = useState<{
     page: number;
@@ -331,8 +356,10 @@ export default function App() {
   const searchRequestIdRef = useRef(0);
   const ocrJobsRef = useRef(new Map<string, { cancelled: boolean }>());
   const semanticJobsRef = useRef(new Map<string, { cancelled: boolean }>());
+  const semanticStartTimersRef = useRef(new Map<string, number>());
   const tabsRef = useRef<PdfTab[]>([]);
   const semanticSettingsRef = useRef(semanticSettings);
+  const semanticModelDownloadStartedRef = useRef(false);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? null,
@@ -379,6 +406,10 @@ export default function App() {
       if (menuCloseTimerRef.current !== null) window.clearTimeout(menuCloseTimerRef.current);
       if (searchCloseTimerRef.current !== null) window.clearTimeout(searchCloseTimerRef.current);
       if (autoSearchTimerRef.current !== null) window.clearTimeout(autoSearchTimerRef.current);
+      for (const timer of semanticStartTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      semanticStartTimersRef.current.clear();
     };
   }, []);
 
@@ -426,29 +457,35 @@ export default function App() {
   }, []);
 
   const applySemanticSettings = useCallback((nextSettings: SemanticSearchSettings) => {
+    const normalizedSettings = normalizeSemanticSettings(nextSettings);
     setSemanticSettings((previous) => {
       const requiresReindex =
-        previous.activeModelId !== nextSettings.activeModelId ||
-        previous.chunkingProfile !== nextSettings.chunkingProfile ||
-        previous.enabled !== nextSettings.enabled;
+        previous.activeModelId !== normalizedSettings.activeModelId ||
+        previous.chunkingProfile !== normalizedSettings.chunkingProfile ||
+        previous.enabled !== normalizedSettings.enabled;
 
       if (requiresReindex) {
         for (const job of semanticJobsRef.current.values()) {
           job.cancelled = true;
         }
         semanticJobsRef.current.clear();
+        for (const timer of semanticStartTimersRef.current.values()) {
+          window.clearTimeout(timer);
+        }
+        semanticStartTimersRef.current.clear();
         setTabs((current) =>
           current.map((tab) => ({
             ...tab,
             semanticResults: [],
-            semanticIndexStatus: nextSettings.enabled ? "idle" : "ready",
-            semanticIndexProgress: { status: nextSettings.enabled ? "idle" : "ready" },
+            semanticHighlight: null,
+            semanticIndexStatus: normalizedSettings.enabled ? "idle" : "ready",
+            semanticIndexProgress: { status: normalizedSettings.enabled ? "idle" : "ready" },
             semanticIndexError: undefined
           }))
         );
       }
 
-      return nextSettings;
+      return normalizedSettings;
     });
   }, []);
 
@@ -457,10 +494,15 @@ export default function App() {
       job.cancelled = true;
     }
     semanticJobsRef.current.clear();
+    for (const timer of semanticStartTimersRef.current.values()) {
+      window.clearTimeout(timer);
+    }
+    semanticStartTimersRef.current.clear();
     setTabs((current) =>
       current.map((tab) => ({
         ...tab,
         semanticResults: [],
+        semanticHighlight: null,
         semanticIndexStatus: semanticSettingsRef.current.enabled ? "idle" : "ready",
         semanticIndexProgress: { status: semanticSettingsRef.current.enabled ? "idle" : "ready" },
         semanticIndexError: undefined
@@ -667,6 +709,7 @@ export default function App() {
         searchMatches: [],
         activeSearchMatch: -1,
         semanticResults: [],
+        semanticHighlight: null,
         semanticIndexStatus: "idle",
         semanticIndexProgress: { status: "idle" },
         ocrPages: [],
@@ -798,8 +841,47 @@ export default function App() {
 
   useEffect(() => {
     if (!window.pdfReader?.semantic) return;
-    void window.pdfReader.semantic.getSettings().then(applySemanticSettings);
+    void window.pdfReader.semantic.getSettings().then(async (settings) => {
+      const normalizedSettings = normalizeSemanticSettings(settings);
+      applySemanticSettings(normalizedSettings);
+      if (
+        normalizedSettings.activeModelId !== settings.activeModelId ||
+        normalizedSettings.minSemanticScore !== settings.minSemanticScore ||
+        normalizedSettings.downloadedModelIds.length !== settings.downloadedModelIds.length
+      ) {
+        await window.pdfReader?.semantic.saveSettings(normalizedSettings);
+      }
+    });
   }, [applySemanticSettings]);
+
+  useEffect(() => {
+    if (!window.pdfReader?.semantic || !semanticSettings.enabled) return;
+    if (semanticSettings.downloadedModelIds.includes(recommendedEmbeddingModelId)) return;
+    if (semanticModelDownloadStartedRef.current) return;
+
+    semanticModelDownloadStartedRef.current = true;
+    setSemanticModelDownloadProgress({
+      status: "downloading",
+      message: "Downloading model"
+    });
+
+    void downloadSemanticModel(recommendedEmbeddingModelId, (progress) => {
+      setSemanticModelDownloadProgress(progress);
+    })
+      .then((settings) => {
+        if (settings) applySemanticSettings(settings);
+        setSemanticModelDownloadProgress({
+          status: "ready",
+          message: "Model ready"
+        });
+        window.setTimeout(() => setSemanticModelDownloadProgress(null), 1800);
+      })
+      .catch((error) => {
+        console.warn("Recommended semantic model download failed", error);
+        setSemanticModelDownloadProgress(null);
+        semanticModelDownloadStartedRef.current = false;
+      });
+  }, [applySemanticSettings, semanticSettings.downloadedModelIds, semanticSettings.enabled]);
 
   useEffect(() => {
     if (!semanticSettings.enabled) return;
@@ -811,6 +893,7 @@ export default function App() {
         tab.ocrStatus === "error" ||
         typeof tab.ocrStatus === "undefined";
       const semanticSettled =
+        semanticStartTimersRef.current.has(tab.id) ||
         tab.semanticIndexStatus === "checking" ||
         tab.semanticIndexStatus === "downloading" ||
         tab.semanticIndexStatus === "indexing" ||
@@ -818,9 +901,19 @@ export default function App() {
         tab.semanticIndexStatus === "error";
 
       if (ocrSettled && !semanticSettled) {
-        void startSemanticIndex(tab.id);
+        const timer = window.setTimeout(() => {
+          semanticStartTimersRef.current.delete(tab.id);
+          void startSemanticIndex(tab.id);
+        }, 1200);
+        semanticStartTimersRef.current.set(tab.id, timer);
       }
     }
+    return () => {
+      for (const timer of semanticStartTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      semanticStartTimersRef.current.clear();
+    };
   }, [semanticSettings, startSemanticIndex, tabs]);
 
   useEffect(() => {
@@ -1017,6 +1110,7 @@ export default function App() {
         searchMatches: [],
         activeSearchMatch: -1,
         semanticResults: [],
+        semanticHighlight: null,
         semanticIndexStatus: "idle",
         semanticIndexProgress: { status: "idle" },
         ocrPages: [],
@@ -1338,6 +1432,7 @@ export default function App() {
       searchMatches: [],
       activeSearchMatch: -1,
       semanticResults: [],
+      semanticHighlight: null,
       semanticIndexStatus: "idle",
       semanticIndexProgress: { status: "idle" },
       ocrPages: [],
@@ -1393,6 +1488,7 @@ export default function App() {
       searchMatches: [],
       activeSearchMatch: -1,
       semanticResults: [],
+      semanticHighlight: null,
       semanticIndexStatus: "idle",
       semanticIndexProgress: { status: "idle" },
       ocrPages: [],
@@ -1458,7 +1554,7 @@ export default function App() {
     );
   };
 
-  const applySearch = useCallback(async (tab: PdfTab, query: string, navigateToFirstMatch = true) => {
+  const applySearch = useCallback(async (tab: PdfTab, query: string, navigateToFirstMatch = true, activateSemantic = false) => {
     const normalizedQuery = query.trim();
     const requestId = searchRequestIdRef.current + 1;
     searchRequestIdRef.current = requestId;
@@ -1468,9 +1564,15 @@ export default function App() {
         searchQuery: "",
         searchMatches: [],
         activeSearchMatch: -1,
-        semanticResults: []
-      });
+      semanticResults: [],
+      semanticHighlight: null
+    });
+      setSidebar((current) => (current === "semantic" ? null : current));
       return;
+    }
+
+    if (activateSemantic && semanticSettingsRef.current.enabled) {
+      setSidebar("semantic");
     }
 
     const matches = await findTextMatches(tab.pdfDoc, normalizedQuery, tab.ocrPages);
@@ -1485,11 +1587,15 @@ export default function App() {
     }));
 
     const currentTab = tabsRef.current.find((item) => item.id === tab.id) ?? tab;
-    if (semanticSettingsRef.current.enabled) {
-      setSidebar("semantic");
+    if (!activateSemantic) {
+      return;
     }
+
     if (currentTab.semanticIndexStatus !== "ready" || !semanticSettingsRef.current.enabled) {
-      updateTab(tab.id, { semanticResults: [] });
+      updateTab(tab.id, {
+        semanticResults: [],
+        semanticHighlight: null
+      });
       return;
     }
 
@@ -1518,9 +1624,11 @@ export default function App() {
           searchQuery: "",
           searchMatches: [],
           activeSearchMatch: -1,
-          semanticResults: []
+          semanticResults: [],
+          semanticHighlight: null
         });
       }
+      setSidebar((current) => (current === "semantic" ? null : current));
       return undefined;
     }
 
@@ -1538,7 +1646,11 @@ export default function App() {
 
   const runSearch = async () => {
     if (!activeTab) return;
-    await applySearch(activeTab, searchText);
+    if (autoSearchTimerRef.current !== null) {
+      window.clearTimeout(autoSearchTimerRef.current);
+      autoSearchTimerRef.current = null;
+    }
+    await applySearch(activeTab, searchText, true, true);
   };
 
   const stepSearch = (direction: 1 | -1) => {
@@ -1563,8 +1675,10 @@ export default function App() {
       searchQuery: "",
       searchMatches: [],
       activeSearchMatch: -1,
-      semanticResults: []
+      semanticResults: [],
+      semanticHighlight: null
     });
+    setSidebar((current) => (current === "semantic" ? null : current));
     window.requestAnimationFrame(() => searchInputRef.current?.focus());
   };
 
@@ -1665,6 +1779,42 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activeTab, selectedOverlayId, updateTab, focusSearch]);
+
+  const semanticToolbarProgress =
+    semanticModelDownloadProgress ??
+    (activeTab?.semanticIndexStatus &&
+    activeTab.semanticIndexStatus !== "idle" &&
+    activeTab.semanticIndexStatus !== "ready"
+      ? activeTab.semanticIndexProgress
+      : null);
+  const documentStage = (
+    <section className="document-stage" ref={workspaceRef}>
+      {!activeTab ? (
+        <EmptyState
+          onOpen={openFromDialog}
+          recentFiles={recentFiles}
+          onOpenRecent={(path) => void openFilePaths([path])}
+          onRemoveRecent={(path) => void removeRecentFile(path)}
+        />
+      ) : (
+        <DocumentView
+          tab={activeTab}
+          tool={tool}
+          selectedOverlayId={selectedOverlayId}
+          onPageClick={addOverlay}
+          onSelectOverlay={setSelectedOverlayId}
+          onUpdateOverlay={updateOverlay}
+          onDeleteOverlay={deleteOverlay}
+          onTextSelection={setSelectionAction}
+          onClearSemanticHighlight={() => updateTab(activeTab.id, { semanticHighlight: null })}
+          onWheelPage={(direction) => {
+            const nextPage = Math.min(activeTab.pageCount, Math.max(1, activeTab.currentPage + direction));
+            if (nextPage !== activeTab.currentPage) updateTab(activeTab.id, { currentPage: nextPage });
+          }}
+        />
+      )}
+    </section>
+  );
 
   return (
     <div className="app-shell" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
@@ -1825,7 +1975,6 @@ export default function App() {
               if (event.key === "Enter") {
                 event.preventDefault();
                 if (event.shiftKey) stepSearch(-1);
-                else if (activeTab?.searchQuery === searchText.trim() && activeTab.searchMatches.length > 0) stepSearch(1);
                 else void runSearch();
               }
             }}
@@ -1847,14 +1996,6 @@ export default function App() {
             </button>
           )}
         </div>
-        <button
-          className={`icon-button ${sidebar === "semantic" ? "active" : ""}`}
-          title="Semantic search"
-          disabled={!activeTab}
-          onClick={() => setSidebar(sidebar === "semantic" ? null : "semantic")}
-        >
-          <PanelRight size={17} />
-        </button>
         {(searchText || activeTab?.searchQuery) && (
           <>
             <button className="icon-button" title="Previous match" disabled={!activeTab?.searchMatches.length} onClick={() => stepSearch(-1)}>
@@ -1878,66 +2019,25 @@ export default function App() {
             <span>{formatOcrStatus(activeTab)}</span>
           </span>
         )}
-        {activeTab?.semanticIndexStatus &&
-          activeTab.semanticIndexStatus !== "idle" &&
-          activeTab.semanticIndexStatus !== "ready" && (
-            <span
-              className={`ocr-status semantic ${activeTab.semanticIndexStatus}`}
-              title={activeTab.semanticIndexError ?? activeTab.semanticIndexProgress?.message ?? "Semantic index status"}
-            >
-              <PanelRight size={14} />
-              <span>{formatSemanticStatus(activeTab)}</span>
-            </span>
-          )}
+        {semanticToolbarProgress &&
+          semanticToolbarProgress.status !== "idle" &&
+          semanticToolbarProgress.status !== "ready" &&
+          semanticToolbarProgress.status !== "error" && (
+          <span
+            className={`ocr-status semantic ${semanticToolbarProgress.status}`}
+            title={activeTab?.semanticIndexError ?? semanticToolbarProgress.message ?? "Semantic index status"}
+          >
+            <span>{formatSemanticProgress(semanticToolbarProgress)}</span>
+            {(semanticToolbarProgress.status === "downloading" || semanticToolbarProgress.status === "indexing") && (
+              <span className="status-progress-bar">
+                <span style={{ width: `${semanticProgressPercent(semanticToolbarProgress)}%` }} />
+              </span>
+            )}
+          </span>
+        )}
       </div>
 
       <main className="workspace">
-        {activeTab && sidebar && (
-          <Sidebar
-            mode={sidebar}
-            tab={activeTab}
-            selectedOverlay={selectedOverlay}
-            signatureText={signatureText}
-            signatureFont={signatureFont}
-            savedSignatures={savedSignatures}
-            selectedSignatureId={selectedSignature?.id ?? null}
-            onSelectPage={(page) => activeTab && updateTab(activeTab.id, { currentPage: page })}
-            onUpdateOverlay={updateOverlay}
-            onDeleteOverlay={deleteOverlay}
-            onUpdateFormField={updateFormField}
-            onInsertPage={() => void insertPageAfterCurrent()}
-            onDeletePage={() => void deleteCurrentPage()}
-            onMovePage={(direction) => void moveCurrentPage(direction)}
-            onReorderPage={(fromPage, toPage) => void movePageTo(fromPage, toPage)}
-            onSignatureText={setSignatureText}
-            onSignatureFont={setSignatureFont}
-            onSaveTypedSignature={() => {
-              const nextAssets = createTypedSignatureAssets(signatureText, signatureFont);
-              if (!nextAssets.length) return;
-              setSavedSignatures((current) => [...nextAssets, ...current]);
-              setSelectedSignatureId(nextAssets[0].id);
-              setSelectedOverlayId(null);
-              setTool("signature");
-            }}
-            onSelectSignature={(id) => {
-              setSelectedSignatureId(id);
-              setSelectedOverlayId(null);
-              setTool("signature");
-            }}
-            onDeleteSignature={(id) => {
-              setSavedSignatures((current) => current.filter((asset) => asset.id !== id));
-            }}
-            onSaveSignatureAsset={(asset) => {
-              setSavedSignatures((current) => [asset, ...current]);
-              setSelectedSignatureId(asset.id);
-              setSelectedOverlayId(null);
-              setTool("signature");
-            }}
-            onOpenDrawingSignature={() => setDrawingSignatureOpen(true)}
-            onModeChange={setSidebar}
-          />
-        )}
-
         {selectionAction && (
           <div
             className="selection-popover"
@@ -1955,31 +2055,101 @@ export default function App() {
           </div>
         )}
 
-        <section className="document-stage" ref={workspaceRef}>
-          {!activeTab ? (
-            <EmptyState
-              onOpen={openFromDialog}
-              recentFiles={recentFiles}
-              onOpenRecent={(path) => void openFilePaths([path])}
-              onRemoveRecent={(path) => void removeRecentFile(path)}
-            />
-          ) : (
-            <DocumentView
-              tab={activeTab}
-              tool={tool}
-              selectedOverlayId={selectedOverlayId}
-              onPageClick={addOverlay}
-              onSelectOverlay={setSelectedOverlayId}
-              onUpdateOverlay={updateOverlay}
-              onDeleteOverlay={deleteOverlay}
-              onTextSelection={setSelectionAction}
-              onWheelPage={(direction) => {
-                const nextPage = Math.min(activeTab.pageCount, Math.max(1, activeTab.currentPage + direction));
-                if (nextPage !== activeTab.currentPage) updateTab(activeTab.id, { currentPage: nextPage });
-              }}
-            />
-          )}
-        </section>
+        {activeTab && sidebar === "semantic" ? (
+          <ResizablePanelGroup orientation="horizontal" className="workspace-resizable" resizeTargetMinimumSize={{ coarse: 28, fine: 10 }}>
+            <ResizablePanel id="document" className="document-resizable-panel" defaultSize="75%" minSize="50%">
+              {documentStage}
+            </ResizablePanel>
+            <ResizableHandle />
+            <ResizablePanel id="semantic-search" className="semantic-resizable-panel" defaultSize="25%" minSize="18%" maxSize="50%">
+              <Sidebar
+                mode={sidebar}
+                tab={activeTab}
+                selectedOverlay={selectedOverlay}
+                signatureText={signatureText}
+                signatureFont={signatureFont}
+                savedSignatures={savedSignatures}
+                selectedSignatureId={selectedSignature?.id ?? null}
+                onSelectPage={(page) => activeTab && updateTab(activeTab.id, { currentPage: page })}
+                onUpdateOverlay={updateOverlay}
+                onDeleteOverlay={deleteOverlay}
+                onUpdateFormField={updateFormField}
+                onInsertPage={() => void insertPageAfterCurrent()}
+                onDeletePage={() => void deleteCurrentPage()}
+                onMovePage={(direction) => void moveCurrentPage(direction)}
+                onReorderPage={(fromPage, toPage) => void movePageTo(fromPage, toPage)}
+                onSignatureText={setSignatureText}
+                onSignatureFont={setSignatureFont}
+                onSaveTypedSignature={() => undefined}
+                onSelectSignature={() => undefined}
+                onDeleteSignature={() => undefined}
+                onSaveSignatureAsset={() => undefined}
+                onOpenDrawingSignature={() => undefined}
+                onSelectSemanticResult={(result) => {
+                  updateTab(activeTab.id, {
+                    currentPage: result.page,
+                    semanticHighlight: {
+                      page: result.page,
+                      text: result.snippet,
+                      id: result.id
+                    }
+                  });
+                }}
+                onModeChange={setSidebar}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        ) : (
+          <>
+            {activeTab && sidebar && (
+              <Sidebar
+                mode={sidebar}
+                tab={activeTab}
+                selectedOverlay={selectedOverlay}
+                signatureText={signatureText}
+                signatureFont={signatureFont}
+                savedSignatures={savedSignatures}
+                selectedSignatureId={selectedSignature?.id ?? null}
+                onSelectPage={(page) => activeTab && updateTab(activeTab.id, { currentPage: page })}
+                onUpdateOverlay={updateOverlay}
+                onDeleteOverlay={deleteOverlay}
+                onUpdateFormField={updateFormField}
+                onInsertPage={() => void insertPageAfterCurrent()}
+                onDeletePage={() => void deleteCurrentPage()}
+                onMovePage={(direction) => void moveCurrentPage(direction)}
+                onReorderPage={(fromPage, toPage) => void movePageTo(fromPage, toPage)}
+                onSignatureText={setSignatureText}
+                onSignatureFont={setSignatureFont}
+                onSaveTypedSignature={() => {
+                  const nextAssets = createTypedSignatureAssets(signatureText, signatureFont);
+                  if (!nextAssets.length) return;
+                  setSavedSignatures((current) => [...nextAssets, ...current]);
+                  setSelectedSignatureId(nextAssets[0].id);
+                  setSelectedOverlayId(null);
+                  setTool("signature");
+                }}
+                onSelectSignature={(id) => {
+                  setSelectedSignatureId(id);
+                  setSelectedOverlayId(null);
+                  setTool("signature");
+                }}
+                onDeleteSignature={(id) => {
+                  setSavedSignatures((current) => current.filter((asset) => asset.id !== id));
+                }}
+                onSaveSignatureAsset={(asset) => {
+                  setSavedSignatures((current) => [asset, ...current]);
+                  setSelectedSignatureId(asset.id);
+                  setSelectedOverlayId(null);
+                  setTool("signature");
+                }}
+                onOpenDrawingSignature={() => setDrawingSignatureOpen(true)}
+                onSelectSemanticResult={() => undefined}
+                onModeChange={setSidebar}
+              />
+            )}
+            {documentStage}
+          </>
+        )}
       </main>
 
       {drawingSignatureOpen && (
@@ -2034,13 +2204,23 @@ function formatOcrStatus(tab: PdfTab) {
   return page && totalPages ? `OCR ${page}/${totalPages}` : "OCR running";
 }
 
-function formatSemanticStatus(tab: PdfTab) {
-  if (tab.semanticIndexStatus === "error") return "Index failed";
-  if (tab.semanticIndexStatus === "downloading") return "Downloading model";
-  if (tab.semanticIndexStatus === "checking") return "Checking index";
-  const current = tab.semanticIndexProgress?.current;
-  const total = tab.semanticIndexProgress?.total;
+function formatSemanticProgress(progress: NonNullable<PdfTab["semanticIndexProgress"]>) {
+  if (progress.status === "error") return "Index failed";
+  if (progress.status === "downloading") return "Downloading model";
+  if (progress.status === "checking") return "Checking index";
+  const current = progress.current;
+  const total = progress.total;
   return current && total ? `Index ${current}/${total}` : "Indexing";
+}
+
+function semanticProgressPercent(progress: NonNullable<PdfTab["semanticIndexProgress"]>) {
+  if (progress.status === "downloading" && progress.current && progress.total) {
+    return Math.min(100, Math.max(4, Math.round((progress.current / progress.total) * 100)));
+  }
+  if (progress.status === "indexing" && progress.current && progress.total) {
+    return Math.min(100, Math.max(4, Math.round((progress.current / progress.total) * 100)));
+  }
+  return progress.status === "error" ? 100 : 18;
 }
 
 function downloadBytes(bytes: Uint8Array, name: string) {
@@ -2511,6 +2691,7 @@ function DocumentView({
   onUpdateOverlay,
   onDeleteOverlay,
   onTextSelection,
+  onClearSemanticHighlight,
   onWheelPage
 }: {
   tab: PdfTab;
@@ -2530,8 +2711,10 @@ function DocumentView({
     screenY: number;
     text: string;
   } | null) => void;
+  onClearSemanticHighlight: () => void;
   onWheelPage: (direction: -1 | 1) => void;
 }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const pages = tab.scrolling
     ? Array.from({ length: tab.pageCount }, (_, index) => index + 1)
     : tab.viewMode === "two" && tab.currentPage < tab.pageCount
@@ -2544,8 +2727,22 @@ function DocumentView({
         .filter((match) => match.page === activeSearchMatch.page).length
     : -1;
 
+  useEffect(() => {
+    if (!tab.scrolling) return;
+    const scrollPane = scrollRef.current;
+    const pageElement = scrollPane?.querySelector(`[data-page-number="${tab.currentPage}"]`);
+    if (!scrollPane) return;
+    if (!(pageElement instanceof HTMLElement)) return;
+    scrollPane.scrollTo({
+      top: Math.max(0, pageElement.offsetTop - 28),
+      left: 0,
+      behavior: "smooth"
+    });
+  }, [tab.currentPage, tab.id, tab.scrolling]);
+
   return (
     <div
+      ref={scrollRef}
       className={`document-scroll ${tab.viewMode === "two" && !tab.scrolling ? "two-up" : ""} ${!tab.scrolling ? "chrome-hidden" : ""}`}
       onWheelCapture={(event) => {
         const target = event.currentTarget;
@@ -2587,12 +2784,14 @@ function DocumentView({
           activeSearchQuery={tab.searchQuery}
           activeSearchMatch={activeSearchMatch?.page === pageNumber ? activeSearchMatch : null}
           activeSearchMatchOrdinal={activeSearchMatch?.page === pageNumber ? activeSearchMatchOrdinal : -1}
+          semanticHighlight={tab.semanticHighlight?.page === pageNumber ? tab.semanticHighlight : null}
           selectedOverlayId={selectedOverlayId}
           onPageClick={(x, y) => onPageClick(pageNumber, x, y)}
           onSelectOverlay={onSelectOverlay}
           onUpdateOverlay={onUpdateOverlay}
           onDeleteOverlay={onDeleteOverlay}
           onTextSelection={onTextSelection}
+          onClearSemanticHighlight={onClearSemanticHighlight}
         />
       ))}
     </div>
@@ -2610,12 +2809,14 @@ function PdfPage({
   activeSearchQuery,
   activeSearchMatch,
   activeSearchMatchOrdinal,
+  semanticHighlight,
   selectedOverlayId,
   onPageClick,
   onSelectOverlay,
   onUpdateOverlay,
   onDeleteOverlay,
-  onTextSelection
+  onTextSelection,
+  onClearSemanticHighlight
 }: {
   pdfDoc: PDFDocumentProxy;
   pageNumber: number;
@@ -2627,6 +2828,7 @@ function PdfPage({
   activeSearchQuery: string;
   activeSearchMatch: SearchMatch | null;
   activeSearchMatchOrdinal: number;
+  semanticHighlight: PdfTab["semanticHighlight"] | null;
   selectedOverlayId: string | null;
   onPageClick: (x: number, y: number) => void;
   onSelectOverlay: (id: string | null) => void;
@@ -2642,6 +2844,7 @@ function PdfPage({
     screenY: number;
     text: string;
   } | null) => void;
+  onClearSemanticHighlight: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
@@ -2706,7 +2909,31 @@ function PdfPage({
     const highlightLayer = searchHighlightLayerRef.current;
     const textLayer = textLayerRef.current;
     highlightLayer?.replaceChildren();
-    if (!highlightLayer || !textLayer || !activeSearchMatch) return;
+    if (!highlightLayer || !textLayer) return;
+
+    if (semanticHighlight) {
+      const rects = getSemanticHighlightRects(textLayer, highlightLayer, semanticHighlight.text);
+
+      for (const rect of rects) {
+        const marker = document.createElement("div");
+        marker.className = "semantic-hit active";
+        marker.style.left = `${rect.left}px`;
+        marker.style.top = `${rect.top}px`;
+        marker.style.width = `${rect.width}px`;
+        marker.style.height = `${rect.height}px`;
+        highlightLayer.appendChild(marker);
+      }
+
+      const firstMarker = highlightLayer.firstElementChild;
+      if (firstMarker) {
+        window.requestAnimationFrame(() => {
+          scrollSearchMarkerIntoDocumentPane(firstMarker);
+        });
+      }
+      return;
+    }
+
+    if (!activeSearchMatch) return;
 
     const rects = getSearchHighlightRects(
       textLayer,
@@ -2732,15 +2959,18 @@ function PdfPage({
         scrollSearchMarkerIntoDocumentPane(firstMarker);
       });
     }
-  }, [activeSearchMatch, activeSearchMatchOrdinal, activeSearchQuery, textLayerRenderKey]);
+  }, [activeSearchMatch, activeSearchMatchOrdinal, activeSearchQuery, semanticHighlight, textLayerRenderKey]);
 
   return (
-    <div className="page-wrap">
+    <div className="page-wrap" data-page-number={pageNumber}>
       <div className="page-number-label">Page {pageNumber}</div>
       <div
         className={`pdf-page ${tool === "select" ? "selectable" : "editing"}`}
         style={{ width: size.width, height: size.height }}
-        onMouseDown={() => onTextSelection(null)}
+        onMouseDown={() => {
+          onTextSelection(null);
+          onClearSemanticHighlight();
+        }}
         onMouseUp={() => {
           if (tool !== "select") return;
           const selection = window.getSelection();
@@ -2844,6 +3074,53 @@ function getSearchHighlightRects(
   return Array.from(rangesBySpan.entries()).map(([span, range]) =>
     spanRangeToLayerRect(span, range.start, range.end, layerRect)
   );
+}
+
+function getSemanticHighlightRects(textLayer: HTMLDivElement, highlightLayer: HTMLDivElement, text: string) {
+  const normalizedText = text
+    .replace(/\.\.\.$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!normalizedText) return [];
+
+  const searchIndex = buildTextLayerSearchIndex(textLayer, true);
+  const layerText = searchIndex.text.toLowerCase();
+  const candidateQueries = [
+    normalizedText.split(/\s+/).slice(0, 12).join(" "),
+    normalizedText.split(/\s+/).slice(0, 8).join(" "),
+    normalizedText.split(/\s+/).slice(4, 14).join(" "),
+    normalizedText.split(/\s+/).slice(8, 18).join(" ")
+  ].filter((query) => query.length > 8);
+  const start = candidateQueries.map((query) => layerText.indexOf(query)).find((index) => index >= 0);
+  if (typeof start !== "number" || start < 0) return [];
+
+  const queryLength = candidateQueries.find((query) => layerText.indexOf(query) === start)?.length ?? 0;
+  const matchEnd = start + queryLength;
+  const rangesBySpan = new Map<HTMLSpanElement, { start: number; end: number }>();
+
+  for (let index = start; index < matchEnd; index += 1) {
+    const position = searchIndex.positions[index];
+    if (!position) continue;
+    const existing = rangesBySpan.get(position.span);
+    if (existing) {
+      existing.start = Math.min(existing.start, position.offset);
+      existing.end = Math.max(existing.end, position.offset + 1);
+    } else {
+      rangesBySpan.set(position.span, { start: position.offset, end: position.offset + 1 });
+    }
+  }
+
+  const layerRect = highlightLayer.getBoundingClientRect();
+  return Array.from(rangesBySpan.entries())
+    .map(([span, range]) => spanRangeToLayerRect(span, range.start, range.end, layerRect))
+    .map((rect) => ({
+      left: Math.max(0, Math.min(layerRect.width, rect.left)),
+      top: Math.max(0, Math.min(layerRect.height, rect.top)),
+      width: Math.max(0, Math.min(layerRect.width - Math.max(0, rect.left), rect.width)),
+      height: Math.max(0, Math.min(layerRect.height - Math.max(0, rect.top), rect.height))
+    }))
+    .filter((rect) => rect.width > 0 && rect.height > 0);
 }
 
 function buildTextLayerSearchIndex(textLayer: HTMLDivElement, separateSpans: boolean) {
@@ -3209,6 +3486,7 @@ function Sidebar({
   onDeleteSignature,
   onSaveSignatureAsset,
   onOpenDrawingSignature,
+  onSelectSemanticResult,
   onModeChange
 }: {
   mode: SidebarMode;
@@ -3233,6 +3511,7 @@ function Sidebar({
   onDeleteSignature: (id: string) => void;
   onSaveSignatureAsset: (asset: SignatureAsset) => void;
   onOpenDrawingSignature: () => void;
+  onSelectSemanticResult: (result: PdfTab["semanticResults"][number]) => void;
   onModeChange: (mode: SidebarMode | null) => void;
 }) {
   const typedInitials = initialsFromName(signatureText) || "AB";
@@ -3255,7 +3534,7 @@ function Sidebar({
       {mode === "semantic" && (
         <div className="semantic-sidebar">
           <div className="sidebar-section-heading">
-            <PanelRight size={15} />
+            <Search size={15} />
             <h2>Semantic Search</h2>
           </div>
           {!tab?.searchQuery ? (
@@ -3267,8 +3546,15 @@ function Sidebar({
           ) : (
             <div className="semantic-result-list">
               {tab.semanticResults.map((result) => (
-                <button className="semantic-result" key={result.id} onClick={() => onSelectPage(result.page)}>
-                  <span>Page {result.page}</span>
+                <button
+                  className={`semantic-result ${tab.semanticHighlight?.id === result.id ? "active" : ""}`}
+                  key={result.id}
+                  onClick={() => onSelectSemanticResult(result)}
+                >
+                  <span className="semantic-result-meta">
+                    <span>Page {result.page}</span>
+                    <span className="semantic-result-score">{result.score.toFixed(2)}</span>
+                  </span>
                   <p>{result.snippet}</p>
                 </button>
               ))}

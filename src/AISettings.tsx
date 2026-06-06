@@ -4,9 +4,9 @@ import {
   Eye,
   FileText,
   KeyRound,
-  PanelRight,
   Plus,
   RefreshCw,
+  Search,
   Settings,
   Trash2,
   XCircle
@@ -23,7 +23,14 @@ import type {
   SemanticSearchSettings
 } from "./global";
 import { clearSemanticIndex, downloadSemanticModel } from "./semanticIndex";
-import { chunkingPresets, curatedEmbeddingModels, recommendedEmbeddingModelId } from "./semanticModels";
+import {
+  chunkingPresets,
+  curatedEmbeddingModels,
+  defaultSemanticScoreThreshold,
+  legacyRecommendedEmbeddingModelId,
+  recommendedEmbeddingModelId,
+  semanticScoreThresholdPresets
+} from "./semanticModels";
 
 const providerKindLabels: Record<AIProviderKind, string> = {
   "openai-compatible": "OpenAI Compatible",
@@ -55,6 +62,7 @@ const defaultSemanticSettings: SemanticSearchSettings = {
   enabled: true,
   activeModelId: recommendedEmbeddingModelId,
   chunkingProfile: "balanced",
+  minSemanticScore: defaultSemanticScoreThreshold,
   downloadedModelIds: []
 };
 
@@ -66,6 +74,24 @@ const defaultMarkdownSettings: MarkdownExportSettings = {
   includeAnnotations: true,
   aiCleanup: false
 };
+
+function normalizeSemanticSettings(settings: SemanticSearchSettings): SemanticSearchSettings {
+  const curatedModelIds = new Set(curatedEmbeddingModels.map((model) => model.id));
+  const activeModelId =
+    settings.activeModelId === legacyRecommendedEmbeddingModelId || !curatedModelIds.has(settings.activeModelId)
+      ? recommendedEmbeddingModelId
+      : settings.activeModelId;
+
+  return {
+    ...settings,
+    activeModelId,
+    minSemanticScore:
+      typeof settings.minSemanticScore === "number" && Number.isFinite(settings.minSemanticScore)
+        ? Math.min(0.95, Math.max(0, settings.minSemanticScore))
+        : defaultSemanticScoreThreshold,
+    downloadedModelIds: settings.downloadedModelIds.filter((modelId) => curatedModelIds.has(modelId))
+  };
+}
 
 interface ProviderDraft {
   id?: string;
@@ -161,7 +187,16 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
 
   const loadSemanticSettings = async () => {
     if (!window.pdfReader?.semantic) return;
-    setSemanticSettings(await window.pdfReader.semantic.getSettings());
+    const settings = await window.pdfReader.semantic.getSettings();
+    const normalizedSettings = normalizeSemanticSettings(settings);
+    setSemanticSettings(normalizedSettings);
+    if (
+      normalizedSettings.activeModelId !== settings.activeModelId ||
+      normalizedSettings.minSemanticScore !== settings.minSemanticScore ||
+      normalizedSettings.downloadedModelIds.length !== settings.downloadedModelIds.length
+    ) {
+      await window.pdfReader.semantic.saveSettings(normalizedSettings);
+    }
     setDatabaseInfo(await window.pdfReader.semantic.databaseInfo());
   };
 
@@ -274,7 +309,7 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
 
   const saveSemanticSettings = async (patch: Partial<SemanticSearchSettings>) => {
     if (!window.pdfReader?.semantic) return;
-    const nextSettings = await window.pdfReader.semantic.saveSettings(patch);
+    const nextSettings = normalizeSemanticSettings(await window.pdfReader.semantic.saveSettings(patch));
     setSemanticSettings(nextSettings);
     onSemanticSettingsChange?.(nextSettings);
     showToast("Semantic search settings saved.");
@@ -346,7 +381,7 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
             <span>AI Providers</span>
           </button>
           <button className={`settings-nav-item ${page === "semantic" ? "active" : ""}`} onClick={() => setPage("semantic")}>
-            <PanelRight size={16} />
+            <Search size={16} />
             <span>Semantic Search</span>
           </button>
           <button className={`settings-nav-item ${page === "markdown" ? "active" : ""}`} onClick={() => setPage("markdown")}>
@@ -491,6 +526,7 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
               onToggleEnabled={(enabled) => void saveSemanticSettings({ enabled })}
               onSelectModel={(activeModelId) => void saveSemanticSettings({ activeModelId })}
               onSelectChunkingProfile={(chunkingProfile) => void saveSemanticSettings({ chunkingProfile })}
+              onSelectMinSemanticScore={(minSemanticScore) => void saveSemanticSettings({ minSemanticScore })}
               onDownload={(modelId) => void downloadModel(modelId)}
               onRemoveModel={(modelId) => void removeModel(modelId)}
               onClearIndex={() => void clearIndex()}
@@ -615,6 +651,7 @@ function SemanticSettingsPage({
   onToggleEnabled,
   onSelectModel,
   onSelectChunkingProfile,
+  onSelectMinSemanticScore,
   onDownload,
   onRemoveModel,
   onClearIndex
@@ -625,6 +662,7 @@ function SemanticSettingsPage({
   onToggleEnabled: (enabled: boolean) => void;
   onSelectModel: (modelId: string) => void;
   onSelectChunkingProfile: (profile: SemanticSearchSettings["chunkingProfile"]) => void;
+  onSelectMinSemanticScore: (score: number) => void;
   onDownload: (modelId: string) => void;
   onRemoveModel: (modelId: string) => void;
   onClearIndex: () => void;
@@ -641,10 +679,6 @@ function SemanticSettingsPage({
             <input type="checkbox" checked={settings.enabled} onChange={(event) => onToggleEnabled(event.target.checked)} />
             <span />
           </label>
-        </div>
-        <div className="settings-summary semantic-box">
-          <span>Active model: {curatedEmbeddingModels.find((model) => model.id === settings.activeModelId)?.name ?? settings.activeModelId}</span>
-          <span>Index size: {formatBytes(databaseInfo.sizeBytes)}</span>
         </div>
       </section>
 
@@ -673,7 +707,7 @@ function SemanticSettingsPage({
                   </div>
                   <div className="provider-actions">
                     {model.badge && <span className="api-key-chip">{model.badge}</span>}
-                    <button className="secondary-button" disabled={active} onClick={() => onSelectModel(model.id)}>
+                    <button className={`secondary-button ${active ? "active-model-button" : ""}`} disabled={active} onClick={() => onSelectModel(model.id)}>
                       {active ? "Active" : "Use"}
                     </button>
                     {downloaded ? (
@@ -725,6 +759,26 @@ function SemanticSettingsPage({
               <span>{preset.description}</span>
             </button>
           ))}
+        </div>
+        <div className="settings-subsection">
+          <div>
+            <h4>Relevance Cutoff</h4>
+            <p>Hide semantic results below the selected similarity score.</p>
+          </div>
+          <div className="chunking-options">
+            {semanticScoreThresholdPresets.map((preset) => (
+              <button
+                key={preset.id}
+                className={Math.abs(settings.minSemanticScore - preset.value) < 0.001 ? "active" : ""}
+                onClick={() => onSelectMinSemanticScore(preset.value)}
+              >
+                <strong>
+                  {preset.name} · {preset.value.toFixed(2)}
+                </strong>
+                <span>{preset.description}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </section>
     </>

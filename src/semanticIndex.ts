@@ -6,6 +6,7 @@ import { extractPageText } from "./pdf/document";
 import type { OcrPageText, SemanticIndexProgress, SemanticSearchResult } from "./types";
 import type { SemanticSearchSettings } from "./global";
 import {
+  defaultSemanticScoreThreshold,
   getChunkingPreset,
   getCuratedEmbeddingModel,
   semanticChunkingVersion
@@ -132,6 +133,7 @@ export async function downloadSemanticModel(modelId: string, onProgress?: (progr
     enabled: true,
     activeModelId: modelId,
     chunkingProfile: "balanced" as const,
+    minSemanticScore: defaultSemanticScoreThreshold,
     downloadedModelIds: []
   };
   await getEmbeddingPipeline(modelId, onProgress);
@@ -154,6 +156,10 @@ async function hashBytes(bytes: Uint8Array) {
 
 function normalizeText(text: string) {
   return text.replace(/\s+/g, " ").trim();
+}
+
+function yieldToBrowser() {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, 0));
 }
 
 async function extractDocumentText(pdfDoc: PDFDocumentProxy, ocrPages: OcrPageText[], onProgress?: (progress: SemanticIndexProgress) => void) {
@@ -224,7 +230,10 @@ async function getEmbeddingPipeline(modelId: string, onProgress?: (progress: Sem
             });
           }
         }
-      } as any)
+      } as any).catch((error) => {
+        pipelinePromises.delete(modelId);
+        throw error;
+      })
     );
   }
 
@@ -387,6 +396,7 @@ export async function indexSemanticDocument(input: DocumentIndexInput) {
       const vector = await embedText(chunk.text, input.settings, "passage", input.onProgress);
       insertChunk.run([chunk.id, documentId, chunk.page, chunk.index, chunk.text, input.settings.chunkingProfile, semanticChunkingVersion]);
       insertEmbedding.run([chunk.id, model.id, modelVersion, model.dimensions, vectorToBlob(vector), new Date().toISOString()]);
+      await yieldToBrowser();
     }
   } finally {
     insertChunk.free();
@@ -422,6 +432,10 @@ export async function searchSemanticDocument(input: SemanticSearchInput): Promis
   );
 
   const rows = result[0]?.values ?? [];
+  const minScore =
+    typeof input.settings.minSemanticScore === "number" && Number.isFinite(input.settings.minSemanticScore)
+      ? input.settings.minSemanticScore
+      : defaultSemanticScoreThreshold;
   return rows
     .map((row) => {
       const vectorBlob = row[3];
@@ -433,9 +447,10 @@ export async function searchSemanticDocument(input: SemanticSearchInput): Promis
         score: cosineSimilarity(queryVector, vector)
       };
     })
-    .filter((item) => item.score > 0.22)
+    .filter((item) => item.score >= minScore)
     .sort((left, right) => right.score - left.score)
-    .slice(0, 12);
+    .slice(0, 12)
+    .sort((left, right) => left.page - right.page || right.score - left.score);
 }
 
 function createSnippet(text: string) {

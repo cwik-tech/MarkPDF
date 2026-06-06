@@ -24,6 +24,7 @@
     "pdfjs-dist": "^5.4.394",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
+    "react-resizable-panels": "^4.11.2",
     "sql.js": "^1.14.1",
     "tesseract.js": "^7.0.0"
   },

@@ -55,6 +55,12 @@ export interface SemanticSearchResult {
   score: number;
 }
 
+export interface SemanticHighlightTarget {
+  page: number;
+  text: string;
+  id: string;
+}
+
 export interface OutlineItem {
   id: string;
   title: string;
@@ -122,6 +128,7 @@ export interface PdfTab {
   searchMatches: SearchMatch[];
   activeSearchMatch: number;
   semanticResults: SemanticSearchResult[];
+  semanticHighlight?: SemanticHighlightTarget | null;
   semanticIndexStatus?: SemanticIndexStatus;
   semanticIndexProgress?: SemanticIndexProgress;
   semanticIndexError?: string;

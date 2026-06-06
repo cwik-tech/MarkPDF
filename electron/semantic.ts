@@ -8,6 +8,7 @@ export interface SemanticSearchSettings {
   enabled: boolean;
   activeModelId: string;
   chunkingProfile: SemanticChunkingProfile;
+  minSemanticScore: number;
   downloadedModelIds: string[];
 }
 
@@ -17,10 +18,25 @@ export interface SemanticStoreSchema {
 
 export const defaultSemanticSearchSettings: SemanticSearchSettings = {
   enabled: true,
-  activeModelId: "BAAI/bge-small-en-v1.5",
+  activeModelId: "Xenova/bge-small-en-v1.5",
   chunkingProfile: "balanced",
+  minSemanticScore: 0.3,
   downloadedModelIds: []
 };
+
+export function normalizeSemanticSearchSettings(settings: Partial<SemanticSearchSettings> = {}): SemanticSearchSettings {
+  const minSemanticScore =
+    typeof settings.minSemanticScore === "number" && Number.isFinite(settings.minSemanticScore)
+      ? Math.min(0.95, Math.max(0, settings.minSemanticScore))
+      : defaultSemanticSearchSettings.minSemanticScore;
+
+  return {
+    ...defaultSemanticSearchSettings,
+    ...settings,
+    minSemanticScore,
+    downloadedModelIds: settings.downloadedModelIds ?? defaultSemanticSearchSettings.downloadedModelIds
+  };
+}
 
 function semanticDbPath() {
   return join(app.getPath("userData"), "semantic-search", "semantic-index.sqlite");

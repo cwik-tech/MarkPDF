@@ -19,6 +19,7 @@ import {
   defaultSemanticSearchSettings,
   getSemanticDatabaseInfo,
   loadSemanticDatabase,
+  normalizeSemanticSearchSettings,
   saveSemanticDatabase,
   type SemanticSearchSettings
 } from "./semantic.js";
@@ -288,37 +289,37 @@ ipcMain.handle("recent:list", async () => store.get("recentFiles", []));
 
 ipcMain.handle("recent:remove", async (_event, filePath: string) => removeRecentFile(filePath));
 
-ipcMain.handle("semantic:get-settings", async () => store.get("semanticSearch", defaultSemanticSearchSettings));
+ipcMain.handle("semantic:get-settings", async () => normalizeSemanticSearchSettings(store.get("semanticSearch", defaultSemanticSearchSettings)));
 
 ipcMain.handle("semantic:save-settings", async (_event, settings: Partial<SemanticSearchSettings>) => {
-  const current = store.get("semanticSearch", defaultSemanticSearchSettings);
-  const next = {
+  const current = normalizeSemanticSearchSettings(store.get("semanticSearch", defaultSemanticSearchSettings));
+  const next = normalizeSemanticSearchSettings({
     ...current,
     ...settings,
     downloadedModelIds: settings.downloadedModelIds ?? current.downloadedModelIds
-  };
+  });
   store.set("semanticSearch", next);
   return next;
 });
 
 ipcMain.handle("semantic:mark-model-downloaded", async (_event, modelId: string) => {
-  const current = store.get("semanticSearch", defaultSemanticSearchSettings);
-  const next = {
+  const current = normalizeSemanticSearchSettings(store.get("semanticSearch", defaultSemanticSearchSettings));
+  const next = normalizeSemanticSearchSettings({
     ...current,
     downloadedModelIds: [...new Set([...current.downloadedModelIds, modelId])]
-  };
+  });
   store.set("semanticSearch", next);
   return next;
 });
 
 ipcMain.handle("semantic:remove-model", async (_event, modelId: string) => {
-  const current = store.get("semanticSearch", defaultSemanticSearchSettings);
+  const current = normalizeSemanticSearchSettings(store.get("semanticSearch", defaultSemanticSearchSettings));
   const downloadedModelIds = current.downloadedModelIds.filter((id) => id !== modelId);
-  const next = {
+  const next = normalizeSemanticSearchSettings({
     ...current,
     downloadedModelIds,
     activeModelId: current.activeModelId === modelId && downloadedModelIds[0] ? downloadedModelIds[0] : current.activeModelId
-  };
+  });
   store.set("semanticSearch", next);
   return next;
 });

@@ -16,7 +16,7 @@ Primary behavior:
 - Literal matches stay highlighted directly on the PDF.
 - Semantic matches appear in a right sidebar.
 - Search remains the user's main entry point.
-- The right sidebar opens automatically when semantic results are available.
+- The right sidebar opens when the user submits a search with Enter.
 - The sidebar can later also support selected-text actions like find similar.
 
 Initial scope is single-document only. Cross-document search is a later feature.
@@ -43,6 +43,7 @@ Core controls:
 - Show local index size.
 - Clear semantic index.
 - Remove downloaded models.
+- Relevance cutoff presets.
 
 Privacy copy should be direct:
 
@@ -65,7 +66,7 @@ Reason:
 
 Recommended default:
 
-- `BAAI/bge-small-en-v1.5`
+- `Xenova/bge-small-en-v1.5`
 
 Why:
 
@@ -77,9 +78,9 @@ Why:
 
 Curated model list:
 
-- Recommended: `BAAI/bge-small-en-v1.5`
-- Faster/smaller later option: `sentence-transformers/all-MiniLM-L6-v2`
-- Higher-quality later option: `BAAI/bge-base-en-v1.5`
+- Recommended: `Xenova/bge-small-en-v1.5`
+- Faster/smaller later option: `Xenova/all-MiniLM-L6-v2`
+- Higher-quality later option: `Xenova/bge-base-en-v1.5`
 
 Only one embedding model is active at a time.
 
@@ -116,8 +117,9 @@ When the user searches:
 3. If the current PDF has a semantic index for the active embedding model, embed the search query locally.
 4. Use the same active embedding model that produced the document chunk embeddings.
 5. Compare the query vector against stored chunk vectors.
-6. Show semantic results in the right sidebar.
-7. If the semantic index is missing or still indexing, show literal results only and surface indexing progress.
+6. Filter out results below the selected relevance cutoff.
+7. Show semantic results and their similarity scores in the right sidebar.
+8. If the semantic index is missing or still indexing, show literal results only and surface indexing/model progress.
 
 Important rule:
 
@@ -247,7 +249,7 @@ This keeps packaging simpler.
 
 ## UI Status
 
-Show temporary indexing status in the toolbar/status area, similar to OCR.
+Show temporary model download and indexing status in the toolbar/status area, similar to OCR.
 
 States:
 
@@ -260,6 +262,7 @@ States:
 Progress:
 
 - page count or chunk count
+- include a slim progress bar for active model download or indexing
 - avoid permanent "indexed" UI in the main toolbar
 
 Users do not need a persistent indexed badge. Search should simply work when available.
@@ -273,7 +276,7 @@ Settings should show:
 
 ## Right Sidebar
 
-The right sidebar replaces the reserved chat affordance.
+The right sidebar replaces the reserved chat affordance, but it does not have a standalone toolbar button.
 
 It should be document-native and search-driven.
 
@@ -326,15 +329,16 @@ Store the selected preset and an internal `chunkingVersion`.
 
 Default behavior:
 
-- If semantic search is enabled and no model is installed, offer to download the recommended model.
-- The first version may auto-download the recommended model after clear user consent.
-- Do not silently download a large model without explaining size and local storage use.
+- If semantic search is enabled and the recommended model is not installed, start downloading it when the app opens.
+- Show model download status in the toolbar status chip.
+- Settings should still show model size and local storage use.
 
 Model download UX:
 
 - show model name
 - show approximate download size
-- show progress
+- show progress only while downloading or indexing
+- do not show a failed startup download as an indexing error when no PDF is open
 - allow cancel
 - validate downloaded files
 - mark model as available only after validation
@@ -374,6 +378,7 @@ Included:
 - Clear semantic index.
 - Remove downloaded models.
 - Advanced chunking presets.
+- Relevance cutoff presets.
 
 Excluded:
 
@@ -401,11 +406,10 @@ Excluded:
 
 ## Open Decisions
 
-- Exact right-sidebar icon.
+- Exact right-sidebar icon if a future manual toggle is added.
 - Exact model runtime: Transformers.js ONNX first, or another local runtime.
 - Exact SQLite package.
-- Whether model download requires explicit click or can be triggered by enabling semantic search.
-- Whether semantic sidebar opens after typing three characters or only after pressing Enter.
+- Whether to add a later manual right-sidebar toggle.
 - Whether indexing starts immediately after OCR begins or waits until OCR completes for all pages.
 
 ## Recommended First Implementation Order
