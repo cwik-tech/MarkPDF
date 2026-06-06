@@ -57,15 +57,29 @@ export interface SemanticDatabaseInfo {
   sizeBytes: number;
 }
 
+export type MarkdownEngineId = "builtin-text";
+export type MarkdownExportMode = "readable" | "page-preserving";
+
+export interface MarkdownExportSettings {
+  defaultEngine: MarkdownEngineId;
+  exportMode: MarkdownExportMode;
+  includePageMarkers: boolean;
+  useOcrFallback: boolean;
+  includeAnnotations: boolean;
+  aiCleanup: boolean;
+}
+
 declare global {
   interface Window {
     pdfReader?: {
       openPdfDialog: () => Promise<string[]>;
       savePdfDialog: (defaultPath?: string) => Promise<string | null>;
+      saveMarkdownDialog: (defaultPath?: string) => Promise<string | null>;
       confirmUnsaved: (documentName?: string) => Promise<"save" | "discard" | "cancel">;
       readPdf: (filePath: string) => Promise<{ path: string; name: string; bytes: number[] }>;
       readImage: (filePath: string) => Promise<{ path: string; name: string; mimeType: string; bytes: number[] }>;
       writePdf: (filePath: string, bytes: number[]) => Promise<{ path: string; name: string }>;
+      writeMarkdown: (filePath: string, markdown: string) => Promise<{ path: string; name: string }>;
       openFileInNewWindow: (filePath: string) => Promise<void>;
       setFullScreen: (enabled: boolean) => Promise<boolean>;
       isFullScreen: () => Promise<boolean>;
@@ -93,6 +107,10 @@ declare global {
         saveDatabase: (bytes: number[]) => Promise<void>;
         clearDatabase: () => Promise<SemanticDatabaseInfo>;
         databaseInfo: () => Promise<SemanticDatabaseInfo>;
+      };
+      markdown: {
+        getSettings: () => Promise<MarkdownExportSettings>;
+        saveSettings: (settings: Partial<MarkdownExportSettings>) => Promise<MarkdownExportSettings>;
       };
       onFullScreenChange: (callback: (enabled: boolean) => void) => () => void;
       onWindowRequestClose: (callback: () => void) => () => void;

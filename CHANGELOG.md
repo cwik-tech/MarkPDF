@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Added Save as Markdown with a dedicated document-conversion layer, Markdown export settings, OCR fallback, annotation inclusion, and save progress feedback.
 - Added local semantic search with curated embedding models, SQLite-backed document indexing, right-sidebar semantic results, automatic text/OCR indexing, and Semantic Search settings.
 - Replaced inline AI status messages with dismissible auto-closing toasts, simplified provider creation to one Add action, and allowed settings to close from the backdrop.
 - Fixed top-bar dropdown hover retention, delayed idle search collapse, and changed Open to a titled folder icon button.

@@ -3,10 +3,12 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("pdfReader", {
   openPdfDialog: () => ipcRenderer.invoke("dialog:open-pdf"),
   savePdfDialog: (defaultPath?: string) => ipcRenderer.invoke("dialog:save-pdf", defaultPath),
+  saveMarkdownDialog: (defaultPath?: string) => ipcRenderer.invoke("dialog:save-markdown", defaultPath),
   confirmUnsaved: (documentName?: string) => ipcRenderer.invoke("dialog:confirm-unsaved", documentName),
   readPdf: (filePath: string) => ipcRenderer.invoke("file:read-pdf", filePath),
   readImage: (filePath: string) => ipcRenderer.invoke("file:read-image", filePath),
   writePdf: (filePath: string, bytes: number[]) => ipcRenderer.invoke("file:write-pdf", filePath, bytes),
+  writeMarkdown: (filePath: string, markdown: string) => ipcRenderer.invoke("file:write-markdown", filePath, markdown),
   openFileInNewWindow: (filePath: string) => ipcRenderer.invoke("window:new-for-file", filePath),
   setFullScreen: (enabled: boolean) => ipcRenderer.invoke("window:set-full-screen", enabled),
   isFullScreen: () => ipcRenderer.invoke("window:is-full-screen"),
@@ -34,6 +36,10 @@ contextBridge.exposeInMainWorld("pdfReader", {
     saveDatabase: (bytes: number[]) => ipcRenderer.invoke("semantic:save-db", bytes),
     clearDatabase: () => ipcRenderer.invoke("semantic:clear-db"),
     databaseInfo: () => ipcRenderer.invoke("semantic:db-info")
+  },
+  markdown: {
+    getSettings: () => ipcRenderer.invoke("markdown:get-settings"),
+    saveSettings: (settings: unknown) => ipcRenderer.invoke("markdown:save-settings", settings)
   },
   onFullScreenChange: (callback: (enabled: boolean) => void) => {
     const listener = (_event: unknown, enabled: boolean) => callback(enabled);

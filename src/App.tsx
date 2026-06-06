@@ -56,6 +56,7 @@ import {
   movePdfPageTo
 } from "./pdf/document";
 import { detectOcrNeed, runDocumentOcr } from "./pdf/ocr";
+import { convertDocumentToMarkdown } from "./documentConversion/markdown";
 import type {
   FitMode,
   FormFieldState,
@@ -70,7 +71,7 @@ import type {
   ViewMode
 } from "./types";
 import { AISettingsDialog } from "./AISettings";
-import type { SemanticSearchSettings } from "./global";
+import type { MarkdownExportSettings, SemanticSearchSettings } from "./global";
 import { indexSemanticDocument, searchSemanticDocument } from "./semanticIndex";
 import { recommendedEmbeddingModelId } from "./semanticModels";
 
@@ -87,6 +88,15 @@ const defaultSemanticSettings: SemanticSearchSettings = {
   activeModelId: recommendedEmbeddingModelId,
   chunkingProfile: "balanced",
   downloadedModelIds: []
+};
+
+const defaultMarkdownSettings: MarkdownExportSettings = {
+  defaultEngine: "builtin-text",
+  exportMode: "readable",
+  includePageMarkers: true,
+  useOcrFallback: true,
+  includeAnnotations: true,
+  aiCleanup: false
 };
 
 interface SignatureAsset {
@@ -1052,6 +1062,64 @@ export default function App() {
     return saveTabWithSignaturePrompt(activeTab, saveAs, flattenForms);
   };
 
+  const saveActiveTabAsMarkdown = async () => {
+    if (!activeTab) return false;
+    const defaultPath = activeTab.name.replace(/\.[^.]+$/, "") + ".md";
+    const targetPath = window.pdfReader ? await window.pdfReader.saveMarkdownDialog(defaultPath) : defaultPath;
+    if (!targetPath) return false;
+
+    const progressStartedAt = Date.now();
+
+    try {
+      await showOperationProgress({
+        title: "Saving Markdown",
+        message: "Loading Markdown settings",
+        current: 0,
+        total: activeTab.pageCount + 3
+      });
+
+      const settings = (await window.pdfReader?.markdown.getSettings()) ?? defaultMarkdownSettings;
+      const result = await convertDocumentToMarkdown({
+        name: activeTab.name,
+        pdfDoc: activeTab.pdfDoc,
+        ocrPages: activeTab.ocrPages,
+        overlays: activeTab.overlays,
+        settings,
+        onProgress: (progress) => {
+          void showOperationProgress({
+            title: "Saving Markdown",
+            message: progress.message,
+            current: progress.current,
+            total: progress.total ? progress.total + 2 : activeTab.pageCount + 3
+          });
+        }
+      });
+
+      await showOperationProgress({
+        title: "Saving Markdown",
+        message: "Writing Markdown file",
+        current: activeTab.pageCount + 2,
+        total: activeTab.pageCount + 3
+      });
+
+      if (window.pdfReader) {
+        await window.pdfReader.writeMarkdown(targetPath, result.markdown);
+      } else {
+        downloadText(result.markdown, defaultPath, "text/markdown");
+      }
+
+      await showOperationProgress({
+        title: "Saving Markdown",
+        message: result.warnings.length > 0 ? "Markdown saved with warnings" : "Markdown saved",
+        current: activeTab.pageCount + 3,
+        total: activeTab.pageCount + 3
+      });
+      return true;
+    } finally {
+      await hideOperationProgress(progressStartedAt);
+    }
+  };
+
   useEffect(() => {
     if (!window.pdfReader) return undefined;
 
@@ -1608,6 +1676,7 @@ export default function App() {
         onOpen={openFromDialog}
         onSave={() => void saveActiveTab(false, false)}
         onSaveAs={() => void saveActiveTab(true, false)}
+        onSaveMarkdown={() => void saveActiveTabAsMarkdown()}
         onExportFlattened={() => void saveActiveTab(true, true)}
         onPrint={() => void printActiveTab()}
         theme={theme}
@@ -1985,6 +2054,15 @@ function downloadBytes(bytes: Uint8Array, name: string) {
   URL.revokeObjectURL(url);
 }
 
+function downloadText(text: string, name: string, mimeType: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: mimeType }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function OperationProgressDialog({ progress }: { progress: OperationProgress }) {
   const hasTotal = typeof progress.total === "number" && progress.total > 0;
   const current = hasTotal ? Math.min(progress.current ?? 0, progress.total ?? 0) : 0;
@@ -2016,6 +2094,7 @@ function TopBar({
   onOpen,
   onSave,
   onSaveAs,
+  onSaveMarkdown,
   onExportFlattened,
   onPrint,
   theme,
@@ -2037,6 +2116,7 @@ function TopBar({
   onOpen: () => void;
   onSave: () => void;
   onSaveAs: () => void;
+  onSaveMarkdown: () => void;
   onExportFlattened: () => void;
   onPrint: () => void;
   theme: ThemeMode;
@@ -2126,6 +2206,7 @@ function TopBar({
           {tabs.length > 0 && (
             <div className="menu-popover right">
               <button onClick={onSaveAs}>Save as</button>
+              <button onClick={onSaveMarkdown}>Save as Markdown</button>
               <button onClick={onExportFlattened}>Export flattened PDF</button>
             </div>
           )}

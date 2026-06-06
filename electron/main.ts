@@ -22,6 +22,7 @@ import {
   saveSemanticDatabase,
   type SemanticSearchSettings
 } from "./semantic.js";
+import { defaultMarkdownExportSettings, type MarkdownExportSettings } from "./documentConversion.js";
 
 let pendingOpenPaths: string[] = [];
 let openPathFlushTimer: NodeJS.Timeout | null = null;
@@ -32,7 +33,8 @@ const store = new Store<AIStoreSchema>({
     recentFiles: [],
     aiProviders: [],
     localAgentEnabled: {},
-    semanticSearch: defaultSemanticSearchSettings
+    semanticSearch: defaultSemanticSearchSettings,
+    markdownExport: defaultMarkdownExportSettings
   }
 });
 const imageMimeTypes = new Map([
@@ -194,6 +196,20 @@ ipcMain.handle("dialog:save-pdf", async (_event, defaultPath?: string) => {
   return result.filePath;
 });
 
+ipcMain.handle("dialog:save-markdown", async (_event, defaultPath?: string) => {
+  const result = await dialog.showSaveDialog({
+    title: "Save Markdown",
+    defaultPath,
+    filters: [{ name: "Markdown files", extensions: ["md"] }]
+  });
+
+  if (result.canceled || !result.filePath) {
+    return null;
+  }
+
+  return result.filePath;
+});
+
 ipcMain.handle("dialog:confirm-unsaved", async (event, documentName?: string) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   const options: MessageBoxOptions = {
@@ -234,6 +250,11 @@ ipcMain.handle("file:read-image", async (_event, filePath: string) => {
 ipcMain.handle("file:write-pdf", async (_event, filePath: string, bytes: number[]) => {
   await writeFile(filePath, Buffer.from(bytes));
   addRecentFile(filePath);
+  return { path: filePath, name: basename(filePath) };
+});
+
+ipcMain.handle("file:write-markdown", async (_event, filePath: string, markdown: string) => {
+  await writeFile(filePath, markdown, "utf8");
   return { path: filePath, name: basename(filePath) };
 });
 
@@ -314,6 +335,18 @@ ipcMain.handle("semantic:clear-db", async () => {
 });
 
 ipcMain.handle("semantic:db-info", async () => getSemanticDatabaseInfo());
+
+ipcMain.handle("markdown:get-settings", async () => store.get("markdownExport", defaultMarkdownExportSettings));
+
+ipcMain.handle("markdown:save-settings", async (_event, settings: Partial<MarkdownExportSettings>) => {
+  const current = store.get("markdownExport", defaultMarkdownExportSettings);
+  const next = {
+    ...current,
+    ...settings
+  };
+  store.set("markdownExport", next);
+  return next;
+});
 
 ipcMain.handle("recent:clear", async () => {
   store.set("recentFiles", []);

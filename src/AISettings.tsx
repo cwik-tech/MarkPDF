@@ -2,6 +2,7 @@ import {
   Bot,
   CheckCircle2,
   Eye,
+  FileText,
   KeyRound,
   PanelRight,
   Plus,
@@ -17,6 +18,7 @@ import type {
   AIProviderKind,
   AIProviderView,
   LocalAgentInfo,
+  MarkdownExportSettings,
   SemanticDatabaseInfo,
   SemanticSearchSettings
 } from "./global";
@@ -47,13 +49,22 @@ interface AISettingsDialogProps {
   onSemanticIndexCleared?: () => void;
 }
 
-type SettingsPage = "providers" | "semantic";
+type SettingsPage = "providers" | "semantic" | "markdown";
 
 const defaultSemanticSettings: SemanticSearchSettings = {
   enabled: true,
   activeModelId: recommendedEmbeddingModelId,
   chunkingProfile: "balanced",
   downloadedModelIds: []
+};
+
+const defaultMarkdownSettings: MarkdownExportSettings = {
+  defaultEngine: "builtin-text",
+  exportMode: "readable",
+  includePageMarkers: true,
+  useOcrFallback: true,
+  includeAnnotations: true,
+  aiCleanup: false
 };
 
 interface ProviderDraft {
@@ -106,6 +117,7 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
   const [providers, setProviders] = useState<AIProviderView[]>([]);
   const [localAgents, setLocalAgents] = useState<LocalAgentInfo[]>([]);
   const [semanticSettings, setSemanticSettings] = useState<SemanticSearchSettings>(defaultSemanticSettings);
+  const [markdownSettings, setMarkdownSettings] = useState<MarkdownExportSettings>(defaultMarkdownSettings);
   const [databaseInfo, setDatabaseInfo] = useState<SemanticDatabaseInfo>({ sizeBytes: 0 });
   const [draft, setDraft] = useState<ProviderDraft | null>(null);
   const [loadingProviders, setLoadingProviders] = useState(true);
@@ -153,10 +165,16 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
     setDatabaseInfo(await window.pdfReader.semantic.databaseInfo());
   };
 
+  const loadMarkdownSettings = async () => {
+    if (!window.pdfReader?.markdown) return;
+    setMarkdownSettings(await window.pdfReader.markdown.getSettings());
+  };
+
   useEffect(() => {
     void loadProviders();
     void loadAgents();
     void loadSemanticSettings();
+    void loadMarkdownSettings();
   }, []);
 
   useEffect(() => {
@@ -262,6 +280,13 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
     showToast("Semantic search settings saved.");
   };
 
+  const saveMarkdownSettings = async (patch: Partial<MarkdownExportSettings>) => {
+    if (!window.pdfReader?.markdown) return;
+    const nextSettings = await window.pdfReader.markdown.saveSettings(patch);
+    setMarkdownSettings(nextSettings);
+    showToast("Markdown settings saved.");
+  };
+
   const downloadModel = async (modelId: string) => {
     setBusySemanticModelId(modelId);
     try {
@@ -324,16 +349,22 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
             <PanelRight size={16} />
             <span>Semantic Search</span>
           </button>
+          <button className={`settings-nav-item ${page === "markdown" ? "active" : ""}`} onClick={() => setPage("markdown")}>
+            <FileText size={16} />
+            <span>Markdown</span>
+          </button>
         </aside>
 
         <div className="settings-content">
           <header className="settings-header">
             <div>
-              <h2 id="settings-title">{page === "providers" ? "AI Providers" : "Semantic Search"}</h2>
+              <h2 id="settings-title">{page === "providers" ? "AI Providers" : page === "semantic" ? "Semantic Search" : "Markdown"}</h2>
               <p>
                 {page === "providers"
                   ? "Manage model providers, local servers, and detected CLI agents."
-                  : "Manage local embedding models and the private document index."}
+                  : page === "semantic"
+                    ? "Manage local embedding models and the private document index."
+                    : "Manage Markdown export behavior and conversion defaults."}
               </p>
             </div>
             <button className="icon-button" title="Close settings" onClick={onClose}>
@@ -347,11 +378,17 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
               <span>{enabledModels} models enabled</span>
               <span>{localAgents.filter((agent) => agent.available && agent.enabled).length} CLI agents enabled</span>
             </div>
-          ) : (
+          ) : page === "semantic" ? (
             <div className="settings-summary">
               <span>{semanticSettings.enabled ? "Enabled" : "Disabled"}</span>
               <span>{semanticSettings.downloadedModelIds.length} models downloaded</span>
               <span>{formatBytes(databaseInfo.sizeBytes)} index</span>
+            </div>
+          ) : (
+            <div className="settings-summary">
+              <span>{markdownSettings.exportMode === "readable" ? "Readable" : "Page preserving"}</span>
+              <span>{markdownSettings.useOcrFallback ? "OCR fallback" : "PDF text only"}</span>
+              <span>{markdownSettings.includeAnnotations ? "Annotations included" : "Annotations off"}</span>
             </div>
           )}
 
@@ -459,8 +496,114 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
               onClearIndex={() => void clearIndex()}
             />
           )}
+
+          {page === "markdown" && (
+            <MarkdownSettingsPage settings={markdownSettings} onChange={(patch) => void saveMarkdownSettings(patch)} />
+          )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function MarkdownSettingsPage({
+  settings,
+  onChange
+}: {
+  settings: MarkdownExportSettings;
+  onChange: (patch: Partial<MarkdownExportSettings>) => void;
+}) {
+  return (
+    <>
+      <section className="settings-section">
+        <div className="settings-section-heading">
+          <div>
+            <h3>Conversion Engine</h3>
+            <p>Use a replaceable local engine for Markdown export.</p>
+          </div>
+        </div>
+        <div className="provider-editor">
+          <label>
+            Default engine
+            <select value={settings.defaultEngine} onChange={(event) => onChange({ defaultEngine: event.target.value as MarkdownExportSettings["defaultEngine"] })}>
+              <option value="builtin-text">Built-in text export</option>
+            </select>
+          </label>
+          <label>
+            Export mode
+            <select value={settings.exportMode} onChange={(event) => onChange({ exportMode: event.target.value as MarkdownExportSettings["exportMode"] })}>
+              <option value="readable">Readable Markdown</option>
+              <option value="page-preserving">Page-preserving Markdown</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-heading">
+          <div>
+            <h3>Content</h3>
+            <p>Control what the export includes.</p>
+          </div>
+        </div>
+        <div className="agent-list">
+          <MarkdownToggle
+            title="Include page markers"
+            description="Adds page headings so Markdown can be traced back to the PDF."
+            checked={settings.includePageMarkers}
+            onChange={(includePageMarkers) => onChange({ includePageMarkers })}
+          />
+          <MarkdownToggle
+            title="Use OCR fallback"
+            description="Uses OCR text when a page has little or no PDF text layer."
+            checked={settings.useOcrFallback}
+            onChange={(useOcrFallback) => onChange({ useOcrFallback })}
+          />
+          <MarkdownToggle
+            title="Include annotations"
+            description="Adds exported text, comment, highlight, and signature notes."
+            checked={settings.includeAnnotations}
+            onChange={(includeAnnotations) => onChange({ includeAnnotations })}
+          />
+          <MarkdownToggle
+            title="AI cleanup"
+            description="Reserved for future provider-backed Markdown cleanup."
+            checked={settings.aiCleanup}
+            disabled
+            onChange={(aiCleanup) => onChange({ aiCleanup })}
+          />
+        </div>
+      </section>
+    </>
+  );
+}
+
+function MarkdownToggle({
+  title,
+  description,
+  checked,
+  disabled,
+  onChange
+}: {
+  title: string;
+  description: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="agent-row">
+      <div className="agent-main">
+        <span className={`status-dot ${checked ? "connected" : "unknown"}`} />
+        <div>
+          <strong>{title}</strong>
+          <span>{description}</span>
+        </div>
+      </div>
+      <label className="switch-control">
+        <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+        <span />
+      </label>
     </div>
   );
 }

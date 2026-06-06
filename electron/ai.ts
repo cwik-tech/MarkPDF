@@ -3,6 +3,7 @@ import Store from "electron-store";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { SemanticStoreSchema } from "./semantic.js";
+import type { MarkdownStoreSchema } from "./documentConversion.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -63,7 +64,7 @@ export interface LocalAgentInfo {
   error?: string;
 }
 
-export interface AIStoreSchema extends SemanticStoreSchema {
+export interface AIStoreSchema extends SemanticStoreSchema, MarkdownStoreSchema {
   recentFiles: string[];
   aiProviders: AIProviderRecord[];
   localAgentEnabled: Record<string, boolean>;
