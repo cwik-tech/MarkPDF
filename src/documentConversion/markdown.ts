@@ -10,27 +10,5 @@ export function getMarkdownEngine(engineId: string) {
 
 export async function convertDocumentToMarkdown(input: MarkdownConversionInput): Promise<MarkdownConversionResult> {
   const engine = getMarkdownEngine(input.settings.defaultEngine);
-  if (engine.id === builtinTextMarkdownEngine.id) {
-    return engine.convert(input);
-  }
-
-  try {
-    return await engine.convert(input);
-  } catch (error) {
-    const fallback = await builtinTextMarkdownEngine.convert({
-      ...input,
-      settings: {
-        ...input.settings,
-        defaultEngine: "builtin-text"
-      }
-    });
-
-    return {
-      ...fallback,
-      warnings: [
-        `${engine.name} failed; used built-in text export instead. ${error instanceof Error ? error.message : "Unknown error."}`,
-        ...fallback.warnings
-      ]
-    };
-  }
+  return engine.convert(input);
 }

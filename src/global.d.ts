@@ -128,6 +128,7 @@ declare global {
         getSettings: () => Promise<MarkdownExportSettings>;
         saveSettings: (settings: Partial<MarkdownExportSettings>) => Promise<MarkdownExportSettings>;
         listEngines: () => Promise<MarkdownEngineAvailability[]>;
+        installState: () => Promise<MarkdownInstallProgress | null>;
         installDocling: () => Promise<MarkdownEngineAvailability[]>;
         convertWithDocling: (bytes: number[], settings: MarkdownExportSettings) => Promise<{ markdown: string; engineId: MarkdownEngineId; warnings: string[] }>;
       };

@@ -867,7 +867,7 @@ export default function App() {
       try {
         await showOperationProgress({
           title: "Preparing Markdown Export",
-          message: "Installing Docling",
+          message: "Preparing Markdown converter",
           current: 0,
           total: 4
         });
@@ -1220,6 +1220,38 @@ export default function App() {
       });
 
       const settings = (await window.pdfReader?.markdown.getSettings()) ?? defaultMarkdownSettings;
+      if (settings.defaultEngine === "docling-managed" && window.pdfReader?.markdown) {
+        const engines = await window.pdfReader.markdown.listEngines();
+        const doclingEngine = engines.find((engine) => engine.id === "docling-managed");
+        if (!doclingEngine?.available) {
+          await showOperationProgress({
+            title: "Saving Markdown",
+            message: "Preparing Markdown converter",
+            current: 0,
+            total: 4
+          });
+          const cleanup = window.pdfReader.onMarkdownInstallProgress?.((progress) => {
+            void showOperationProgress({
+              title: "Saving Markdown",
+              message: progress.message,
+              current: progress.current,
+              total: progress.total
+            });
+          });
+          try {
+            await window.pdfReader.markdown.installDocling();
+          } finally {
+            cleanup?.();
+          }
+
+          const nextEngines = await window.pdfReader.markdown.listEngines();
+          const nextDoclingEngine = nextEngines.find((engine) => engine.id === "docling-managed");
+          if (!nextDoclingEngine?.available) {
+            throw new Error(nextDoclingEngine?.error ?? "The Markdown converter is not available.");
+          }
+        }
+      }
+
       const result = await convertDocumentToMarkdown({
         name: activeTab.name,
         bytes: activeTab.bytes,
@@ -1257,6 +1289,14 @@ export default function App() {
         total: activeTab.pageCount + 3
       });
       return true;
+    } catch (error) {
+      await showOperationProgress({
+        title: "Saving Markdown",
+        message: error instanceof Error ? error.message : "Markdown export failed.",
+        current: 0,
+        total: activeTab.pageCount + 3
+      });
+      return false;
     } finally {
       await hideOperationProgress(progressStartedAt);
     }

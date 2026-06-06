@@ -27,6 +27,7 @@ import {
   convertPdfWithDocling,
   defaultMarkdownExportSettings,
   getMarkdownEngineAvailability,
+  getManagedDoclingInstallProgress,
   installManagedDocling,
   type MarkdownInstallProgress,
   type MarkdownExportSettings
@@ -357,6 +358,8 @@ ipcMain.handle("markdown:save-settings", async (_event, settings: Partial<Markdo
 });
 
 ipcMain.handle("markdown:list-engines", async () => getMarkdownEngineAvailability());
+
+ipcMain.handle("markdown:install-state", async () => getManagedDoclingInstallProgress());
 
 ipcMain.handle("markdown:install-docling", async (event) =>
   installManagedDocling((progress: MarkdownInstallProgress) => {

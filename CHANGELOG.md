@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Fixed Docling Markdown export to read Docling's generated Markdown file, avoid silent built-in fallback, and hide engine-specific save progress text.
 - Added Docling auto-install on app startup, visible Docling install progress in Markdown settings, and restored idle search collapse after previous searches.
 - Added optional app-managed Docling Markdown conversion with engine availability detection, settings-based installation, and fallback to the built-in exporter.
 - Added Save as Markdown with a dedicated document-conversion layer, Markdown export settings, OCR fallback, annotation inclusion, and save progress feedback.

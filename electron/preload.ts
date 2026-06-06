@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld("pdfReader", {
     getSettings: () => ipcRenderer.invoke("markdown:get-settings"),
     saveSettings: (settings: unknown) => ipcRenderer.invoke("markdown:save-settings", settings),
     listEngines: () => ipcRenderer.invoke("markdown:list-engines"),
+    installState: () => ipcRenderer.invoke("markdown:install-state"),
     installDocling: () => ipcRenderer.invoke("markdown:install-docling"),
     convertWithDocling: (bytes: number[], settings: unknown) => ipcRenderer.invoke("markdown:convert-docling", bytes, settings)
   },

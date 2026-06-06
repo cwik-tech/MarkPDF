@@ -1,5 +1,5 @@
 import { app } from "electron";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -25,6 +25,8 @@ export interface MarkdownInstallProgress {
   total?: number;
 }
 
+let currentInstallProgress: MarkdownInstallProgress | null = null;
+
 export interface MarkdownExportSettings {
   defaultEngine: MarkdownEngineId;
   exportMode: MarkdownExportMode;
@@ -46,6 +48,15 @@ export const defaultMarkdownExportSettings: MarkdownExportSettings = {
   includeAnnotations: true,
   aiCleanup: false
 };
+
+export function getManagedDoclingInstallProgress() {
+  return currentInstallProgress;
+}
+
+function updateInstallProgress(progress: MarkdownInstallProgress, onProgress?: (progress: MarkdownInstallProgress) => void) {
+  currentInstallProgress = progress;
+  onProgress?.(progress);
+}
 
 function defaultPathEnv() {
   const segments = [
@@ -92,12 +103,12 @@ async function pathExists(path: string) {
 }
 
 async function findPythonCommand(onProgress?: (progress: MarkdownInstallProgress) => void) {
-  onProgress?.({
+  updateInstallProgress({
     status: "checking",
     message: "Checking Python runtime",
     current: 1,
     total: 4
-  });
+  }, onProgress);
   const candidates = process.platform === "win32" ? ["py", "python"] : ["python3", "python"];
   for (const candidate of candidates) {
     try {
@@ -129,6 +140,12 @@ export async function getMarkdownEngineAvailability(): Promise<MarkdownEngineAva
         env: { ...process.env, PATH: defaultPathEnv() },
         timeout: 15000
       });
+      currentInstallProgress = {
+        status: "ready",
+        message: "Docling installed",
+        current: 4,
+        total: 4
+      };
       engines.push({
         id: "docling-managed",
         name: "Docling",
@@ -162,12 +179,12 @@ export async function installManagedDocling(onProgress?: (progress: MarkdownInst
 
   const doclingPath = doclingExecutablePath();
   if (await pathExists(doclingPath)) {
-    onProgress?.({
+    updateInstallProgress({
       status: "ready",
       message: "Docling is already installed",
       current: 4,
       total: 4
-    });
+    }, onProgress);
     return getMarkdownEngineAvailability();
   }
 
@@ -177,52 +194,71 @@ export async function installManagedDocling(onProgress?: (progress: MarkdownInst
       ? ["-3", "-m", "venv", doclingVenvDir()]
       : ["-m", "venv", doclingVenvDir()];
 
-    onProgress?.({
+    updateInstallProgress({
       status: "creating-env",
       message: "Creating Docling runtime",
       current: 2,
       total: 4
-    });
+    }, onProgress);
     await execFileAsync(pythonCommand, venvArgs, {
       env: { ...process.env, PATH: defaultPathEnv() },
       timeout: 5 * 60 * 1000,
       maxBuffer: 64 * 1024 * 1024
     });
 
-    onProgress?.({
+    updateInstallProgress({
       status: "installing",
       message: "Installing Docling packages",
       current: 3,
       total: 4
-    });
+    }, onProgress);
     await execFileAsync(pythonExecutablePath(), ["-m", "pip", "install", "--upgrade", "pip", "docling"], {
       env: { ...process.env, PATH: defaultPathEnv() },
       timeout: 20 * 60 * 1000,
       maxBuffer: 128 * 1024 * 1024
     });
 
-    onProgress?.({
+    updateInstallProgress({
       status: "ready",
       message: "Docling installed",
       current: 4,
       total: 4
-    });
+    }, onProgress);
     return getMarkdownEngineAvailability();
   })();
 
   try {
     return await installPromise;
   } catch (error) {
-    onProgress?.({
+    updateInstallProgress({
       status: "error",
       message: error instanceof Error ? error.message : "Docling installation failed.",
       current: 0,
       total: 4
-    });
+    }, onProgress);
     throw error;
   } finally {
     installPromise = null;
   }
+}
+
+async function readNewestMarkdownFile(directory: string) {
+  const entries = await readdir(directory, { recursive: true });
+  const markdownFiles: Array<{ path: string; mtimeMs: number }> = [];
+
+  for (const entry of entries) {
+    if (typeof entry !== "string" || !entry.endsWith(".md")) continue;
+    const path = join(directory, entry);
+    const fileStat = await stat(path);
+    if (fileStat.isFile()) {
+      markdownFiles.push({ path, mtimeMs: fileStat.mtimeMs });
+    }
+  }
+
+  markdownFiles.sort((left, right) => right.mtimeMs - left.mtimeMs);
+  const markdownPath = markdownFiles[0]?.path;
+  if (!markdownPath) return "";
+  return readFile(markdownPath, "utf8");
 }
 
 export async function convertPdfWithDocling(bytes: number[], settings: MarkdownExportSettings) {
@@ -236,19 +272,30 @@ export async function convertPdfWithDocling(bytes: number[], settings: MarkdownE
 
   try {
     await writeFile(inputPath, Buffer.from(bytes));
-    const args = [inputPath, "--format", "markdown"];
+    const outputDir = join(tempDir, "output");
+    const args = [
+      inputPath,
+      "--to",
+      "md",
+      "--output",
+      outputDir,
+      "--image-export-mode",
+      "placeholder",
+      "--table-mode",
+      "accurate"
+    ];
     if (!settings.useOcrFallback) {
       args.push("--no-ocr");
     }
 
-    const { stdout, stderr } = await execFileAsync(doclingPath, args, {
+    const { stderr } = await execFileAsync(doclingPath, args, {
       env: { ...process.env, PATH: defaultPathEnv() },
       cwd: app.getPath("temp"),
       timeout: 10 * 60 * 1000,
       maxBuffer: 128 * 1024 * 1024
     });
 
-    const markdown = stdout.trim();
+    const markdown = (await readNewestMarkdownFile(outputDir)).trim();
     if (!markdown) {
       throw new Error(stderr.trim() || "Docling produced empty Markdown.");
     }

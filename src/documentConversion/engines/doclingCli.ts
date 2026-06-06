@@ -9,7 +9,7 @@ export const doclingCliMarkdownEngine: MarkdownConversionEngine = {
     }
 
     input.onProgress?.({
-      message: "Converting with Docling",
+      message: "Converting document",
       current: 1,
       total: 2
     });
@@ -17,7 +17,7 @@ export const doclingCliMarkdownEngine: MarkdownConversionEngine = {
     const result = await window.pdfReader.markdown.convertWithDocling(Array.from(input.bytes), input.settings);
 
     input.onProgress?.({
-      message: "Docling conversion complete",
+      message: "Conversion complete",
       current: 2,
       total: 2
     });

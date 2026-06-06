@@ -211,6 +211,9 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
     if (!window.pdfReader?.markdown) return;
     setMarkdownSettings(await window.pdfReader.markdown.getSettings());
     setMarkdownEngines(await window.pdfReader.markdown.listEngines());
+    const progress = await window.pdfReader.markdown.installState();
+    setDoclingInstallProgress(progress);
+    setInstallingDocling(Boolean(progress && progress.status !== "ready" && progress.status !== "error"));
   };
 
   useEffect(() => {
