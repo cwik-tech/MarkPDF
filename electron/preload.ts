@@ -44,6 +44,11 @@ contextBridge.exposeInMainWorld("pdfReader", {
     installDocling: () => ipcRenderer.invoke("markdown:install-docling"),
     convertWithDocling: (bytes: number[], settings: unknown) => ipcRenderer.invoke("markdown:convert-docling", bytes, settings)
   },
+  onMarkdownInstallProgress: (callback: (progress: unknown) => void) => {
+    const listener = (_event: unknown, progress: unknown) => callback(progress);
+    ipcRenderer.on("markdown:install-progress", listener);
+    return () => ipcRenderer.removeListener("markdown:install-progress", listener);
+  },
   onFullScreenChange: (callback: (enabled: boolean) => void) => {
     const listener = (_event: unknown, enabled: boolean) => callback(enabled);
     ipcRenderer.on("window:full-screen-change", listener);

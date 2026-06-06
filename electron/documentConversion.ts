@@ -18,6 +18,13 @@ export interface MarkdownEngineAvailability {
   error?: string;
 }
 
+export interface MarkdownInstallProgress {
+  status: "checking" | "creating-env" | "installing" | "ready" | "error";
+  message: string;
+  current?: number;
+  total?: number;
+}
+
 export interface MarkdownExportSettings {
   defaultEngine: MarkdownEngineId;
   exportMode: MarkdownExportMode;
@@ -84,7 +91,13 @@ async function pathExists(path: string) {
   }
 }
 
-async function findPythonCommand() {
+async function findPythonCommand(onProgress?: (progress: MarkdownInstallProgress) => void) {
+  onProgress?.({
+    status: "checking",
+    message: "Checking Python runtime",
+    current: 1,
+    total: 4
+  });
   const candidates = process.platform === "win32" ? ["py", "python"] : ["python3", "python"];
   for (const candidate of candidates) {
     try {
@@ -142,30 +155,74 @@ export async function getMarkdownEngineAvailability(): Promise<MarkdownEngineAva
   return engines;
 }
 
-export async function installManagedDocling() {
+let installPromise: Promise<MarkdownEngineAvailability[]> | null = null;
+
+export async function installManagedDocling(onProgress?: (progress: MarkdownInstallProgress) => void) {
+  if (installPromise) return installPromise;
+
   const doclingPath = doclingExecutablePath();
   if (await pathExists(doclingPath)) {
+    onProgress?.({
+      status: "ready",
+      message: "Docling is already installed",
+      current: 4,
+      total: 4
+    });
     return getMarkdownEngineAvailability();
   }
 
-  const pythonCommand = await findPythonCommand();
-  const venvArgs = process.platform === "win32" && pythonCommand === "py"
-    ? ["-3", "-m", "venv", doclingVenvDir()]
-    : ["-m", "venv", doclingVenvDir()];
+  installPromise = (async () => {
+    const pythonCommand = await findPythonCommand(onProgress);
+    const venvArgs = process.platform === "win32" && pythonCommand === "py"
+      ? ["-3", "-m", "venv", doclingVenvDir()]
+      : ["-m", "venv", doclingVenvDir()];
 
-  await execFileAsync(pythonCommand, venvArgs, {
-    env: { ...process.env, PATH: defaultPathEnv() },
-    timeout: 5 * 60 * 1000,
-    maxBuffer: 64 * 1024 * 1024
-  });
+    onProgress?.({
+      status: "creating-env",
+      message: "Creating Docling runtime",
+      current: 2,
+      total: 4
+    });
+    await execFileAsync(pythonCommand, venvArgs, {
+      env: { ...process.env, PATH: defaultPathEnv() },
+      timeout: 5 * 60 * 1000,
+      maxBuffer: 64 * 1024 * 1024
+    });
 
-  await execFileAsync(pythonExecutablePath(), ["-m", "pip", "install", "--upgrade", "pip", "docling"], {
-    env: { ...process.env, PATH: defaultPathEnv() },
-    timeout: 20 * 60 * 1000,
-    maxBuffer: 128 * 1024 * 1024
-  });
+    onProgress?.({
+      status: "installing",
+      message: "Installing Docling packages",
+      current: 3,
+      total: 4
+    });
+    await execFileAsync(pythonExecutablePath(), ["-m", "pip", "install", "--upgrade", "pip", "docling"], {
+      env: { ...process.env, PATH: defaultPathEnv() },
+      timeout: 20 * 60 * 1000,
+      maxBuffer: 128 * 1024 * 1024
+    });
 
-  return getMarkdownEngineAvailability();
+    onProgress?.({
+      status: "ready",
+      message: "Docling installed",
+      current: 4,
+      total: 4
+    });
+    return getMarkdownEngineAvailability();
+  })();
+
+  try {
+    return await installPromise;
+  } catch (error) {
+    onProgress?.({
+      status: "error",
+      message: error instanceof Error ? error.message : "Docling installation failed.",
+      current: 0,
+      total: 4
+    });
+    throw error;
+  } finally {
+    installPromise = null;
+  }
 }
 
 export async function convertPdfWithDocling(bytes: number[], settings: MarkdownExportSettings) {

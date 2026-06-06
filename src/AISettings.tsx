@@ -20,6 +20,7 @@ import type {
   LocalAgentInfo,
   MarkdownEngineAvailability,
   MarkdownExportSettings,
+  MarkdownInstallProgress,
   SemanticDatabaseInfo,
   SemanticSearchSettings
 } from "./global";
@@ -155,6 +156,7 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
   const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
   const [busySemanticModelId, setBusySemanticModelId] = useState<string | null>(null);
   const [installingDocling, setInstallingDocling] = useState(false);
+  const [doclingInstallProgress, setDoclingInstallProgress] = useState<MarkdownInstallProgress | null>(null);
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
 
   const enabledModels = useMemo(
@@ -216,6 +218,14 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
     void loadAgents();
     void loadSemanticSettings();
     void loadMarkdownSettings();
+  }, []);
+
+  useEffect(() => {
+    if (!window.pdfReader?.onMarkdownInstallProgress) return undefined;
+    return window.pdfReader.onMarkdownInstallProgress((progress) => {
+      setDoclingInstallProgress(progress);
+      setInstallingDocling(progress.status !== "ready" && progress.status !== "error");
+    });
   }, []);
 
   useEffect(() => {
@@ -335,9 +345,12 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
     try {
       const engines = await window.pdfReader.markdown.installDocling();
       setMarkdownEngines(engines);
+      setDoclingInstallProgress({ status: "ready", message: "Docling installed.", current: 4, total: 4 });
       showToast("Docling installed.");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Docling installation failed.");
+      const message = error instanceof Error ? error.message : "Docling installation failed.";
+      setDoclingInstallProgress({ status: "error", message, current: 0, total: 4 });
+      showToast(message);
     } finally {
       setInstallingDocling(false);
     }
@@ -559,6 +572,7 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
               settings={markdownSettings}
               engines={markdownEngines}
               installingDocling={installingDocling}
+              installProgress={doclingInstallProgress}
               onInstallDocling={() => void installDocling()}
               onRefresh={() => void loadMarkdownSettings()}
               onChange={(patch) => void saveMarkdownSettings(patch)}
@@ -574,6 +588,7 @@ function MarkdownSettingsPage({
   settings,
   engines,
   installingDocling,
+  installProgress,
   onInstallDocling,
   onRefresh,
   onChange
@@ -581,6 +596,7 @@ function MarkdownSettingsPage({
   settings: MarkdownExportSettings;
   engines: MarkdownEngineAvailability[];
   installingDocling: boolean;
+  installProgress: MarkdownInstallProgress | null;
   onInstallDocling: () => void;
   onRefresh: () => void;
   onChange: (patch: Partial<MarkdownExportSettings>) => void;
@@ -624,6 +640,23 @@ function MarkdownSettingsPage({
               : "not installed"}
           </span>
         </div>
+        {installProgress && (
+          <div className={`markdown-install-progress ${installProgress.status}`}>
+            <div>
+              <span>{installProgress.message}</span>
+              {installProgress.total && (
+                <small>
+                  {installProgress.current ?? 0} / {installProgress.total}
+                </small>
+              )}
+            </div>
+            {installProgress.total && (
+              <div className="operation-progress-bar">
+                <span style={{ width: `${Math.round(((installProgress.current ?? 0) / installProgress.total) * 100)}%` }} />
+              </div>
+            )}
+          </div>
+        )}
         {!doclingEngine?.available && (
           <div className="settings-button-row">
             <button className="primary-button" disabled={installingDocling} onClick={onInstallDocling}>

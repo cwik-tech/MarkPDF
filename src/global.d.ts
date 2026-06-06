@@ -69,6 +69,13 @@ export interface MarkdownEngineAvailability {
   error?: string;
 }
 
+export interface MarkdownInstallProgress {
+  status: "checking" | "creating-env" | "installing" | "ready" | "error";
+  message: string;
+  current?: number;
+  total?: number;
+}
+
 export interface MarkdownExportSettings {
   defaultEngine: MarkdownEngineId;
   exportMode: MarkdownExportMode;
@@ -124,6 +131,7 @@ declare global {
         installDocling: () => Promise<MarkdownEngineAvailability[]>;
         convertWithDocling: (bytes: number[], settings: MarkdownExportSettings) => Promise<{ markdown: string; engineId: MarkdownEngineId; warnings: string[] }>;
       };
+      onMarkdownInstallProgress: (callback: (progress: MarkdownInstallProgress) => void) => () => void;
       onFullScreenChange: (callback: (enabled: boolean) => void) => () => void;
       onWindowRequestClose: (callback: () => void) => () => void;
       onOpenFile: (callback: (filePath: string) => void) => () => void;

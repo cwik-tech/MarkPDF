@@ -438,7 +438,7 @@ export default function App() {
 
   const scheduleSearchClose = () => {
     clearSearchCloseTimer();
-    if (searchText || activeTab?.searchQuery || searchPinnedRef.current) return;
+    if (searchText || searchPinnedRef.current) return;
     searchCloseTimerRef.current = window.setTimeout(() => {
       searchInputRef.current?.blur();
       setSearchExpanded(false);
@@ -853,6 +853,53 @@ export default function App() {
       }
     });
   }, [applySemanticSettings]);
+
+  useEffect(() => {
+    if (!window.pdfReader?.markdown) return;
+    let cancelled = false;
+
+    void window.pdfReader.markdown.listEngines().then(async (engines) => {
+      if (cancelled) return;
+      const doclingEngine = engines.find((engine) => engine.id === "docling-managed");
+      if (doclingEngine?.available) return;
+
+      const progressStartedAt = Date.now();
+      try {
+        await showOperationProgress({
+          title: "Preparing Markdown Export",
+          message: "Installing Docling",
+          current: 0,
+          total: 4
+        });
+        const cleanup = window.pdfReader?.onMarkdownInstallProgress?.((progress) => {
+          void showOperationProgress({
+            title: "Preparing Markdown Export",
+            message: progress.message,
+            current: progress.current,
+            total: progress.total
+          });
+        });
+        try {
+          await window.pdfReader?.markdown.installDocling();
+        } finally {
+          cleanup?.();
+        }
+      } catch (error) {
+        await showOperationProgress({
+          title: "Preparing Markdown Export",
+          message: error instanceof Error ? error.message : "Docling installation failed.",
+          current: 0,
+          total: 4
+        });
+      } finally {
+        await hideOperationProgress(progressStartedAt);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hideOperationProgress, showOperationProgress]);
 
   useEffect(() => {
     if (!window.pdfReader?.semantic || !semanticSettings.enabled) return;
@@ -1947,7 +1994,7 @@ export default function App() {
         </div>
         <div className="toolbar-spacer" />
         <div
-          className={`search-box ${searchExpanded || searchText || activeTab?.searchQuery ? "active" : ""}`}
+          className={`search-box ${searchExpanded || searchText ? "active" : ""}`}
           title="Find text"
           onMouseEnter={() => {
             clearSearchCloseTimer();

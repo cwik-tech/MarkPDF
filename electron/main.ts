@@ -28,6 +28,7 @@ import {
   defaultMarkdownExportSettings,
   getMarkdownEngineAvailability,
   installManagedDocling,
+  type MarkdownInstallProgress,
   type MarkdownExportSettings
 } from "./documentConversion.js";
 
@@ -357,7 +358,11 @@ ipcMain.handle("markdown:save-settings", async (_event, settings: Partial<Markdo
 
 ipcMain.handle("markdown:list-engines", async () => getMarkdownEngineAvailability());
 
-ipcMain.handle("markdown:install-docling", async () => installManagedDocling());
+ipcMain.handle("markdown:install-docling", async (event) =>
+  installManagedDocling((progress: MarkdownInstallProgress) => {
+    event.sender.send("markdown:install-progress", progress);
+  })
+);
 
 ipcMain.handle("markdown:convert-docling", async (_event, bytes: number[], settings: MarkdownExportSettings) =>
   convertPdfWithDocling(bytes, settings)
