@@ -39,6 +39,13 @@ export interface SearchMatch {
   source: "pdf" | "ocr";
 }
 
+export interface MarkdownSearchMatch {
+  id: string;
+  index: number;
+  length: number;
+  snippet: string;
+}
+
 export type SemanticIndexStatus = "idle" | "checking" | "downloading" | "indexing" | "ready" | "error";
 
 export interface SemanticIndexProgress {
@@ -109,6 +116,7 @@ export interface TabHistoryState {
 }
 
 export interface PdfTab {
+  kind: "pdf";
   id: string;
   name: string;
   path?: string;
@@ -140,3 +148,17 @@ export interface PdfTab {
   redoStack: TabHistoryState[];
   dirty: boolean;
 }
+
+export interface MarkdownTab {
+  kind: "markdown";
+  id: string;
+  name: string;
+  path?: string;
+  markdown: string;
+  searchQuery: string;
+  searchMatches: MarkdownSearchMatch[];
+  activeSearchMatch: number;
+  dirty: boolean;
+}
+
+export type DocumentTab = PdfTab | MarkdownTab;

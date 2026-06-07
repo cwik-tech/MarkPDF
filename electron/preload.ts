@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("pdfReader", {
   confirmUnsaved: (documentName?: string) => ipcRenderer.invoke("dialog:confirm-unsaved", documentName),
   readPdf: (filePath: string) => ipcRenderer.invoke("file:read-pdf", filePath),
   readImage: (filePath: string) => ipcRenderer.invoke("file:read-image", filePath),
+  readMarkdown: (filePath: string) => ipcRenderer.invoke("file:read-markdown", filePath),
   writePdf: (filePath: string, bytes: number[]) => ipcRenderer.invoke("file:write-pdf", filePath, bytes),
   writeMarkdown: (filePath: string, markdown: string) => ipcRenderer.invoke("file:write-markdown", filePath, markdown),
   openFileInNewWindow: (filePath: string) => ipcRenderer.invoke("window:new-for-file", filePath),

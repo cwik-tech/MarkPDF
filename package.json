@@ -70,6 +70,15 @@
         },
         {
           "ext": [
+            "md",
+            "markdown"
+          ],
+          "name": "Markdown Document",
+          "role": "Viewer",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
             "png",
             "jpg",
             "jpeg",
