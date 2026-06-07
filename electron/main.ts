@@ -34,7 +34,18 @@ import {
   type MarkdownExportSettings
 } from "./documentConversion.js";
 
-let pendingOpenPaths: string[] = [];
+type OpenFileBootstrapState = {
+  pendingOpenPaths: string[];
+  onOpenFile?: (filePath: string) => void;
+};
+
+type SingleInstanceData = {
+  filePaths?: string[];
+};
+
+const openFileBootstrapState = (globalThis as typeof globalThis & { markPdfOpenFileBootstrap?: OpenFileBootstrapState })
+  .markPdfOpenFileBootstrap;
+let pendingOpenPaths: string[] = [...(openFileBootstrapState?.pendingOpenPaths ?? [])];
 let openPathFlushTimer: NodeJS.Timeout | null = null;
 const rendererReadyWindows = new WeakSet<BrowserWindow>();
 const pendingWindowOpenPaths = new WeakMap<BrowserWindow, string[]>();
@@ -58,11 +69,7 @@ const imageMimeTypes = new Map([
 ]);
 const supportedFileExtensions = new Set([".pdf", ".md", ".markdown", ...imageMimeTypes.keys()]);
 
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
-
-if (!gotSingleInstanceLock) {
-  app.quit();
-}
+let gotSingleInstanceLock = false;
 
 function addRecentFile(filePath: string) {
   const recentFiles = store.get("recentFiles", []);
@@ -79,6 +86,10 @@ function filePathArgsFromArgv(argv: string[]) {
 
 function uniqueFilePaths(filePaths: string[]) {
   return [...new Set(filePaths)];
+}
+
+function rememberPendingOpenPath(filePath: string) {
+  pendingOpenPaths = [...pendingOpenPaths.filter((item) => item !== filePath), filePath];
 }
 
 function removeRecentFile(filePath: string) {
@@ -98,7 +109,7 @@ function setDockIcon() {
 }
 
 function queueOpenPath(filePath: string) {
-  pendingOpenPaths = [...pendingOpenPaths.filter((item) => item !== filePath), filePath];
+  rememberPendingOpenPath(filePath);
 
   if (openPathFlushTimer) {
     clearTimeout(openPathFlushTimer);
@@ -110,6 +121,14 @@ function queueOpenPath(filePath: string) {
     openPathFlushTimer = null;
     void openPathsInApp(paths);
   }, 150);
+}
+
+function handleOpenFile(filePath: string) {
+  if (!gotSingleInstanceLock || !app.isReady()) {
+    rememberPendingOpenPath(filePath);
+    return;
+  }
+  queueOpenPath(filePath);
 }
 
 function sendOpenPathsToWindow(window: BrowserWindow, filePaths: string[]) {
@@ -209,18 +228,26 @@ const createWindow = async (filePaths: string[] = []) => {
   return window;
 };
 
-app.on("open-file", (event, filePath) => {
-  event.preventDefault();
-  if (!gotSingleInstanceLock) return;
-  if (!app.isReady()) {
-    pendingOpenPaths = [...pendingOpenPaths.filter((item) => item !== filePath), filePath];
-    return;
-  }
-  queueOpenPath(filePath);
-});
+if (openFileBootstrapState) {
+  pendingOpenPaths = uniqueFilePaths([...pendingOpenPaths, ...openFileBootstrapState.pendingOpenPaths]);
+  openFileBootstrapState.pendingOpenPaths = [];
+  openFileBootstrapState.onOpenFile = handleOpenFile;
+} else {
+  app.on("open-file", (event, filePath) => {
+    event.preventDefault();
+    handleOpenFile(filePath);
+  });
+}
 
-app.on("second-instance", (_event, argv) => {
-  const filePaths = filePathArgsFromArgv(argv);
+gotSingleInstanceLock = app.requestSingleInstanceLock({ filePaths: pendingOpenPaths } satisfies SingleInstanceData);
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+app.on("second-instance", (_event, argv, ...args: unknown[]) => {
+  const additionalData = (args.at(1) ?? {}) as SingleInstanceData;
+  const filePaths = uniqueFilePaths([...(additionalData.filePaths ?? []), ...filePathArgsFromArgv(argv)]);
   if (filePaths.length > 0) {
     void openPathsInApp(filePaths);
     return;

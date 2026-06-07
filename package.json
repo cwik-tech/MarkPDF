@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "A standalone PDF reader with tabs, viewing controls, lightweight editing, comments, form filling, and visual signing.",
-  "main": "dist-electron/main.js",
+  "main": "dist-electron/bootstrap.js",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && npm run electron:dev\"",
     "electron:dev": "tsc -p tsconfig.electron.json && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
