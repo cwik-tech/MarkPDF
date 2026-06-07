@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-07 12:31
+
+- Changed the Electron bundle identifier to `tech.cwik.markpdf` before public macOS distribution.
+- Added architecture-specific macOS DMG/ZIP release targets, GitHub Release publishing metadata, and stable `MarkPDF-mac-arm64.dmg` and `MarkPDF-mac-x64.dmg` asset names.
+- Added a tag-triggered GitHub Actions workflow that builds native Apple Silicon and Intel release assets and requires macOS signing/notarization secrets before publishing.
+- Documented the GitHub Releases download URLs and release publishing steps in the README.
+
 ## 2026-06-07 01:00
 
 - Added Apache-2.0 repository licensing, NOTICE attribution, trademark policy, third-party notices, and contribution terms for open-source release preparation.
@@ -105,4 +112,3 @@ I don't have visibility into what the actual changes were in `README.md` from th
 The most recent commit (8ba327d) at 11:21:51 on 2026-06-07 matches your edit. Here's the changelog paragraph:
 
 Updated the README with AI Providers and Semantic Search settings documentation, adding visual screenshots to illustrate the configuration options for LLM integration and semantic search features. The changes reorganized content in `README.md` to better highlight these features alongside the newly added screenshot assets in the `docs/screenshots/` directory.
-

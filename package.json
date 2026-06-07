@@ -5,6 +5,11 @@
   "type": "module",
   "description": "A standalone PDF reader with tabs, viewing controls, lightweight editing, comments, form filling, and visual signing.",
   "license": "Apache-2.0",
+  "homepage": "https://www.markpdf.org",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cwik-tech/MarkPDF.git"
+  },
   "main": "dist-electron/bootstrap.js",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && npm run electron:dev\"",
@@ -14,7 +19,12 @@
     "start": "electron .",
     "typecheck": "tsc --noEmit",
     "package": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:mac:arm64": "npm run build && electron-builder --mac --arm64",
+    "dist:mac:x64": "npm run build && electron-builder --mac --x64",
+    "release:mac:arm64": "npm run build && electron-builder --mac --arm64 --publish always",
+    "release:mac:x64": "npm run build && electron-builder --mac --x64 --publish always"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
@@ -45,7 +55,7 @@
     "wait-on": "^9.0.3"
   },
   "build": {
-    "appId": "dev.openpdf.reader",
+    "appId": "tech.cwik.markpdf",
     "productName": "MarkPDF",
     "files": [
       "dist/**/*",
@@ -58,8 +68,13 @@
     },
     "icon": "build/icon.png",
     "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
+      "notarize": true,
       "extendInfo": {
         "CFBundleDocumentTypes": [
           {
@@ -109,8 +124,29 @@
         ]
       }
     },
+    "dmg": {
+      "artifactName": "MarkPDF-mac-${arch}.${ext}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
     "win": {
       "icon": "build/icon.ico"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "cwik-tech",
+      "repo": "MarkPDF",
+      "releaseType": "release"
     }
   }
 }

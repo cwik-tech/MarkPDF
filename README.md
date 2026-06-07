@@ -106,7 +106,33 @@ npm run build
 ```bash
 npm run package   # unpacked app directory
 npm run dist      # distributable installer
+npm run dist:mac  # macOS DMG and ZIP for the current architecture
 ```
+
+## Release
+
+The public download channel is GitHub Releases:
+
+- Latest release page: https://github.com/cwik-tech/MarkPDF/releases/latest
+- Direct latest Apple Silicon download: https://github.com/cwik-tech/MarkPDF/releases/latest/download/MarkPDF-mac-arm64.dmg
+- Direct latest Intel download: https://github.com/cwik-tech/MarkPDF/releases/latest/download/MarkPDF-mac-x64.dmg
+
+Before publishing macOS releases, add these GitHub Actions secrets:
+
+- `MAC_CSC_LINK`: base64-encoded Apple Developer ID Application `.p12` certificate.
+- `MAC_CSC_KEY_PASSWORD`: certificate password.
+- `APPLE_ID`: Apple ID used for notarization.
+- `APPLE_APP_SPECIFIC_PASSWORD`: app-specific Apple ID password.
+- `APPLE_TEAM_ID`: Apple Developer Team ID.
+
+To publish a release, update `package.json` version, commit the change, tag the same version with a `v` prefix, and push the tag:
+
+```bash
+git tag v0.1.0
+git push origin main --tags
+```
+
+The release workflow builds separate Apple Silicon and Intel macOS DMGs and ZIPs on native runners, signs and notarizes them, then uploads them to the GitHub Release for the pushed tag.
 
 ## License and Rights
 
