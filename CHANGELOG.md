@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Added a read-only Markdown settings summary showing the default conversion engine and fallback engine.
 - Hid internal Markdown converter controls, normalized the managed converter as the hidden default, and made Save as Markdown fall back to basic extraction when converter setup or conversion fails.
 - Fixed Docling Markdown export to read Docling's generated Markdown file, avoid silent built-in fallback, and hide engine-specific save progress text.
 - Added Docling auto-install on app startup, visible Docling install progress in Markdown settings, and restored idle search collapse after previous searches.

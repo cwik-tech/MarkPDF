@@ -1729,6 +1729,21 @@ select {
   font-size: 12px;
 }
 
+.markdown-engine-summary {
+  flex-wrap: wrap;
+}
+
+.markdown-engine-summary span {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+}
+
+.markdown-engine-summary strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
 .settings-section {
   display: grid;
   gap: 14px;

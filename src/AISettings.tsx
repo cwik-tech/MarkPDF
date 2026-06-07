@@ -75,6 +75,10 @@ const defaultMarkdownSettings: MarkdownExportSettings = {
   aiCleanup: false
 };
 
+function markdownEngineLabel(engine: MarkdownExportSettings["defaultEngine"]) {
+  return engine === "docling-managed" ? "Docling" : "Basic text extraction";
+}
+
 function normalizeSemanticSettings(settings: SemanticSearchSettings): SemanticSearchSettings {
   const curatedModelIds = new Set(curatedEmbeddingModels.map((model) => model.id));
   const activeModelId =
@@ -557,6 +561,25 @@ function MarkdownSettingsPage({
 }) {
   return (
     <>
+      <section className="settings-section">
+        <div className="settings-section-heading">
+          <div>
+            <h3>Conversion Engine</h3>
+            <p>View the Markdown conversion path used by default.</p>
+          </div>
+        </div>
+        <div className="settings-summary markdown-engine-summary">
+          <span>
+            <strong>Default engine</strong>
+            {markdownEngineLabel(settings.defaultEngine)}
+          </span>
+          <span>
+            <strong>Fallback engine</strong>
+            Basic text extraction
+          </span>
+        </div>
+      </section>
+
       <section className="settings-section">
         <div className="settings-section-heading">
           <div>
