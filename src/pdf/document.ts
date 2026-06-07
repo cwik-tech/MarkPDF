@@ -20,9 +20,11 @@ import type { FormFieldState, ImagePdfSource, OcrPageText, OutlineItem, OverlayI
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const pdfAssetBase = `${import.meta.env.BASE_URL}pdfjs/`;
-const overlayMetadataPrefix = "open-pdf-reader-overlays:";
-const standardAnnotationNamePrefix = "open-pdf-reader:";
-const standardAnnotationAuthor = "Open PDF Reader";
+const overlayMetadataPrefix = "markpdf-overlays:";
+const legacyOverlayMetadataPrefix = "open-pdf-reader-overlays:";
+const standardAnnotationNamePrefix = "markpdf:";
+const legacyStandardAnnotationNamePrefix = "open-pdf-reader:";
+const standardAnnotationAuthor = "MarkPDF";
 
 export async function loadPdfDocument(bytes: Uint8Array, password?: string) {
   return pdfjsLib.getDocument({
@@ -169,8 +171,8 @@ export async function extractEditableOverlays(bytes: Uint8Array): Promise<Overla
     const keywords = pdfDoc.getKeywords() ?? "";
     const encoded = keywords
       .split(/,\s*/)
-      .find((keyword) => keyword.startsWith(overlayMetadataPrefix))
-      ?.slice(overlayMetadataPrefix.length);
+      .map((keyword) => readEditableOverlayKeyword(keyword))
+      .find((encoded) => encoded !== null);
 
     if (!encoded) return [];
     const parsed = JSON.parse(decodeBase64Json(encoded)) as OverlayItem[];
@@ -232,11 +234,11 @@ export async function exportPdfBytes(
   }
 
   if (writeStandardAnnotations || bakeOverlays) {
-    removeOpenPdfReaderAnnotations(pdfDoc);
+    removeMarkPdfAnnotations(pdfDoc);
   }
 
   if (writeStandardAnnotations) {
-    writeOpenPdfReaderAnnotations(pdfDoc, overlays);
+    writeMarkPdfAnnotations(pdfDoc, overlays);
   }
 
   for (const overlay of overlays.filter((overlay) => bakeOverlays || overlay.kind === "text")) {
@@ -421,7 +423,7 @@ function getKeywordsWithoutEditableOverlayMetadata(pdfDoc: PDFDocument) {
     .split(/,\s*/)
     .map((keyword) => keyword.trim())
     .filter(Boolean)
-    .filter((keyword) => !keyword.startsWith(overlayMetadataPrefix));
+    .filter((keyword) => readEditableOverlayKeyword(keyword) === null);
 }
 
 export async function insertBlankPageAfter(sourceBytes: Uint8Array, pageNumber: number) {
@@ -473,7 +475,7 @@ export async function movePdfPageTo(sourceBytes: Uint8Array, fromPage: number, t
   return pdfDoc.save();
 }
 
-function writeOpenPdfReaderAnnotations(pdfDoc: PDFDocument, overlays: OverlayItem[]) {
+function writeMarkPdfAnnotations(pdfDoc: PDFDocument, overlays: OverlayItem[]) {
   const pages = pdfDoc.getPages();
 
   for (const overlay of overlays.filter((item) => item.kind === "comment" || item.kind === "highlight")) {
@@ -491,14 +493,14 @@ function writeOpenPdfReaderAnnotations(pdfDoc: PDFDocument, overlays: OverlayIte
   }
 }
 
-function removeOpenPdfReaderAnnotations(pdfDoc: PDFDocument) {
+function removeMarkPdfAnnotations(pdfDoc: PDFDocument) {
   for (const page of pdfDoc.getPages()) {
     const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
     if (!annots) continue;
 
     for (let index = annots.size() - 1; index >= 0; index -= 1) {
       const annotation = annots.lookupMaybe(index, PDFDict);
-      if (annotation && isOpenPdfReaderAnnotation(annotation)) {
+      if (annotation && isMarkPdfAnnotation(annotation)) {
         const ref = annots.get(index);
         annots.remove(index);
         if (ref instanceof PDFRef) {
@@ -588,9 +590,19 @@ function overlayToPdfRect(pageHeight: number, overlay: OverlayItem): PdfRect {
   };
 }
 
-function isOpenPdfReaderAnnotation(annotation: PDFDict) {
+function isMarkPdfAnnotation(annotation: PDFDict) {
   const name = getPdfText(annotation, "NM");
-  return name.startsWith(standardAnnotationNamePrefix);
+  return name.startsWith(standardAnnotationNamePrefix) || name.startsWith(legacyStandardAnnotationNamePrefix);
+}
+
+function readEditableOverlayKeyword(keyword: string) {
+  if (keyword.startsWith(overlayMetadataPrefix)) {
+    return keyword.slice(overlayMetadataPrefix.length);
+  }
+  if (keyword.startsWith(legacyOverlayMetadataPrefix)) {
+    return keyword.slice(legacyOverlayMetadataPrefix.length);
+  }
+  return null;
 }
 
 function getPdfText(dict: PDFDict, key: string) {

@@ -87,7 +87,10 @@ import {
 
 const defaultTextColor = "#1f2937";
 const supportedImageExtensions = new Set(["gif", "jpeg", "jpg", "png", "webp"]);
-const signatureStorageKey = "open-pdf-reader-signatures";
+const signatureStorageKey = "markpdf-signatures";
+const legacySignatureStorageKey = "open-pdf-reader-signatures";
+const themeStorageKey = "markpdf-theme";
+const legacyThemeStorageKey = "open-pdf-reader-theme";
 
 type SignatureAssetKind = "typed-signature" | "typed-initials" | "date" | "drawn" | "image";
 type ToolbarMenu = "fit" | "view" | "recent" | "save";
@@ -235,7 +238,7 @@ function delay(milliseconds: number) {
 
 function loadSavedSignatureAssets() {
   try {
-    const stored = localStorage.getItem(signatureStorageKey);
+    const stored = localStorage.getItem(signatureStorageKey) ?? localStorage.getItem(legacySignatureStorageKey);
     if (!stored) return [];
     const parsed = JSON.parse(stored);
     if (!Array.isArray(parsed)) return [];
@@ -353,7 +356,7 @@ function createTypedSignatureAssets(name: string, fontFamily: string) {
 }
 
 function getInitialTheme(): ThemeMode {
-  const stored = localStorage.getItem("open-pdf-reader-theme");
+  const stored = localStorage.getItem(themeStorageKey) ?? localStorage.getItem(legacyThemeStorageKey);
   if (stored === "light" || stored === "dark") return stored;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
@@ -444,7 +447,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("open-pdf-reader-theme", theme);
+    localStorage.setItem(themeStorageKey, theme);
   }, [theme]);
 
   useEffect(() => {
@@ -2871,7 +2874,7 @@ function EmptyState({
         <FileText size={42} />
         <ImageIcon size={34} />
       </div>
-      <h1>Open PDF Reader</h1>
+      <h1>MarkPDF</h1>
       <p>Open or drop PDFs, or import images to create a PDF.</p>
       <button className="primary-button" onClick={onOpen}>
         <FilePlus2 size={18} />
@@ -4280,7 +4283,7 @@ function SignatureSavePrompt({
           </button>
         </div>
         <p>
-          {name} contains placed signatures. Keep them editable in Open PDF Reader, or save a flattened copy where
+          {name} contains placed signatures. Keep them editable in MarkPDF, or save a flattened copy where
           they cannot be moved.
         </p>
         <div className="modal-actions">

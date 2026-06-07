@@ -1,4 +1,4 @@
-# PDF Reader Desktop App PRD
+# MarkPDF Desktop App PRD
 
 ## Goal
 

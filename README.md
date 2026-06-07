@@ -1,4 +1,4 @@
-# Open PDF Reader
+# MarkPDF
 
 Standalone Electron PDF reader built with TypeScript, React, PDF.js, and pdf-lib.
 

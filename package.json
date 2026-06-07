@@ -1,5 +1,5 @@
 {
-  "name": "open-pdf-reader",
+  "name": "markpdf",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -44,8 +44,8 @@
     "wait-on": "^9.0.3"
   },
   "build": {
-    "appId": "dev.openpdf.reader",
-    "productName": "Open PDF Reader",
+    "appId": "org.markpdf.app",
+    "productName": "MarkPDF",
     "files": [
       "dist/**/*",
       "dist-electron/**/*",

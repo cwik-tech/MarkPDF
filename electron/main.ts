@@ -160,7 +160,7 @@ const createWindow = async (filePaths: string[] = []) => {
     height: 900,
     minWidth: 980,
     minHeight: 680,
-    title: "Open PDF Reader",
+    title: "MarkPDF",
     icon: appIconPath,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1f2633" : "#f5f6f8",

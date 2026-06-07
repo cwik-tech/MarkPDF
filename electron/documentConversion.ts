@@ -295,7 +295,7 @@ export async function convertPdfWithDocling(bytes: number[], settings: MarkdownE
     throw new Error("Docling is not installed in the app-managed engine directory.");
   }
 
-  const tempDir = await mkdtemp(join(tmpdir(), "open-pdf-reader-docling-"));
+  const tempDir = await mkdtemp(join(tmpdir(), "markpdf-docling-"));
   const inputPath = join(tempDir, "input.pdf");
 
   try {

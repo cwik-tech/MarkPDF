@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Renamed the app identity, package metadata, window title, and user-facing branding to MarkPDF while preserving legacy saved settings and annotation metadata.
 - Fixed double-click Markdown/PDF opening by queueing Finder file-open events until the renderer file listeners are ready.
 - Improved Docling Markdown page placement by matching normalized token windows instead of one exact PDF text snippet.
 - Fixed Docling Markdown page markers so unmatched pages are appended instead of being silently dropped.
