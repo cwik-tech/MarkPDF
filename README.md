@@ -1,30 +1,40 @@
 # MarkPDF
 
-An open-source, standalone PDF and Markdown reader that puts the features usually locked behind paywalls — editing PDFs, annotating, filling forms, and signing — into a free, local-first desktop app.
+An open-source, minimalistic, standalone PDF and Markdown reader that puts the features usually locked behind paywalls — editing PDFs, annotating, filling forms, and signing — into a free, local-first desktop app.
 
 ![MarkPDF reading a PDF](docs/screenshots/app-window.png)
 
-## What It Is
+## Motivation
 
-Reading PDFs is free everywhere. Editing them, signing them, filling forms, and searching across them is where most apps put up a paywall or a subscription. MarkPDF brings those capabilities together in a single open-source desktop app that runs entirely on your machine — there is no server, no account, and your documents never leave your computer.
+Reading PDFs is free everywhere. Editing them, signing them, and OCR is where most apps put up a paywall or a subscription. MarkPDF brings those capabilities together in a single open-source desktop app that runs entirely on your machine — there is no server, no account, and your documents never leave your computer.
 
-It opens both PDF and Markdown, handles multiple documents at once through a tabbed interface, and remembers per-document state (page, zoom, view mode, edits, and unsaved changes). On top of the everyday viewer, it adds genuinely useful extras like on-device OCR and AI-powered semantic search, so you can find information by meaning rather than exact keywords — without sending anything to the cloud.
+ On top of the everyday viewer, it adds genuinely useful extras like on-device OCR and AI-powered semantic search (local!), so you can find information by meaning rather than exact keywords — without sending anything to the cloud.
 
 ## Features
 
+On top of typical pdf reader features (view, rotate, zoom etc.) the app contains the following capabilities:
+
+### Cleanup
+
+- The app is minimalistic by design and thus majority of junk present in your standard PDF reader is gone
+
+### AI 
+
+- Autodetection of all your CLI agents
+- Connect any LLM provider (remote or local)
+- Semantic search in your file (type keyward and press enter to see the results)
+
+![AI Providers settings](docs/screenshots/ai-providers-settings.png)
+
+![Semantic Search settings](docs/screenshots/semantic-search-settings.png)
+
+Typically behind paywall features
+- OCR conversion
+- Group of images to PDF conversion
+- Edit PDF (for now just page ordering)
+
 ### Viewing
-- Open local PDFs, including password-protected files.
-- Multiple PDFs open at once as tabs.
-- Drag and drop PDFs to open them in new tabs.
-- Recent files menu.
-- Single-page, two-page, and continuous-scrolling view modes.
-- Page navigation: previous/next, direct page-number input, and total page count.
-- Zoom in/out, actual size, fit page, fit width, fit height.
-- Rotate the page view.
-- Full-screen mode.
-- Thumbnail sidebar and bookmarks/outline sidebar.
 - Light and dark themes with a theme switcher; defaults to the OS theme on first launch and remembers your choice.
-- Keyboard shortcuts for navigation, zoom, find, save, undo/redo, and escape-to-select.
 
 ### Editing & Annotation
 - Add, move, resize, edit, and delete text overlays (with font-size control).
@@ -42,18 +52,8 @@ It opens both PDF and Markdown, handles multiple documents at once through a tab
 - Draw a signature with mouse/trackpad, type it as text, or upload a signature image.
 - Place, move, and resize visual signatures on the page.
 
-> Note: signatures are *visual* only — MarkPDF does not provide certificate-backed digital signatures, identity verification, or legal/compliance guarantees.
+> Note: signatures are *visual* only — MarkPDF does not provide certificate-backed digital signatures, identity verification, or legal/compliance guarantees yet.
 
-### Saving, Exporting & Printing
-- Save, save as a new file, and export a flattened PDF.
-- Print the current PDF with overlays, form values, and signatures included.
-- Unsaved-change prompts when closing a modified tab or quitting.
-
-### Additional Capabilities
-- Text search with match navigation.
-- OCR and semantic search support.
-- Markdown preview and document-to-Markdown conversion.
-- Local AI provider settings.
 
 ## Tech Stack
 
@@ -63,16 +63,30 @@ It opens both PDF and Markdown, handles multiple documents at once through a tab
 - **pdf-lib** for editing, annotations, forms, and export.
 - **Tesseract.js** for on-device OCR of scanned/image-only PDFs.
 - **Vite** for bundling, **electron-builder** for packaging.
-
-### Semantic Search (Local Vector Database)
-
-MarkPDF includes a fully on-device semantic search engine — no cloud, no API keys, no data leaving the machine.
-
 - **Embeddings:** generated locally with [Transformers.js](https://github.com/huggingface/transformers.js) running ONNX models in-process. Curated models include **BGE Small EN v1.5** (384-dim), **MiniLM L6 v2** (384-dim), and **BGE Base EN v1.5** (768-dim). Embeddings use mean pooling with L2 normalization.
 - **Vector store:** a local **SQLite** database (via `sql.js` / WebAssembly) persisted to the app's user-data directory. Document text is chunked, embedded, and stored as Float32 vector blobs alongside their source page, with deduplication by content hash so re-opening a document doesn't re-index it.
 - **Retrieval:** queries are embedded with the same model and ranked by **cosine similarity** against the stored chunk vectors, with a configurable score threshold (loose / balanced / strict) to tune precision vs. recall.
 - **Tunable chunking:** precise, balanced, and contextual presets control chunk size and overlap to trade granularity against context.
 - **Text extraction:** native PDF text where available, falling back to **Tesseract.js OCR** for scanned pages so even image-only PDFs become searchable.
+
+## Vision
+
+I am at the very early stage of what this app should be, but so far I see it as:
+
+1. Free, open-source alternative to paid alternatives
+3. PDF/Markdown viewer with advanced AI features for humans and AI agents.
+3. Minimalistic design
+4. Extensible with community plugins (like Obsidian)
+5. Not a "chat with pdf" app - you have your favorite chatbot for that (though possible via plugins in future - see below)
+
+## Roadmap & Ideas
+
+Looking for people who want to contribute to codebase and bring it to next level. Thus far, these are my ideas:
+
+1. Plugin interface - to enable community building easily on top of the core (just like in Obsidian)
+2. Signature interface - Bring Your Own Key (BYOK) for any signature provider to remove vendor lock-in 
+3. Expose as MCP/CLI for pdf-to-markdown and image-to-pdf conversions
+4. Discussion interface for AI agents - read your paper and discuss with multiple AI agents
 
 ## Development
 
