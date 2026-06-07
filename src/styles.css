@@ -1729,24 +1729,6 @@ select {
   font-size: 12px;
 }
 
-.markdown-install-progress {
-  display: grid;
-  gap: 8px;
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.markdown-install-progress > div:first-child {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.markdown-install-progress.error {
-  color: var(--danger);
-}
-
 .settings-section {
   display: grid;
   gap: 14px;
