@@ -59,37 +59,54 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
-      "fileAssociations": [
-        {
-          "ext": [
-            "pdf"
-          ],
-          "name": "PDF Document",
-          "role": "Editor",
-          "rank": "Alternate"
-        },
-        {
-          "ext": [
-            "md",
-            "markdown"
-          ],
-          "name": "Markdown Document",
-          "role": "Viewer",
-          "rank": "Alternate"
-        },
-        {
-          "ext": [
-            "png",
-            "jpg",
-            "jpeg",
-            "webp",
-            "gif"
-          ],
-          "name": "Image File",
-          "role": "Editor",
-          "rank": "Alternate"
-        }
-      ]
+      "extendInfo": {
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeExtensions": [
+              "pdf"
+            ],
+            "CFBundleTypeIconFile": "icon.icns",
+            "CFBundleTypeName": "PDF Document",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": [
+              "com.adobe.pdf"
+            ]
+          },
+          {
+            "CFBundleTypeExtensions": [
+              "md",
+              "markdown"
+            ],
+            "CFBundleTypeIconFile": "icon.icns",
+            "CFBundleTypeName": "Markdown Document",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": [
+              "net.daringfireball.markdown"
+            ]
+          },
+          {
+            "CFBundleTypeExtensions": [
+              "png",
+              "jpg",
+              "jpeg",
+              "webp",
+              "gif"
+            ],
+            "CFBundleTypeIconFile": "icon.icns",
+            "CFBundleTypeName": "Image File",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": [
+              "public.png",
+              "public.jpeg",
+              "org.webmproject.webp",
+              "com.compuserve.gif"
+            ]
+          }
+        ]
+      }
     },
     "win": {
       "icon": "build/icon.ico"
