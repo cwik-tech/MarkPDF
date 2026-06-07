@@ -38,6 +38,11 @@ function parseMarkdown(markdown: string): Block[] {
       continue;
     }
 
+    if (/^<a\s+id=["'][-\w]+["']\s*><\/a>$/.test(trimmed)) {
+      flushParagraph();
+      continue;
+    }
+
     const fenceMatch = trimmed.match(/^```([\w-]*)\s*$/);
     if (fenceMatch) {
       flushParagraph();
