@@ -121,7 +121,7 @@ Before publishing macOS releases, add these GitHub Actions secrets:
 
 - `MAC_CSC_LINK`: base64-encoded Apple Developer ID Application `.p12` certificate.
 - `MAC_CSC_KEY_PASSWORD`: certificate password.
-- `MAC_CSC_NAME`: Developer ID Application signing identity name.
+- `MAC_CSC_NAME`: Developer ID Application signing identity qualifier without the `Developer ID Application:` prefix.
 - `APPLE_ID`: Apple ID used for notarization.
 - `APPLE_APP_SPECIFIC_PASSWORD`: app-specific Apple ID password.
 - `APPLE_TEAM_ID`: Apple Developer Team ID.
