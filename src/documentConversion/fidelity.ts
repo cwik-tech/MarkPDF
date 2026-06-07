@@ -99,6 +99,11 @@ interface MarkdownTokenIndex {
   byValue: Map<string, number[]>;
 }
 
+interface MarkdownTableRange {
+  start: number;
+  end: number;
+}
+
 function normalizeMatchToken(token: string) {
   return token
     .normalize("NFKD")
@@ -194,6 +199,105 @@ function findPageInsertionPoint(markdownIndex: MarkdownTokenIndex, page: Markdow
   return -1;
 }
 
+function splitMarkdownTableRow(line: string) {
+  const trimmed = line.trim();
+  const cells: string[] = [];
+  let cell = "";
+
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const character = trimmed[index];
+    const nextCharacter = trimmed[index + 1];
+
+    if (character === "\\" && nextCharacter === "|") {
+      cell += "|";
+      index += 1;
+      continue;
+    }
+
+    if (character === "|") {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+
+    cell += character;
+  }
+
+  cells.push(cell.trim());
+
+  if (trimmed.startsWith("|")) cells.shift();
+  if (trimmed.endsWith("|")) cells.pop();
+  return cells;
+}
+
+function isMarkdownTableSeparatorLine(line: string) {
+  if (!line.includes("|")) return false;
+  const cells = splitMarkdownTableRow(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function markdownLines(markdown: string) {
+  const lines: Array<{ text: string; start: number; end: number }> = [];
+  let start = 0;
+
+  for (let index = 0; index < markdown.length; index += 1) {
+    if (markdown[index] !== "\n") continue;
+    lines.push({ text: markdown.slice(start, index), start, end: index });
+    start = index + 1;
+  }
+
+  lines.push({ text: markdown.slice(start), start, end: markdown.length });
+  return lines;
+}
+
+function findMarkdownTableRanges(markdown: string): MarkdownTableRange[] {
+  const lines = markdownLines(markdown);
+  const ranges: MarkdownTableRange[] = [];
+
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    if (!lines[index].text.includes("|") || !isMarkdownTableSeparatorLine(lines[index + 1].text)) {
+      continue;
+    }
+
+    let rowIndex = index + 2;
+    while (rowIndex < lines.length) {
+      const row = lines[rowIndex].text.trim();
+      if (!row || !row.includes("|") || isMarkdownTableSeparatorLine(row)) break;
+      rowIndex += 1;
+    }
+
+    ranges.push({ start: lines[index].start, end: lines[rowIndex - 1].end });
+    index = rowIndex - 1;
+  }
+
+  return ranges;
+}
+
+function lineStartAt(markdown: string, position: number) {
+  const safePosition = Math.max(0, Math.min(position, markdown.length));
+  const previousBreak = safePosition > 0 ? markdown.lastIndexOf("\n", safePosition - 1) : -1;
+  return previousBreak >= 0 ? previousBreak + 1 : 0;
+}
+
+function markdownTableRangeAt(ranges: MarkdownTableRange[], position: number, lineStart: number) {
+  return ranges.find((range) => (
+    (position >= range.start && position < range.end) ||
+    (lineStart >= range.start && lineStart < range.end)
+  ));
+}
+
+function safeMarkdownInsertionPoint(markdown: string, position: number, tableRanges: MarkdownTableRange[]) {
+  const safePosition = Math.max(0, Math.min(position, markdown.length));
+  const lineStart = lineStartAt(markdown, safePosition);
+  const tableRange = markdownTableRangeAt(tableRanges, safePosition, lineStart);
+
+  if (tableRange) {
+    return { position: tableRange.end, movedAfterTable: true };
+  }
+
+  return { position: lineStart, movedAfterTable: false };
+}
+
 function hasPageMarker(markdown: string, pageNumber: number) {
   const escapedPage = escapeRegExp(String(pageNumber));
   return new RegExp(`<a\\s+id=["']page-${escapedPage}["']\\s*></a>|^#{1,6}\\s+Page\\s+${escapedPage}\\b`, "im").test(markdown);
@@ -201,7 +305,11 @@ function hasPageMarker(markdown: string, pageNumber: number) {
 
 function insertBlocks(markdown: string, inserts: Array<{ position: number; block: string }>) {
   let nextMarkdown = markdown;
-  for (const insert of [...inserts].sort((a, b) => b.position - a.position)) {
+  const orderedInserts = inserts
+    .map((insert, order) => ({ ...insert, order }))
+    .sort((a, b) => b.position - a.position || b.order - a.order);
+
+  for (const insert of orderedInserts) {
     const before = nextMarkdown.slice(0, insert.position).trimEnd();
     const after = nextMarkdown.slice(insert.position).trimStart();
     nextMarkdown = `${before}\n\n${insert.block.trim()}\n\n${after}`.trim();
@@ -220,6 +328,7 @@ export function postProcessMarkdownWithPageContext(
   const unmatchedBlocks: string[] = [];
   const warnings: string[] = [];
   const markdownIndex = indexMarkdownTokens(tokenizeForMatching(markdown));
+  const tableRanges = findMarkdownTableRanges(markdown);
   let cursor = 0;
 
   if (!includeAnchors && !settings.includeAnnotations) {
@@ -241,7 +350,11 @@ export function postProcessMarkdownWithPageContext(
     const position = findPageInsertionPoint(markdownIndex, page, cursor);
     const block = blockParts.join("\n\n");
     if (position >= 0) {
-      inserts.push({ position, block });
+      const safeInsertion = safeMarkdownInsertionPoint(markdown, position, tableRanges);
+      inserts.push({ position: safeInsertion.position, block });
+      if (safeInsertion.movedAfterTable) {
+        warnings.push(`Page ${page.page} matched inside a Markdown table, so the marker was moved after the table to preserve table syntax.`);
+      }
       cursor = position + 1;
     } else if (block) {
       unmatchedBlocks.push(block);

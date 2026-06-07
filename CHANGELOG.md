@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-07 16:58
+
+- Kept Docling page-marker insertion out of Markdown tables so exported table and table-of-contents blocks are not split by generated page anchors.
+
 ## 2026-06-07 16:05
 
 - Migrated legacy Markdown export settings so the previous hidden Docling-standard default opens as Auto, while preserving manual engine selection after the user changes it.
