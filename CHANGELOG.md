@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-07 17:06
+
+- Fixed Markdown preview image loading by resolving relative image and link URLs against the opened Markdown file's folder.
+
 ## 2026-06-07 16:58
 
 - Kept Docling page-marker insertion out of Markdown tables so exported table and table-of-contents blocks are not split by generated page anchors.

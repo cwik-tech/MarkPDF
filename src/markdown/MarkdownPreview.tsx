@@ -3,6 +3,7 @@ import { Fragment, type ReactNode } from "react";
 interface MarkdownPreviewProps {
   markdown: string;
   searchQuery?: string;
+  baseUrl?: string;
 }
 
 interface ListBlock {
@@ -235,7 +236,32 @@ function splitBySearch(text: string, searchQuery?: string): ReactNode[] {
   return nodes.length ? nodes : [text];
 }
 
-function inlineMarkdown(text: string, searchQuery?: string): ReactNode[] {
+function cleanMarkdownUrl(url: string) {
+  const trimmed = url.trim();
+  return trimmed.startsWith("<") && trimmed.endsWith(">")
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
+}
+
+function resolveMarkdownUrl(url: string, baseUrl?: string) {
+  const cleanedUrl = cleanMarkdownUrl(url);
+  if (
+    !baseUrl ||
+    cleanedUrl.startsWith("#") ||
+    cleanedUrl.startsWith("//") ||
+    /^[a-z][a-z\d+.-]*:/i.test(cleanedUrl)
+  ) {
+    return cleanedUrl;
+  }
+
+  try {
+    return new URL(cleanedUrl, baseUrl).href;
+  } catch {
+    return cleanedUrl;
+  }
+}
+
+function inlineMarkdown(text: string, searchQuery?: string, baseUrl?: string): ReactNode[] {
   const tokens = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|!\[[^\]]*]\([^)]+\)|\[[^\]]+]\([^)]+\))/g);
 
   return tokens.map((token, index) => {
@@ -250,13 +276,13 @@ function inlineMarkdown(text: string, searchQuery?: string): ReactNode[] {
 
     const imageMatch = token.match(/^!\[([^\]]*)]\(([^)]+)\)$/);
     if (imageMatch) {
-      return <img key={index} src={imageMatch[2]} alt={imageMatch[1]} loading="lazy" />;
+      return <img key={index} src={resolveMarkdownUrl(imageMatch[2], baseUrl)} alt={imageMatch[1]} loading="lazy" />;
     }
 
     const linkMatch = token.match(/^\[([^\]]+)]\(([^)]+)\)$/);
     if (linkMatch) {
       return (
-        <a key={index} href={linkMatch[2]} target="_blank" rel="noreferrer">
+        <a key={index} href={resolveMarkdownUrl(linkMatch[2], baseUrl)} target="_blank" rel="noreferrer">
           {splitBySearch(linkMatch[1], searchQuery)}
         </a>
       );
@@ -266,7 +292,7 @@ function inlineMarkdown(text: string, searchQuery?: string): ReactNode[] {
   });
 }
 
-export function MarkdownPreview({ markdown, searchQuery }: MarkdownPreviewProps) {
+export function MarkdownPreview({ markdown, searchQuery, baseUrl }: MarkdownPreviewProps) {
   const blocks = parseMarkdown(markdown);
 
   return (
@@ -274,15 +300,15 @@ export function MarkdownPreview({ markdown, searchQuery }: MarkdownPreviewProps)
       {blocks.map((block, index) => {
         if (block.kind === "heading") {
           const Heading = `h${block.level}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
-          return <Heading key={index}>{inlineMarkdown(block.text, searchQuery)}</Heading>;
+          return <Heading key={index}>{inlineMarkdown(block.text, searchQuery, baseUrl)}</Heading>;
         }
 
         if (block.kind === "paragraph") {
-          return <p key={index}>{inlineMarkdown(block.text, searchQuery)}</p>;
+          return <p key={index}>{inlineMarkdown(block.text, searchQuery, baseUrl)}</p>;
         }
 
         if (block.kind === "blockquote") {
-          return <blockquote key={index}>{inlineMarkdown(block.text, searchQuery)}</blockquote>;
+          return <blockquote key={index}>{inlineMarkdown(block.text, searchQuery, baseUrl)}</blockquote>;
         }
 
         if (block.kind === "code") {
@@ -302,7 +328,7 @@ export function MarkdownPreview({ markdown, searchQuery }: MarkdownPreviewProps)
           return (
             <ul key={index}>
               {block.items.map((item, itemIndex) => (
-                <li key={itemIndex}>{inlineMarkdown(item, searchQuery)}</li>
+                <li key={itemIndex}>{inlineMarkdown(item, searchQuery, baseUrl)}</li>
               ))}
             </ul>
           );
@@ -316,7 +342,7 @@ export function MarkdownPreview({ markdown, searchQuery }: MarkdownPreviewProps)
                   <tr>
                     {block.headers.map((header, columnIndex) => (
                       <th key={columnIndex} style={tableCellStyle(block.alignments[columnIndex])}>
-                        {inlineMarkdown(header, searchQuery)}
+                        {inlineMarkdown(header, searchQuery, baseUrl)}
                       </th>
                     ))}
                   </tr>
@@ -326,7 +352,7 @@ export function MarkdownPreview({ markdown, searchQuery }: MarkdownPreviewProps)
                     <tr key={rowIndex}>
                       {row.map((cell, columnIndex) => (
                         <td key={columnIndex} style={tableCellStyle(block.alignments[columnIndex])}>
-                          {inlineMarkdown(cell, searchQuery)}
+                          {inlineMarkdown(cell, searchQuery, baseUrl)}
                         </td>
                       ))}
                     </tr>
@@ -340,7 +366,7 @@ export function MarkdownPreview({ markdown, searchQuery }: MarkdownPreviewProps)
         return (
           <ol key={index}>
             {block.items.map((item, itemIndex) => (
-              <li key={itemIndex}>{inlineMarkdown(item, searchQuery)}</li>
+              <li key={itemIndex}>{inlineMarkdown(item, searchQuery, baseUrl)}</li>
             ))}
           </ol>
         );

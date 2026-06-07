@@ -154,6 +154,7 @@ export interface MarkdownTab {
   id: string;
   name: string;
   path?: string;
+  baseUrl?: string;
   markdown: string;
   searchQuery: string;
   searchMatches: MarkdownSearchMatch[];

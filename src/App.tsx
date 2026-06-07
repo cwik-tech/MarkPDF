@@ -954,12 +954,13 @@ export default function App() {
   );
 
   const addMarkdownTab = useCallback(
-    (markdown: string, name: string, path?: string) => {
+    (markdown: string, name: string, path?: string, baseUrl?: string) => {
       const tab: MarkdownTab = {
         kind: "markdown",
         id: newId("tab"),
         name,
         path,
+        baseUrl,
         markdown,
         searchQuery: "",
         searchMatches: [],
@@ -1049,7 +1050,7 @@ export default function App() {
       for (const path of markdownPaths) {
         try {
           const result = await window.pdfReader.readMarkdown(path);
-          addMarkdownTab(result.markdown, result.name, result.path);
+          addMarkdownTab(result.markdown, result.name, result.path, result.baseUrl);
         } catch (error) {
           window.alert(
             error instanceof Error
@@ -1343,9 +1344,13 @@ export default function App() {
 
     for (const file of markdownFiles) {
       try {
-        addMarkdownTab(await file.text(), file.name);
         const path = window.pdfReader?.getPathForFile(file);
-        if (path) await window.pdfReader?.addRecentFile(path);
+        if (path && window.pdfReader) {
+          const result = await window.pdfReader.readMarkdown(path);
+          addMarkdownTab(result.markdown, result.name, result.path, result.baseUrl);
+        } else {
+          addMarkdownTab(await file.text(), file.name);
+        }
       } catch (error) {
         window.alert(
           error instanceof Error
@@ -3863,7 +3868,7 @@ function PdfDocumentView({
 function MarkdownDocumentView({ tab }: { tab: MarkdownTab }) {
   return (
     <div className="markdown-document-scroll">
-      <MarkdownPreview markdown={tab.markdown} searchQuery={tab.searchQuery} />
+      <MarkdownPreview markdown={tab.markdown} searchQuery={tab.searchQuery} baseUrl={tab.baseUrl} />
     </div>
   );
 }

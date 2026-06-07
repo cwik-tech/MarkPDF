@@ -10,8 +10,8 @@ import {
 import type { MessageBoxOptions } from "electron";
 import Store from "electron-store";
 import { readFile, writeFile } from "node:fs/promises";
-import { basename, extname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, dirname, extname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   deleteAIProvider,
   detectLocalAgents,
@@ -117,6 +117,11 @@ function imageMimeTypeForPath(filePath: string) {
 
 function bytesForIpc(data: Buffer) {
   return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+}
+
+function fileDirectoryUrl(filePath: string) {
+  const url = pathToFileURL(dirname(filePath)).href;
+  return url.endsWith("/") ? url : `${url}/`;
 }
 
 function filePathFromArg(arg: string) {
@@ -474,6 +479,7 @@ ipcMain.handle("file:read-markdown", async (_event, filePath: string) => {
   return {
     path: filePath,
     name: basename(filePath),
+    baseUrl: fileDirectoryUrl(filePath),
     markdown,
   };
 });

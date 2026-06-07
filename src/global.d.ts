@@ -116,7 +116,7 @@ declare global {
       }>;
       readMarkdown: (
         filePath: string,
-      ) => Promise<{ path: string; name: string; markdown: string }>;
+      ) => Promise<{ path: string; name: string; markdown: string; baseUrl: string }>;
       writePdf: (
         filePath: string,
         bytes: BytePayload,
