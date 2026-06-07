@@ -154,17 +154,15 @@ export function postProcessMarkdownWithPageContext(
     if (position >= 0) {
       inserts.push({ position, block });
       cursor = position + 1;
-    } else if (settings.includeAnnotations && renderAnnotationBlock(page.annotations)) {
+    } else if (block) {
       unmatchedBlocks.push(block);
-      warnings.push(`Page ${page.page} annotations could not be matched to a stable Markdown location and were appended.`);
-    } else if (includeHeadings) {
-      warnings.push(`Page ${page.page} could not be matched to a stable Markdown location.`);
+      warnings.push(`Page ${page.page} could not be matched to a stable Markdown location and was appended.`);
     }
   }
 
   const withInsertedBlocks = insertBlocks(markdown, inserts);
   const withUnmatchedBlocks = unmatchedBlocks.length
-    ? `${withInsertedBlocks.trim()}\n\n---\n\n## Unmatched Page Notes\n\n${unmatchedBlocks.join("\n\n")}`
+    ? `${withInsertedBlocks.trim()}\n\n---\n\n## Unmatched Page Markers\n\n${unmatchedBlocks.join("\n\n")}`
     : withInsertedBlocks;
 
   return {
