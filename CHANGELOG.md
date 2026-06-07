@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-07 17:40
+
+- Fixed Markdown image-description export so copied image assets are referenced instead of Docling temp paths, bad fragment descriptions are skipped, and description ordering stays aligned with exported images.
+
 ## 2026-06-07 17:28
 
 - Added a default-on Markdown export option to describe images and insert the generated descriptions below exported image links.

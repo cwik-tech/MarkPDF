@@ -1,9 +1,10 @@
 import { app } from "electron";
 import { access, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, normalize, relative } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
 
@@ -339,14 +340,55 @@ async function readNewestTextFile(directory: string, extension: string) {
 }
 
 function isExternalMarkdownUrl(url: string) {
-  return /^(?:[a-z][a-z0-9+.-]*:|\/|#)/i.test(url);
+  return /^(?:[a-z][a-z0-9+.-]*:|#)/i.test(url) || url.startsWith("//");
 }
 
-function rewriteReferencedImagePaths(markdown: string, assetsDirName: string) {
+function cleanMarkdownUrl(url: string) {
+  const trimmed = url.trim();
+  return trimmed.startsWith("<") && trimmed.endsWith(">")
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
+}
+
+function pathIsInsideDirectory(path: string, directory: string) {
+  const relativePath = relative(normalize(directory), normalize(path));
+  return relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+}
+
+function normalizeMarkdownAssetPath(path: string) {
+  return path.replace(/^\.\//, "").split(/[\\/]+/).join("/");
+}
+
+function markdownAssetPathForUrl(rawUrl: string, assetsDirName: string, outputDir: string) {
+  const url = cleanMarkdownUrl(rawUrl);
+  if (!url) return null;
+
+  if (url.startsWith("file://")) {
+    try {
+      const filePath = normalize(fileURLToPath(url));
+      return pathIsInsideDirectory(filePath, outputDir)
+        ? `${assetsDirName}/${normalizeMarkdownAssetPath(relative(outputDir, filePath))}`
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (isAbsolute(url)) {
+    const filePath = normalize(url);
+    return pathIsInsideDirectory(filePath, outputDir)
+      ? `${assetsDirName}/${normalizeMarkdownAssetPath(relative(outputDir, filePath))}`
+      : null;
+  }
+
+  if (isExternalMarkdownUrl(url)) return null;
+  return `${assetsDirName}/${normalizeMarkdownAssetPath(url)}`;
+}
+
+function rewriteReferencedImagePaths(markdown: string, assetsDirName: string, outputDir: string) {
   return markdown.replace(/(!\[[^\]]*]\()([^)]+)(\))/g, (match, prefix, rawUrl, suffix) => {
-    const url = String(rawUrl).trim();
-    if (!url || isExternalMarkdownUrl(url)) return match;
-    return `${prefix}${assetsDirName}/${url.replace(/^\.\//, "")}${suffix}`;
+    const url = markdownAssetPathForUrl(String(rawUrl), assetsDirName, outputDir);
+    return url ? `${prefix}${url}${suffix}` : match;
   });
 }
 
@@ -367,27 +409,75 @@ function normalizeImageDescription(text: unknown) {
   return typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
 }
 
+function descriptionWords(text: string) {
+  return text.match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+function hasRepetitiveDescriptionLoop(text: string) {
+  const segments = text
+    .split(/[;,]+/)
+    .map((segment) => normalizeImageDescription(segment).toLocaleLowerCase())
+    .filter((segment) => segment.length > 2);
+  if (segments.length < 6) return false;
+
+  const counts = new Map<string, number>();
+  for (const segment of segments) {
+    counts.set(segment, (counts.get(segment) ?? 0) + 1);
+  }
+
+  const maxCount = Math.max(...counts.values());
+  return maxCount >= 3 || counts.size / segments.length < 0.55;
+}
+
+function cleanImageDescription(text: string) {
+  return text
+    .replace(/^\s*(?:\*\*)?image description:(?:\*\*)?\s*/i, "")
+    .replace(/^\s*\[description]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function usableImageDescription(text: string) {
+  const description = cleanImageDescription(text);
+  const words = descriptionWords(description);
+  if (description.length < 24 || words.length < 4) return "";
+  if (/^(?:in|the|a|an|image|the image|an image)$/i.test(description)) return "";
+  if (hasRepetitiveDescriptionLoop(description)) return "";
+  return description;
+}
+
+interface PictureDescription {
+  raw: string;
+  text: string;
+}
+
 function pictureDescriptionFromJsonPicture(picture: unknown) {
-  if (!picture || typeof picture !== "object") return "";
+  if (!picture || typeof picture !== "object") return { raw: "", text: "" };
   const record = picture as {
     meta?: { description?: { text?: unknown } };
     annotations?: Array<{ kind?: unknown; text?: unknown }>;
   };
 
-  const metaDescription = normalizeImageDescription(record.meta?.description?.text);
-  if (metaDescription) return metaDescription;
+  const rawDescription = normalizeImageDescription(record.meta?.description?.text);
+  if (rawDescription) {
+    return { raw: rawDescription, text: usableImageDescription(rawDescription) };
+  }
 
   const annotation = record.annotations?.find((item) => item.kind === "description");
-  return normalizeImageDescription(annotation?.text);
+  const annotationDescription = normalizeImageDescription(annotation?.text);
+  return {
+    raw: annotationDescription,
+    text: usableImageDescription(annotationDescription)
+  };
 }
 
-function extractPictureDescriptions(jsonText: string | null) {
+function extractPictureDescriptions(jsonText: string | null): PictureDescription[] {
   if (!jsonText) return [];
 
   try {
     const parsed = JSON.parse(jsonText) as { pictures?: unknown[] };
     if (!Array.isArray(parsed.pictures)) return [];
-    return parsed.pictures.map(pictureDescriptionFromJsonPicture).filter(Boolean);
+    return parsed.pictures.map(pictureDescriptionFromJsonPicture);
   } catch {
     return [];
   }
@@ -398,11 +488,7 @@ function countMarkdownImages(markdown: string) {
 }
 
 function normalizeDescriptionBlock(text: string) {
-  return text
-    .replace(/^\s*(?:\*\*)?image description:(?:\*\*)?\s*/i, "")
-    .replace(/^\s*\[description]\s*/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return cleanImageDescription(text);
 }
 
 function previousBlockMatchesDescription(lines: string[], description: string) {
@@ -423,7 +509,7 @@ function removePreviousDescriptionBlock(lines: string[], description: string) {
   }
 }
 
-function insertImageDescriptionsBelowImages(markdown: string, descriptions: string[]) {
+function insertImageDescriptionsBelowImages(markdown: string, descriptions: PictureDescription[]) {
   if (descriptions.length === 0) return markdown;
 
   const outputLines: string[] = [];
@@ -439,13 +525,18 @@ function insertImageDescriptionsBelowImages(markdown: string, descriptions: stri
     const description = descriptions[imageIndex];
     imageIndex += 1;
 
-    if (!description) {
+    if (!description?.raw && !description?.text) {
       outputLines.push(line);
       continue;
     }
 
-    removePreviousDescriptionBlock(outputLines, description);
-    outputLines.push(line, "", `**Image description:** ${description}`);
+    if (description.raw) {
+      removePreviousDescriptionBlock(outputLines, description.raw);
+    }
+    outputLines.push(line);
+    if (description.text) {
+      outputLines.push("", `**Image description:** ${description.text}`);
+    }
   }
 
   return outputLines.join("\n");
@@ -527,14 +618,15 @@ export async function convertPdfWithDocling(
     if (settings.includeImageDescriptions) {
       const imageCount = countMarkdownImages(markdown);
       const descriptions = extractPictureDescriptions(await readNewestJsonFile(outputDir));
+      const usableDescriptionCount = descriptions.filter((description) => description.text).length;
       if (descriptions.length > 0) {
         markdown = insertImageDescriptionsBelowImages(markdown, descriptions);
       }
-      if (imageCount > descriptions.length) {
+      if (imageCount > usableDescriptionCount) {
         warnings.push(
-          descriptions.length === 0
-            ? "Image descriptions were enabled, but Docling did not return picture descriptions."
-            : "Some exported images did not receive descriptions."
+          usableDescriptionCount === 0
+            ? "Image descriptions were enabled, but Docling did not return usable picture descriptions."
+            : "Some generated image descriptions were skipped because they were too short or repetitive."
         );
       }
     }
@@ -542,7 +634,7 @@ export async function convertPdfWithDocling(
     if (outputMarkdownPath) {
       const assetsDirName = await copyReferencedOutputAssets(outputDir, outputMarkdownPath);
       if (assetsDirName) {
-        markdown = rewriteReferencedImagePaths(markdown, assetsDirName);
+        markdown = rewriteReferencedImagePaths(markdown, assetsDirName, outputDir);
       }
     }
 
