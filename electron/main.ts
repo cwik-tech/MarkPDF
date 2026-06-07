@@ -73,7 +73,17 @@ let gotSingleInstanceLock = false;
 
 function addRecentFile(filePath: string) {
   const recentFiles = store.get("recentFiles", []);
-  store.set("recentFiles", [filePath, ...recentFiles.filter((item) => item !== filePath)].slice(0, 12));
+  return setRecentFiles([filePath, ...recentFiles.filter((item) => item !== filePath)].slice(0, 12));
+}
+
+function setRecentFiles(recentFiles: string[]) {
+  store.set("recentFiles", recentFiles);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send("recent:changed", recentFiles);
+    }
+  }
+  return recentFiles;
 }
 
 function imageMimeTypeForPath(filePath: string) {
@@ -111,8 +121,7 @@ function rememberPendingOpenPath(filePath: string) {
 function removeRecentFile(filePath: string) {
   const recentFiles = store.get("recentFiles", []);
   const nextRecentFiles = recentFiles.filter((item) => item !== filePath);
-  store.set("recentFiles", nextRecentFiles);
-  return nextRecentFiles;
+  return setRecentFiles(nextRecentFiles);
 }
 
 function setDockIcon() {
@@ -525,8 +534,7 @@ ipcMain.handle("markdown:convert-docling", async (_event, bytes: Uint8Array | nu
 );
 
 ipcMain.handle("recent:clear", async () => {
-  store.set("recentFiles", []);
-  return [];
+  return setRecentFiles([]);
 });
 
 ipcMain.handle("ai:list-providers", async () => listAIProviders(store));

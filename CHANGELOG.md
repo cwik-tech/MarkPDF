@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Fixed stale recent-file menus by broadcasting recent-list updates to every open window.
 - Fixed large PDF Open With/read failures by sending typed byte arrays over Electron IPC instead of expanded number arrays.
 - Fixed macOS cold-start Open With launches by seeding pending files from process arguments before the single-instance lock.
 - Fixed macOS Finder/Open With handoff by capturing and draining file-open events in a lightweight Electron bootstrap before the main process modules load.

@@ -71,5 +71,10 @@ contextBridge.exposeInMainWorld("pdfReader", {
     const listener = (_event: unknown, filePaths: string[]) => callback(filePaths);
     ipcRenderer.on("app:open-files", listener);
     return () => ipcRenderer.removeListener("app:open-files", listener);
+  },
+  onRecentFilesChanged: (callback: (filePaths: string[]) => void) => {
+    const listener = (_event: unknown, filePaths: string[]) => callback(filePaths);
+    ipcRenderer.on("recent:changed", listener);
+    return () => ipcRenderer.removeListener("recent:changed", listener);
   }
 });

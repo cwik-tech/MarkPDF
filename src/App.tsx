@@ -961,6 +961,11 @@ export default function App() {
   }, [loadRecentFiles]);
 
   useEffect(() => {
+    if (!window.pdfReader) return undefined;
+    return window.pdfReader.onRecentFilesChanged(setRecentFiles);
+  }, []);
+
+  useEffect(() => {
     if (!window.pdfReader?.semantic) return;
     void window.pdfReader.semantic.getSettings().then(async (settings) => {
       const normalizedSettings = normalizeSemanticSettings(settings);

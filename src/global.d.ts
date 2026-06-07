@@ -140,6 +140,7 @@ declare global {
       onWindowRequestClose: (callback: () => void) => () => void;
       onOpenFile: (callback: (filePath: string) => void) => () => void;
       onOpenFiles: (callback: (filePaths: string[]) => void) => () => void;
+      onRecentFilesChanged: (callback: (filePaths: string[]) => void) => () => void;
     };
   }
 }
