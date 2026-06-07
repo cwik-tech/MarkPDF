@@ -80,3 +80,7 @@
 - Forced the macOS Dock icon to use the bundled app icon at runtime.
 - Removed the icon's outer white background and enlarged the mark for Dock display.
 - Added hover-only controls for removing individual files from the empty-state recent list without deleting the files.
+## 2026-06-07 00:22
+
+Updated the Electron preload bridge in `electron/preload.ts` and refined type definitions in `src/global.d.ts` to support changes in the main application logic. Refactored the `src/App.tsx` component with multiple targeted adjustments and updated semantic indexing behavior in `src/semanticIndex.ts`, collectively addressing core application functionality across the IPC layer, type system, and search capabilities.
+

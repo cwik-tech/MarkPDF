@@ -95,6 +95,7 @@ export interface MarkdownExportSettings {
 declare global {
   interface Window {
     pdfReader?: {
+      getPathForFile: (file: File) => string;
       openPdfDialog: () => Promise<string[]>;
       savePdfDialog: (defaultPath?: string) => Promise<string | null>;
       saveMarkdownDialog: (defaultPath?: string) => Promise<string | null>;

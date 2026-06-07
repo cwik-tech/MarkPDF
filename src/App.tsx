@@ -1264,12 +1264,11 @@ export default function App() {
         semanticStartTimersRef.current.set(tab.id, timer);
       }
     }
-    return () => {
-      for (const timer of semanticStartTimersRef.current.values()) {
-        window.clearTimeout(timer);
-      }
-      semanticStartTimersRef.current.clear();
-    };
+    // Pending start timers intentionally persist across re-renders so that
+    // frequent tab updates (page changes, OCR progress, overlay edits) don't
+    // continually reset the debounce and starve semantic indexing. Timers are
+    // cleared on unmount and whenever semantic settings change or the index is
+    // reset.
   }, [semanticSettings, startSemanticIndex, tabs]);
 
   useEffect(() => {
@@ -1325,7 +1324,7 @@ export default function App() {
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         await addTabFromBytes(bytes, file.name);
-        const path = (file as any).path as string | undefined;
+        const path = window.pdfReader?.getPathForFile(file);
         if (path) await window.pdfReader?.addRecentFile(path);
       } catch (error) {
         window.alert(
@@ -1339,7 +1338,7 @@ export default function App() {
     for (const file of markdownFiles) {
       try {
         addMarkdownTab(await file.text(), file.name);
-        const path = (file as any).path as string | undefined;
+        const path = window.pdfReader?.getPathForFile(file);
         if (path) await window.pdfReader?.addRecentFile(path);
       } catch (error) {
         window.alert(
@@ -1372,7 +1371,7 @@ export default function App() {
 
         await addImagePdfTab(images);
         for (const file of imageFiles) {
-          const path = (file as any).path as string | undefined;
+          const path = window.pdfReader?.getPathForFile(file);
           if (path) await window.pdfReader?.addRecentFile(path);
         }
       } catch (error) {
@@ -3846,6 +3845,66 @@ function MarkdownDocumentView({ tab }: { tab: MarkdownTab }) {
   );
 }
 
+function normalizeRotation(rotation: number) {
+  return ((rotation % 360) + 360) % 360;
+}
+
+// Overlays are stored in un-rotated page coordinates. The page view rotation is
+// applied to the overlay layer as a CSS transform so overlays stay aligned with
+// the rotated canvas without persisting rotation into overlay coordinates.
+function overlayLayerTransform(
+  rotation: number,
+  viewWidth: number,
+  viewHeight: number,
+) {
+  switch (normalizeRotation(rotation)) {
+    case 90:
+      return `translate(${viewWidth}px, 0px) rotate(90deg)`;
+    case 180:
+      return `translate(${viewWidth}px, ${viewHeight}px) rotate(180deg)`;
+    case 270:
+      return `translate(0px, ${viewHeight}px) rotate(270deg)`;
+    default:
+      return "none";
+  }
+}
+
+// Convert a point in the rotated page-view space (CSS px, origin at the page
+// top-left) into un-rotated page space (the inverse of overlayLayerTransform).
+function viewPointToUnrotated(
+  vx: number,
+  vy: number,
+  rotation: number,
+  viewWidth: number,
+  viewHeight: number,
+) {
+  switch (normalizeRotation(rotation)) {
+    case 90:
+      return { x: vy, y: viewWidth - vx };
+    case 180:
+      return { x: viewWidth - vx, y: viewHeight - vy };
+    case 270:
+      return { x: viewHeight - vy, y: vx };
+    default:
+      return { x: vx, y: vy };
+  }
+}
+
+// Convert a screen-space delta vector into un-rotated overlay-layer space so
+// drag/resize gestures move overlays along the expected axes when rotated.
+function viewVectorToUnrotated(dx: number, dy: number, rotation: number) {
+  switch (normalizeRotation(rotation)) {
+    case 90:
+      return { x: dy, y: -dx };
+    case 180:
+      return { x: -dx, y: -dy };
+    case 270:
+      return { x: -dy, y: dx };
+    default:
+      return { x: dx, y: dy };
+  }
+}
+
 function PdfPage({
   pdfDoc,
   pageNumber,
@@ -4072,12 +4131,26 @@ function PdfPage({
             extractSelectedTextFromLayer(textLayerRef.current, rects) ||
             selection.toString().trim();
           if (selectedText) void copyTextToClipboard(selectedText);
+          const corner0 = viewPointToUnrotated(
+            left - pageRect.left,
+            top - pageRect.top,
+            rotation,
+            size.width,
+            size.height,
+          );
+          const corner1 = viewPointToUnrotated(
+            right - pageRect.left,
+            bottom - pageRect.top,
+            rotation,
+            size.width,
+            size.height,
+          );
           onTextSelection({
             page: pageNumber,
-            x: Math.max(0, (left - pageRect.left) / zoom),
-            y: Math.max(0, (top - pageRect.top) / zoom),
-            width: Math.max(12, (right - left) / zoom),
-            height: Math.max(8, (bottom - top) / zoom),
+            x: Math.max(0, Math.min(corner0.x, corner1.x) / zoom),
+            y: Math.max(0, Math.min(corner0.y, corner1.y) / zoom),
+            width: Math.max(12, Math.abs(corner1.x - corner0.x) / zoom),
+            height: Math.max(8, Math.abs(corner1.y - corner0.y) / zoom),
             screenX: left + (right - left) / 2,
             screenY: Math.max(10, top - 10),
             text: selectedText,
@@ -4086,11 +4159,15 @@ function PdfPage({
         onClick={(event) => {
           if (tool === "select") return;
           const rect = event.currentTarget.getBoundingClientRect();
-          onSelectOverlay(null);
-          onPageClick(
-            (event.clientX - rect.left) / zoom,
-            (event.clientY - rect.top) / zoom,
+          const point = viewPointToUnrotated(
+            event.clientX - rect.left,
+            event.clientY - rect.top,
+            rotation,
+            size.width,
+            size.height,
           );
+          onSelectOverlay(null);
+          onPageClick(point.x / zoom, point.y / zoom);
         }}
       >
         <canvas ref={canvasRef} />
@@ -4102,12 +4179,19 @@ function PdfPage({
             <span>{renderError}</span>
           </div>
         )}
-        <div className="overlay-layer">
+        <div
+          className="overlay-layer"
+          style={{
+            transformOrigin: "0 0",
+            transform: overlayLayerTransform(rotation, size.width, size.height),
+          }}
+        >
           {overlays.map((overlay) => (
             <OverlayBox
               key={overlay.id}
               overlay={overlay}
               zoom={zoom}
+              rotation={rotation}
               selected={selectedOverlayId === overlay.id}
               onSelect={() => onSelectOverlay(overlay.id)}
               onDeselect={() => onSelectOverlay(null)}
@@ -4420,6 +4504,7 @@ function appendOcrTextLayer(
 function OverlayBox({
   overlay,
   zoom,
+  rotation,
   selected,
   onSelect,
   onDeselect,
@@ -4428,6 +4513,7 @@ function OverlayBox({
 }: {
   overlay: OverlayItem;
   zoom: number;
+  rotation: number;
   selected: boolean;
   onSelect: () => void;
   onDeselect: () => void;
@@ -4464,18 +4550,15 @@ function OverlayBox({
       }}
       onPointerMove={(event) => {
         if (!dragRef.current) return;
+        const delta = viewVectorToUnrotated(
+          event.clientX - dragRef.current.startX,
+          event.clientY - dragRef.current.startY,
+          rotation,
+        );
         onUpdate(
           {
-            x: Math.max(
-              0,
-              dragRef.current.originalX +
-                (event.clientX - dragRef.current.startX) / zoom,
-            ),
-            y: Math.max(
-              0,
-              dragRef.current.originalY +
-                (event.clientY - dragRef.current.startY) / zoom,
-            ),
+            x: Math.max(0, dragRef.current.originalX + delta.x / zoom),
+            y: Math.max(0, dragRef.current.originalY + delta.y / zoom),
           },
           false,
         );
@@ -4567,16 +4650,15 @@ function OverlayBox({
                 const target = event.currentTarget;
                 target.setPointerCapture(event.pointerId);
                 target.onpointermove = (moveEvent) => {
+                  const delta = viewVectorToUnrotated(
+                    moveEvent.clientX - startX,
+                    moveEvent.clientY - startY,
+                    rotation,
+                  );
                   onUpdate(
                     {
-                      width: Math.max(
-                        24,
-                        startWidth + (moveEvent.clientX - startX) / zoom,
-                      ),
-                      height: Math.max(
-                        18,
-                        startHeight + (moveEvent.clientY - startY) / zoom,
-                      ),
+                      width: Math.max(24, startWidth + delta.x / zoom),
+                      height: Math.max(18, startHeight + delta.y / zoom),
                     },
                     false,
                   );

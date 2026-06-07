@@ -356,6 +356,7 @@ export async function indexSemanticDocument(input: DocumentIndexInput) {
   }
 
   if (documentHasCompleteIndex(db, documentId, chunks.length, input.settings)) {
+    await persistDatabase();
     input.onProgress?.({ status: "ready", current: chunks.length, total: chunks.length, message: "Semantic index ready" });
     return;
   }

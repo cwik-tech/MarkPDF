@@ -1,6 +1,7 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("pdfReader", {
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
   openPdfDialog: () => ipcRenderer.invoke("dialog:open-pdf"),
   savePdfDialog: (defaultPath?: string) =>
     ipcRenderer.invoke("dialog:save-pdf", defaultPath),
