@@ -36,6 +36,8 @@ import {
 
 let pendingOpenPaths: string[] = [];
 let openPathFlushTimer: NodeJS.Timeout | null = null;
+const rendererReadyWindows = new WeakSet<BrowserWindow>();
+const pendingWindowOpenPaths = new WeakMap<BrowserWindow, string[]>();
 const appIconPath = fileURLToPath(new URL("../build/icon.png", import.meta.url));
 const confirmedCloseWindows = new WeakSet<BrowserWindow>();
 const store = new Store<AIStoreSchema>({
@@ -75,6 +77,10 @@ function filePathArgsFromArgv(argv: string[]) {
   return argv.filter((arg) => supportedFileExtensions.has(extname(arg).toLowerCase()));
 }
 
+function uniqueFilePaths(filePaths: string[]) {
+  return [...new Set(filePaths)];
+}
+
 function removeRecentFile(filePath: string) {
   const recentFiles = store.get("recentFiles", []);
   const nextRecentFiles = recentFiles.filter((item) => item !== filePath);
@@ -107,13 +113,25 @@ function queueOpenPath(filePath: string) {
 }
 
 function sendOpenPathsToWindow(window: BrowserWindow, filePaths: string[]) {
+  const nextFilePaths = uniqueFilePaths(filePaths);
+  if (nextFilePaths.length === 0) return;
+
   if (window.isMinimized()) {
     window.restore();
   }
   window.show();
   window.focus();
 
-  const sendPaths = () => window.webContents.send("app:open-files", filePaths);
+  const sendPaths = () => {
+    if (rendererReadyWindows.has(window)) {
+      window.webContents.send("app:open-files", nextFilePaths);
+      return;
+    }
+
+    const pendingPaths = pendingWindowOpenPaths.get(window) ?? [];
+    pendingWindowOpenPaths.set(window, uniqueFilePaths([...pendingPaths, ...nextFilePaths]));
+  };
+
   if (window.webContents.isLoading()) {
     window.webContents.once("did-finish-load", sendPaths);
     return;
@@ -166,9 +184,13 @@ const createWindow = async (filePaths: string[] = []) => {
 
   if (filePaths.length > 0) {
     window.webContents.once("did-finish-load", () => {
-      window.webContents.send("app:open-files", filePaths);
+      sendOpenPathsToWindow(window, filePaths);
     });
   }
+
+  window.webContents.on("did-start-loading", () => {
+    rendererReadyWindows.delete(window);
+  });
 
   if (process.env.VITE_DEV_SERVER_URL) {
     await window.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -340,6 +362,18 @@ ipcMain.handle("file:write-markdown", async (_event, filePath: string, markdown:
 
 ipcMain.handle("window:new-for-file", async (_event, filePath: string) => {
   await createWindow([filePath]);
+});
+
+ipcMain.handle("app:renderer-ready-for-open-files", async (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return;
+
+  rendererReadyWindows.add(window);
+  const pendingPaths = pendingWindowOpenPaths.get(window) ?? [];
+  pendingWindowOpenPaths.delete(window);
+  if (pendingPaths.length > 0) {
+    sendOpenPathsToWindow(window, pendingPaths);
+  }
 });
 
 ipcMain.handle("window:set-full-screen", async (event, enabled: boolean) => {

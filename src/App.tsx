@@ -1091,6 +1091,7 @@ export default function App() {
     if (!window.pdfReader) return undefined;
     const cleanupSingle = window.pdfReader.onOpenFile((filePath) => void openFilePaths([filePath]));
     const cleanupBatch = window.pdfReader.onOpenFiles((filePaths) => void openFilePaths(filePaths));
+    void window.pdfReader.readyForOpenFiles();
     return () => {
       cleanupSingle();
       cleanupBatch();

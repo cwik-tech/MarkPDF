@@ -105,6 +105,7 @@ declare global {
       listRecentFiles: () => Promise<string[]>;
       removeRecentFile: (filePath: string) => Promise<string[]>;
       clearRecentFiles: () => Promise<string[]>;
+      readyForOpenFiles: () => Promise<void>;
       ai: {
         listProviders: () => Promise<AIProviderView[]>;
         saveProvider: (provider: AIProviderInput) => Promise<AIProviderView>;

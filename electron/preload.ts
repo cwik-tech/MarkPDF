@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("pdfReader", {
   listRecentFiles: () => ipcRenderer.invoke("recent:list"),
   removeRecentFile: (filePath: string) => ipcRenderer.invoke("recent:remove", filePath),
   clearRecentFiles: () => ipcRenderer.invoke("recent:clear"),
+  readyForOpenFiles: () => ipcRenderer.invoke("app:renderer-ready-for-open-files"),
   ai: {
     listProviders: () => ipcRenderer.invoke("ai:list-providers"),
     saveProvider: (provider: unknown) => ipcRenderer.invoke("ai:save-provider", provider),

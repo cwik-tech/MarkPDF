@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Fixed double-click Markdown/PDF opening by queueing Finder file-open events until the renderer file listeners are ready.
 - Improved Docling Markdown page placement by matching normalized token windows instead of one exact PDF text snippet.
 - Fixed Docling Markdown page markers so unmatched pages are appended instead of being silently dropped.
 - Fixed Finder/Open With launches so PDFs and Markdown files open as tabs in the running app instead of spawning another window.
