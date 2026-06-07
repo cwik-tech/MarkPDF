@@ -415,6 +415,7 @@ export default function App() {
     [activeTabId, tabs]
   );
   const activePdfTab = isPdfTab(activeTab) ? activeTab : null;
+  const activeMarkdownText = isMarkdownTab(activeTab) ? activeTab.markdown : null;
   const selectedSignature = useMemo(
     () => savedSignatures.find((asset) => asset.id === selectedSignatureId) ?? savedSignatures[0] ?? null,
     [savedSignatures, selectedSignatureId]
@@ -1849,7 +1850,8 @@ export default function App() {
       searchQuery: normalizedQuery,
       searchMatches: matches,
       activeSearchMatch: firstMatch ? 0 : -1,
-      currentPage: navigateToFirstMatch && firstMatch ? firstMatch.page : currentTab.currentPage
+      currentPage: navigateToFirstMatch && firstMatch ? firstMatch.page : currentTab.currentPage,
+      semanticHighlight: null
     }));
 
     const currentTab = tabsRef.current.find((item) => item.id === tab.id) ?? tab;
@@ -1881,20 +1883,24 @@ export default function App() {
       autoSearchTimerRef.current = null;
     }
 
-    if (!activeTab) return undefined;
+    if (!activeTabId) return undefined;
+
+    const activeSearchTab = tabsRef.current.find((tab) => tab.id === activeTabId) ?? null;
+    if (!activeSearchTab) return undefined;
 
     const normalizedQuery = searchText.trim();
     if (normalizedQuery.length < 3) {
       searchRequestIdRef.current += 1;
-      if (activeTab.searchQuery || activeTab.searchMatches.length > 0) {
-        clearTabSearch(activeTab);
+      if (activeSearchTab.searchQuery || activeSearchTab.searchMatches.length > 0) {
+        clearTabSearch(activeSearchTab);
       }
       setSidebar((current) => (current === "semantic" ? null : current));
       return undefined;
     }
 
     autoSearchTimerRef.current = window.setTimeout(() => {
-      void applySearch(activeTab, normalizedQuery);
+      const latestTab = tabsRef.current.find((tab) => tab.id === activeTabId) ?? null;
+      if (latestTab) void applySearch(latestTab, normalizedQuery);
     }, 250);
 
     return () => {
@@ -1903,7 +1909,7 @@ export default function App() {
         autoSearchTimerRef.current = null;
       }
     };
-  }, [activeTab, activeTab?.id, activePdfTab?.pdfDoc, activePdfTab?.ocrPages, searchText, applySearch, clearTabSearch]);
+  }, [activeTabId, activePdfTab?.pdfDoc, activePdfTab?.ocrPages, activeMarkdownText, searchText, applySearch, clearTabSearch]);
 
   const runSearch = async () => {
     if (!activeTab) return;
@@ -1921,7 +1927,8 @@ export default function App() {
     if (isPdfTab(activeTab)) {
       updatePdfTab(activeTab.id, {
         activeSearchMatch: nextIndex,
-        currentPage: activeTab.searchMatches[nextIndex].page
+        currentPage: activeTab.searchMatches[nextIndex].page,
+        semanticHighlight: null
       });
       return;
     }
@@ -3046,7 +3053,7 @@ function PdfDocumentView({
     : tab.viewMode === "two" && tab.currentPage < tab.pageCount
       ? [tab.currentPage, tab.currentPage + 1]
       : [tab.currentPage];
-  const activeSearchMatch = tab.searchMatches[tab.activeSearchMatch] ?? null;
+  const activeSearchMatch = tab.semanticHighlight ? null : (tab.searchMatches[tab.activeSearchMatch] ?? null);
   const activeSearchMatchOrdinal = activeSearchMatch
     ? tab.searchMatches
         .slice(0, tab.activeSearchMatch)

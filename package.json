@@ -44,7 +44,7 @@
     "wait-on": "^9.0.3"
   },
   "build": {
-    "appId": "org.markpdf.app",
+    "appId": "dev.openpdf.reader",
     "productName": "MarkPDF",
     "files": [
       "dist/**/*",
