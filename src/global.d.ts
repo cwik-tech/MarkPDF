@@ -90,6 +90,7 @@ export interface MarkdownExportSettings {
   useOcrFallback: boolean;
   includeAnnotations: boolean;
   aiCleanup: boolean;
+  engineSelectionExplicit?: boolean;
 }
 
 declare global {

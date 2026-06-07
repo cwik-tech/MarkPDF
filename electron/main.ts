@@ -621,6 +621,7 @@ ipcMain.handle("semantic:db-info", async () => getSemanticDatabaseInfo());
 ipcMain.handle("markdown:get-settings", async () => {
   const settings = normalizeMarkdownExportSettings(
     store.get("markdownExport", defaultMarkdownExportSettings),
+    { migrateLegacyDefaultEngine: true },
   );
   store.set("markdownExport", settings);
   return settings;
@@ -629,10 +630,15 @@ ipcMain.handle("markdown:get-settings", async () => {
 ipcMain.handle(
   "markdown:save-settings",
   async (_event, settings: Partial<MarkdownExportSettings>) => {
-    const current = store.get("markdownExport", defaultMarkdownExportSettings);
+    const current = normalizeMarkdownExportSettings(
+      store.get("markdownExport", defaultMarkdownExportSettings),
+      { migrateLegacyDefaultEngine: true },
+    );
+    const hasEnginePatch = Object.prototype.hasOwnProperty.call(settings, "defaultEngine");
     const next = normalizeMarkdownExportSettings({
       ...current,
       ...settings,
+      engineSelectionExplicit: hasEnginePatch ? true : current.engineSelectionExplicit,
     });
     store.set("markdownExport", next);
     return next;

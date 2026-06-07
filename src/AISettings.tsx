@@ -72,7 +72,8 @@ const defaultMarkdownSettings: MarkdownExportSettings = {
   includePageMarkers: true,
   useOcrFallback: true,
   includeAnnotations: true,
-  aiCleanup: false
+  aiCleanup: false,
+  engineSelectionExplicit: false
 };
 
 function markdownEngineLabel(engine: MarkdownExportSettings["defaultEngine"]) {

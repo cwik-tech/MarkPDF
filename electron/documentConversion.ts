@@ -35,6 +35,7 @@ export interface MarkdownExportSettings {
   useOcrFallback: boolean;
   includeAnnotations: boolean;
   aiCleanup: boolean;
+  engineSelectionExplicit?: boolean;
 }
 
 export interface MarkdownStoreSchema {
@@ -47,10 +48,14 @@ export const defaultMarkdownExportSettings: MarkdownExportSettings = {
   includePageMarkers: true,
   useOcrFallback: true,
   includeAnnotations: true,
-  aiCleanup: false
+  aiCleanup: false,
+  engineSelectionExplicit: false
 };
 
-export function normalizeMarkdownExportSettings(settings?: Partial<MarkdownExportSettings>): MarkdownExportSettings {
+export function normalizeMarkdownExportSettings(
+  settings?: Partial<MarkdownExportSettings>,
+  options: { migrateLegacyDefaultEngine?: boolean } = {}
+): MarkdownExportSettings {
   const defaultEngine =
     settings?.defaultEngine === "auto" ||
     settings?.defaultEngine === "builtin-text" ||
@@ -58,11 +63,18 @@ export function normalizeMarkdownExportSettings(settings?: Partial<MarkdownExpor
     settings?.defaultEngine === "docling-vlm-smoldocling"
       ? settings.defaultEngine
       : defaultMarkdownExportSettings.defaultEngine;
+  const migratedDefaultEngine =
+    options.migrateLegacyDefaultEngine &&
+    defaultEngine === "docling-managed" &&
+    settings?.engineSelectionExplicit !== true
+      ? "auto"
+      : defaultEngine;
 
   return {
     ...defaultMarkdownExportSettings,
     ...settings,
-    defaultEngine
+    defaultEngine: migratedDefaultEngine,
+    engineSelectionExplicit: settings?.engineSelectionExplicit === true
   };
 }
 

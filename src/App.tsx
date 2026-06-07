@@ -138,6 +138,7 @@ const defaultMarkdownSettings: MarkdownExportSettings = {
   useOcrFallback: true,
   includeAnnotations: true,
   aiCleanup: false,
+  engineSelectionExplicit: false,
 };
 
 function usesDoclingMarkdownEngine(engineId: MarkdownExportSettings["defaultEngine"]) {
