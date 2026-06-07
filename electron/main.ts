@@ -209,11 +209,12 @@ function sendOpenPathsToWindow(window: BrowserWindow, filePaths: string[]) {
     );
   };
 
-  if (window.webContents.isLoading()) {
-    window.webContents.once("did-finish-load", sendPaths);
-    return;
-  }
-
+  // Always go through the renderer-ready handshake: if the renderer has
+  // signalled readiness we send immediately, otherwise we queue the paths for
+  // readyForOpenFiles to flush. Relying on webContents.isLoading() here is
+  // unreliable — when called from the window's own did-finish-load handler it
+  // can still report "loading", causing a second did-finish-load wait that
+  // never fires and silently drops the open request (cold-launch Open With).
   sendPaths();
 }
 

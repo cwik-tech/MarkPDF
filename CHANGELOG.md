@@ -84,3 +84,7 @@
 
 Updated the Electron preload bridge in `electron/preload.ts` and refined type definitions in `src/global.d.ts` to support changes in the main application logic. Refactored the `src/App.tsx` component with multiple targeted adjustments and updated semantic indexing behavior in `src/semanticIndex.ts`, collectively addressing core application functionality across the IPC layer, type system, and search capabilities.
 
+## 2026-06-07 00:49
+
+Fixed bugs in the Electron bootstrap and main process logic in `electron/bootstrap.ts` and `electron/main.ts` to address issues with file handling and macOS integration. The changes target the app's startup sequence and main process initialization to improve reliability of file operations and system handoff behavior.
+
