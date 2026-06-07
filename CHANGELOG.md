@@ -3,6 +3,7 @@
 ## 2026-06-07 13:51
 
 - Updated the macOS release workflow to import the Developer ID certificate into a temporary CI keychain with explicit codesign access before electron-builder packaging.
+- Moved the temporary keychain path export into the workflow shell step so GitHub Actions validates the release workflow before tag-triggered builds.
 
 ## 2026-06-07 13:22
 
