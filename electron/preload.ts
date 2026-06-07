@@ -71,8 +71,11 @@ contextBridge.exposeInMainWorld("pdfReader", {
     listEngines: () => ipcRenderer.invoke("markdown:list-engines"),
     installState: () => ipcRenderer.invoke("markdown:install-state"),
     installDocling: () => ipcRenderer.invoke("markdown:install-docling"),
-    convertWithDocling: (bytes: Uint8Array | number[], settings: unknown) =>
-      ipcRenderer.invoke("markdown:convert-docling", bytes, settings),
+    convertWithDocling: (
+      bytes: Uint8Array | number[],
+      settings: unknown,
+      outputMarkdownPath?: string,
+    ) => ipcRenderer.invoke("markdown:convert-docling", bytes, settings, outputMarkdownPath),
   },
   onMarkdownInstallProgress: (callback: (progress: unknown) => void) => {
     const listener = (_event: unknown, progress: unknown) => callback(progress);

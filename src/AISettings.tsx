@@ -67,7 +67,7 @@ const defaultSemanticSettings: SemanticSearchSettings = {
 };
 
 const defaultMarkdownSettings: MarkdownExportSettings = {
-  defaultEngine: "docling-managed",
+  defaultEngine: "auto",
   exportMode: "readable",
   includePageMarkers: true,
   useOcrFallback: true,
@@ -76,6 +76,8 @@ const defaultMarkdownSettings: MarkdownExportSettings = {
 };
 
 function markdownEngineLabel(engine: MarkdownExportSettings["defaultEngine"]) {
+  if (engine === "auto") return "Auto";
+  if (engine === "docling-vlm-smoldocling") return "Docling VLM (SmolDocling)";
   return engine === "docling-managed" ? "Docling" : "Basic text extraction";
 }
 
@@ -321,10 +323,7 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
 
   const saveMarkdownSettings = async (patch: Partial<MarkdownExportSettings>) => {
     if (!window.pdfReader?.markdown) return;
-    const nextSettings = await window.pdfReader.markdown.saveSettings({
-      ...patch,
-      defaultEngine: "docling-managed"
-    });
+    const nextSettings = await window.pdfReader.markdown.saveSettings(patch);
     setMarkdownSettings(nextSettings);
     showToast("Markdown settings saved.");
   };
@@ -565,8 +564,19 @@ function MarkdownSettingsPage({
         <div className="settings-section-heading">
           <div>
             <h3>Conversion Engine</h3>
-            <p>View the Markdown conversion path used by default.</p>
+            <p>Choose the default PDF to Markdown conversion path.</p>
           </div>
+        </div>
+        <div className="provider-editor">
+          <label>
+            Default engine
+            <select value={settings.defaultEngine} onChange={(event) => onChange({ defaultEngine: event.target.value as MarkdownExportSettings["defaultEngine"] })}>
+              <option value="auto">Auto</option>
+              <option value="docling-managed">Docling standard</option>
+              <option value="docling-vlm-smoldocling">Docling VLM (SmolDocling)</option>
+              <option value="builtin-text">Basic text extraction</option>
+            </select>
+          </label>
         </div>
         <div className="settings-summary markdown-engine-summary">
           <span>

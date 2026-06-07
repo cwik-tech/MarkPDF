@@ -10,13 +10,73 @@ interface ListBlock {
   items: string[];
 }
 
+type TableAlignment = "left" | "center" | "right";
+
+interface TableBlock {
+  kind: "table";
+  headers: string[];
+  alignments: Array<TableAlignment | undefined>;
+  rows: string[][];
+}
+
 type Block =
   | { kind: "heading"; level: number; text: string }
   | { kind: "paragraph"; text: string }
   | { kind: "blockquote"; text: string }
   | { kind: "code"; language: string; text: string }
   | { kind: "hr" }
-  | ListBlock;
+  | ListBlock
+  | TableBlock;
+
+function splitTableRow(line: string) {
+  const trimmed = line.trim();
+  const cells: string[] = [];
+  let cell = "";
+
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const character = trimmed[index];
+    const nextCharacter = trimmed[index + 1];
+
+    if (character === "\\" && nextCharacter === "|") {
+      cell += "|";
+      index += 1;
+      continue;
+    }
+
+    if (character === "|") {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+
+    cell += character;
+  }
+
+  cells.push(cell.trim());
+
+  if (trimmed.startsWith("|")) cells.shift();
+  if (trimmed.endsWith("|")) cells.pop();
+  return cells;
+}
+
+function tableAlignment(separatorCell: string): TableAlignment | undefined {
+  const cell = separatorCell.trim();
+  if (!/^:?-{3,}:?$/.test(cell)) return undefined;
+  if (cell.startsWith(":") && cell.endsWith(":")) return "center";
+  if (cell.endsWith(":")) return "right";
+  if (cell.startsWith(":")) return "left";
+  return undefined;
+}
+
+function isTableSeparatorLine(line: string) {
+  if (!line.includes("|")) return false;
+  const cells = splitTableRow(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function normalizeTableCells(cells: string[], columnCount: number) {
+  return Array.from({ length: columnCount }, (_, index) => cells[index] ?? "");
+}
 
 function parseMarkdown(markdown: string): Block[] {
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
@@ -69,6 +129,41 @@ function parseMarkdown(markdown: string): Block[] {
       continue;
     }
 
+    if (
+      trimmed.includes("|") &&
+      index + 1 < lines.length &&
+      isTableSeparatorLine(lines[index + 1])
+    ) {
+      flushParagraph();
+
+      const headers = splitTableRow(trimmed);
+      const alignments = splitTableRow(lines[index + 1]).map(tableAlignment);
+      const rows: string[][] = [];
+      let rowIndex = index + 2;
+
+      while (rowIndex < lines.length) {
+        const rowLine = lines[rowIndex].trim();
+        if (!rowLine || !rowLine.includes("|") || isTableSeparatorLine(rowLine)) break;
+        rows.push(splitTableRow(rowLine));
+        rowIndex += 1;
+      }
+
+      const columnCount = Math.max(
+        headers.length,
+        alignments.length,
+        ...rows.map((row) => row.length),
+      );
+
+      blocks.push({
+        kind: "table",
+        headers: normalizeTableCells(headers, columnCount),
+        alignments: Array.from({ length: columnCount }, (_, columnIndex) => alignments[columnIndex]),
+        rows: rows.map((row) => normalizeTableCells(row, columnCount)),
+      });
+      index = rowIndex - 1;
+      continue;
+    }
+
     const unorderedMatch = trimmed.match(/^[-*+]\s+(.+)$/);
     if (unorderedMatch) {
       flushParagraph();
@@ -113,6 +208,10 @@ function parseMarkdown(markdown: string): Block[] {
 
   flushParagraph();
   return blocks;
+}
+
+function tableCellStyle(alignment?: TableAlignment) {
+  return alignment ? { textAlign: alignment } : undefined;
 }
 
 function splitBySearch(text: string, searchQuery?: string): ReactNode[] {
@@ -206,6 +305,35 @@ export function MarkdownPreview({ markdown, searchQuery }: MarkdownPreviewProps)
                 <li key={itemIndex}>{inlineMarkdown(item, searchQuery)}</li>
               ))}
             </ul>
+          );
+        }
+
+        if (block.kind === "table") {
+          return (
+            <div className="markdown-table-scroll" key={index}>
+              <table>
+                <thead>
+                  <tr>
+                    {block.headers.map((header, columnIndex) => (
+                      <th key={columnIndex} style={tableCellStyle(block.alignments[columnIndex])}>
+                        {inlineMarkdown(header, searchQuery)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={rowIndex}>
+                      {row.map((cell, columnIndex) => (
+                        <td key={columnIndex} style={tableCellStyle(block.alignments[columnIndex])}>
+                          {inlineMarkdown(cell, searchQuery)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           );
         }
 

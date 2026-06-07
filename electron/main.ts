@@ -659,7 +659,8 @@ ipcMain.handle(
     _event,
     bytes: Uint8Array | number[],
     settings: MarkdownExportSettings,
-  ) => convertPdfWithDocling(bytes, settings),
+    outputMarkdownPath?: string,
+  ) => convertPdfWithDocling(bytes, settings, outputMarkdownPath),
 );
 
 ipcMain.handle("recent:clear", async () => {

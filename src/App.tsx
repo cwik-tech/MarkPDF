@@ -64,6 +64,7 @@ import {
 import { detectOcrNeed, runDocumentOcr } from "./pdf/ocr";
 import { convertDocumentToMarkdown } from "./documentConversion/markdown";
 import type { MarkdownConversionProgress } from "./documentConversion/types";
+import { selectMarkdownEngine } from "./documentConversion/engineSelection";
 import type {
   FitMode,
   FormFieldState,
@@ -131,13 +132,17 @@ const defaultSemanticSettings: SemanticSearchSettings = {
 };
 
 const defaultMarkdownSettings: MarkdownExportSettings = {
-  defaultEngine: "docling-managed",
+  defaultEngine: "auto",
   exportMode: "readable",
   includePageMarkers: true,
   useOcrFallback: true,
   includeAnnotations: true,
   aiCleanup: false,
 };
+
+function usesDoclingMarkdownEngine(engineId: MarkdownExportSettings["defaultEngine"]) {
+  return engineId === "docling-managed" || engineId === "docling-vlm-smoldocling";
+}
 
 function normalizeSemanticSettings(
   settings: SemanticSearchSettings,
@@ -1606,18 +1611,34 @@ export default function App() {
       const savedSettings =
         (await window.pdfReader?.markdown.getSettings()) ??
         defaultMarkdownSettings;
-      const settings: MarkdownExportSettings = {
-        ...savedSettings,
-        defaultEngine: "docling-managed",
-      };
-      let useBuiltInFallback = false;
+      const settings: MarkdownExportSettings = savedSettings;
+      let effectiveSettings: MarkdownExportSettings = settings;
+      if (settings.defaultEngine === "auto") {
+        await showOperationProgress({
+          title: "Saving Markdown",
+          message: "Profiling document",
+          current: 0,
+          total: activePdfTab.pageCount + 3,
+        });
+        const selection = await selectMarkdownEngine(
+          activePdfTab.pdfDoc,
+          activePdfTab.ocrPages,
+          settings,
+        );
+        effectiveSettings = {
+          ...settings,
+          defaultEngine: selection.engineId,
+        };
+      }
+
+      let useBuiltInFallback = effectiveSettings.defaultEngine === "builtin-text";
       let fallbackWarning: string | null = null;
 
-      if (window.pdfReader?.markdown) {
+      if (window.pdfReader?.markdown && usesDoclingMarkdownEngine(effectiveSettings.defaultEngine)) {
         try {
           const engines = await window.pdfReader.markdown.listEngines();
           let managedEngine = engines.find(
-            (engine) => engine.id === "docling-managed",
+            (engine) => engine.id === effectiveSettings.defaultEngine,
           );
           if (!managedEngine?.available) {
             await showOperationProgress({
@@ -1644,7 +1665,7 @@ export default function App() {
 
             const nextEngines = await window.pdfReader.markdown.listEngines();
             managedEngine = nextEngines.find(
-              (engine) => engine.id === "docling-managed",
+              (engine) => engine.id === effectiveSettings.defaultEngine,
             );
           }
 
@@ -1659,7 +1680,7 @@ export default function App() {
           fallbackWarning =
             "Advanced Markdown conversion was unavailable; saved with basic text extraction.";
         }
-      } else {
+      } else if (!window.pdfReader?.markdown && usesDoclingMarkdownEngine(effectiveSettings.defaultEngine)) {
         useBuiltInFallback = true;
         fallbackWarning =
           "Advanced Markdown conversion is available only in the desktop app; saved with basic text extraction.";
@@ -1686,23 +1707,24 @@ export default function App() {
           ocrPages: activePdfTab.ocrPages,
           overlays: activePdfTab.overlays,
           settings: conversionSettings,
+          targetPath,
           onProgress,
         });
 
       let result = await (async () => {
         try {
           return await convertWithSettings({
-            ...settings,
+            ...effectiveSettings,
             defaultEngine: useBuiltInFallback
               ? "builtin-text"
-              : "docling-managed",
+              : effectiveSettings.defaultEngine,
           });
         } catch (error) {
           if (useBuiltInFallback) throw error;
           fallbackWarning =
             "Advanced Markdown conversion failed; saved with basic text extraction.";
           return convertWithSettings({
-            ...settings,
+            ...effectiveSettings,
             defaultEngine: "builtin-text",
           });
         }

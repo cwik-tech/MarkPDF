@@ -1,13 +1,13 @@
 import { app } from "electron";
-import { access, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export type MarkdownEngineId = "builtin-text" | "docling-managed";
+export type MarkdownEngineId = "auto" | "builtin-text" | "docling-managed" | "docling-vlm-smoldocling";
 export type MarkdownExportMode = "readable" | "page-preserving";
 
 export interface MarkdownEngineAvailability {
@@ -42,7 +42,7 @@ export interface MarkdownStoreSchema {
 }
 
 export const defaultMarkdownExportSettings: MarkdownExportSettings = {
-  defaultEngine: "docling-managed",
+  defaultEngine: "auto",
   exportMode: "readable",
   includePageMarkers: true,
   useOcrFallback: true,
@@ -51,10 +51,18 @@ export const defaultMarkdownExportSettings: MarkdownExportSettings = {
 };
 
 export function normalizeMarkdownExportSettings(settings?: Partial<MarkdownExportSettings>): MarkdownExportSettings {
+  const defaultEngine =
+    settings?.defaultEngine === "auto" ||
+    settings?.defaultEngine === "builtin-text" ||
+    settings?.defaultEngine === "docling-managed" ||
+    settings?.defaultEngine === "docling-vlm-smoldocling"
+      ? settings.defaultEngine
+      : defaultMarkdownExportSettings.defaultEngine;
+
   return {
     ...defaultMarkdownExportSettings,
     ...settings,
-    defaultEngine: "docling-managed"
+    defaultEngine
   };
 }
 
@@ -167,18 +175,37 @@ export async function getMarkdownEngineAvailability(): Promise<MarkdownEngineAva
         available: true,
         version: stdout.trim() || "Installed"
       });
+      engines.push({
+        id: "docling-vlm-smoldocling",
+        name: "Docling VLM (SmolDocling)",
+        available: true,
+        version: stdout.trim() || "Installed"
+      });
     } catch (error) {
+      const message = error instanceof Error ? error.message : "The managed Docling engine could not be started.";
       engines.push({
         id: "docling-managed",
         name: "Docling",
         available: false,
-        error: error instanceof Error ? error.message : "The managed Docling engine could not be started."
+        error: message
+      });
+      engines.push({
+        id: "docling-vlm-smoldocling",
+        name: "Docling VLM (SmolDocling)",
+        available: false,
+        error: message
       });
     }
   } else {
     engines.push({
       id: "docling-managed",
       name: "Docling",
+      available: false,
+      error: "Not installed. It will be prepared automatically."
+    });
+    engines.push({
+      id: "docling-vlm-smoldocling",
+      name: "Docling VLM (SmolDocling)",
       available: false,
       error: "Not installed. It will be prepared automatically."
     });
@@ -285,11 +312,49 @@ async function readNewestMarkdownFile(directory: string) {
 
   markdownFiles.sort((left, right) => right.mtimeMs - left.mtimeMs);
   const markdownPath = markdownFiles[0]?.path;
-  if (!markdownPath) return "";
+  if (!markdownPath) return null;
   return readFile(markdownPath, "utf8");
 }
 
-export async function convertPdfWithDocling(bytes: Uint8Array | number[], settings: MarkdownExportSettings) {
+function isExternalMarkdownUrl(url: string) {
+  return /^(?:[a-z][a-z0-9+.-]*:|\/|#)/i.test(url);
+}
+
+function rewriteReferencedImagePaths(markdown: string, assetsDirName: string) {
+  return markdown.replace(/(!\[[^\]]*]\()([^)]+)(\))/g, (match, prefix, rawUrl, suffix) => {
+    const url = String(rawUrl).trim();
+    if (!url || isExternalMarkdownUrl(url)) return match;
+    return `${prefix}${assetsDirName}/${url.replace(/^\.\//, "")}${suffix}`;
+  });
+}
+
+async function copyReferencedOutputAssets(outputDir: string, outputMarkdownPath: string) {
+  const entries = await readdir(outputDir, { recursive: true });
+  const targetBaseName = basename(outputMarkdownPath, extname(outputMarkdownPath));
+  const assetsDirName = `${targetBaseName}-assets`;
+  const assetsDir = join(dirname(outputMarkdownPath), assetsDirName);
+  let copied = false;
+
+  for (const entry of entries) {
+    if (typeof entry !== "string" || entry.endsWith(".md")) continue;
+    const sourcePath = join(outputDir, entry);
+    const fileStat = await stat(sourcePath);
+    if (!fileStat.isFile()) continue;
+
+    const targetPath = join(assetsDir, entry);
+    await mkdir(dirname(targetPath), { recursive: true });
+    await copyFile(sourcePath, targetPath);
+    copied = true;
+  }
+
+  return copied ? assetsDirName : null;
+}
+
+export async function convertPdfWithDocling(
+  bytes: Uint8Array | number[],
+  settings: MarkdownExportSettings,
+  outputMarkdownPath?: string
+) {
   const doclingPath = doclingExecutablePath();
   if (!(await pathExists(doclingPath))) {
     throw new Error("Docling is not installed in the app-managed engine directory.");
@@ -308,10 +373,14 @@ export async function convertPdfWithDocling(bytes: Uint8Array | number[], settin
       "--output",
       outputDir,
       "--image-export-mode",
-      "placeholder",
+      outputMarkdownPath ? "referenced" : "embedded",
+      "--tables",
       "--table-mode",
       "accurate"
     ];
+    if (settings.defaultEngine === "docling-vlm-smoldocling") {
+      args.push("--pipeline", "vlm", "--vlm-model", "smoldocling");
+    }
     if (!settings.useOcrFallback) {
       args.push("--no-ocr");
     }
@@ -323,14 +392,21 @@ export async function convertPdfWithDocling(bytes: Uint8Array | number[], settin
       maxBuffer: 128 * 1024 * 1024
     });
 
-    const markdown = (await readNewestMarkdownFile(outputDir)).trim();
+    let markdown = (await readNewestMarkdownFile(outputDir))?.trim() ?? "";
     if (!markdown) {
       throw new Error(stderr.trim() || "Docling produced empty Markdown.");
     }
 
+    if (outputMarkdownPath) {
+      const assetsDirName = await copyReferencedOutputAssets(outputDir, outputMarkdownPath);
+      if (assetsDirName) {
+        markdown = rewriteReferencedImagePaths(markdown, assetsDirName);
+      }
+    }
+
     return {
       markdown: `${markdown}\n`,
-      engineId: "docling-managed" as const,
+      engineId: settings.defaultEngine === "docling-vlm-smoldocling" ? "docling-vlm-smoldocling" as const : "docling-managed" as const,
       warnings: stderr.trim() ? [stderr.trim()] : []
     };
   } finally {
