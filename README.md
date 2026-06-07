@@ -4,12 +4,6 @@ An open-source, minimalistic, standalone PDF and Markdown reader that puts the f
 
 ![MarkPDF reading a PDF](docs/screenshots/app-window.png)
 
-## Motivation
-
-Reading PDFs is free everywhere. Editing them, signing them, and OCR is where most apps put up a paywall or a subscription. MarkPDF brings those capabilities together in a single open-source desktop app that runs entirely on your machine — there is no server, no account, and your documents never leave your computer.
-
- On top of the everyday viewer, it adds genuinely useful extras like on-device OCR and AI-powered semantic search (local!), so you can find information by meaning rather than exact keywords — without sending anything to the cloud.
-
 ## Features
 
 On top of typical pdf reader features (view, rotate, zoom etc.) the app contains the following capabilities:
@@ -75,7 +69,8 @@ Looking for people who want to contribute to codebase and bring it to next level
 2. Signature interface - Bring Your Own Key (BYOK) for any signature provider - to remove vendor lock-in like the one in traditial PDF reader 
 3. Expose as MCP/CLI (plus a Skill.md) for pdf-to-markdown and image-to-pdf conversions - to have a fixed realiable tool for this task
 4. Discussion interface for AI agents - read your PDF and discuss with multiple AI agents
-5. Make semantic search state-of-the-art - I just did the basic one, good but not great
+5. Obsidian plugin - read and discuss with agents in MarkPDF, save conclusions in Obsidian/MD file.
+6. Make semantic search state-of-the-art - I just did the basic one, good but not great
 6. Make OCR state of the art - handling images is missing
 
 and anything else you think we should implement to make it awesome.
