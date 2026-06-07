@@ -43,7 +43,6 @@ On top of typical pdf reader features (view, rotate, zoom etc.) the app contains
 - Highlight selected text.
 - Add pinned comments from selected text; edit and delete them.
 - Comments and highlights are saved as standard PDF annotations, viewable in other Acrobat-compatible readers.
-- Undo/redo support.
 
 ### Forms
 - Detect fillable PDF form fields.
@@ -57,19 +56,6 @@ On top of typical pdf reader features (view, rotate, zoom etc.) the app contains
 > Note: signatures are *visual* only — MarkPDF does not provide certificate-backed digital signatures, identity verification, or legal/compliance guarantees yet.
 
 
-## Tech Stack
-
-- **TypeScript** + **React 19** for the UI.
-- **Electron** for the desktop shell.
-- **PDF.js** (`pdfjs-dist`) for rendering.
-- **pdf-lib** for editing, annotations, forms, and export.
-- **Tesseract.js** for on-device OCR of scanned/image-only PDFs.
-- **Vite** for bundling, **electron-builder** for packaging.
-- **Embeddings:** generated locally with [Transformers.js](https://github.com/huggingface/transformers.js) running ONNX models in-process. Curated models include **BGE Small EN v1.5** (384-dim), **MiniLM L6 v2** (384-dim), and **BGE Base EN v1.5** (768-dim). Embeddings use mean pooling with L2 normalization.
-- **Vector store:** a local **SQLite** database (via `sql.js` / WebAssembly) persisted to the app's user-data directory. Document text is chunked, embedded, and stored as Float32 vector blobs alongside their source page, with deduplication by content hash so re-opening a document doesn't re-index it.
-- **Retrieval:** queries are embedded with the same model and ranked by **cosine similarity** against the stored chunk vectors, with a configurable score threshold (loose / balanced / strict) to tune precision vs. recall.
-- **Tunable chunking:** precise, balanced, and contextual presets control chunk size and overlap to trade granularity against context.
-- **Text extraction:** native PDF text where available, falling back to **Tesseract.js OCR** for scanned pages so even image-only PDFs become searchable.
 
 ## Vision
 
@@ -92,7 +78,20 @@ Looking for people who want to contribute to codebase and bring it to next level
 5. Make semantic search state-of-the-art - I just did the basic one, good but not great
 6. Make OCR state of the art - handling images is missing
 
-and anything else you think we should implement to make it awesome :)
+and anything else you think we should implement to make it awesome.
+
+## Tech Stack
+
+- **TypeScript** + **React 19** for the UI.
+- **Electron** for the desktop shell.
+- **PDF.js** (`pdfjs-dist`) for rendering.
+- **pdf-lib** for editing, annotations, forms, and export.
+- **Vite** for bundling, **electron-builder** for packaging.
+- **Embeddings:** generated locally with [Transformers.js](https://github.com/huggingface/transformers.js) running ONNX models in-process. Curated models include **BGE Small EN v1.5** (384-dim), **MiniLM L6 v2** (384-dim), and **BGE Base EN v1.5** (768-dim). Embeddings use mean pooling with L2 normalization.
+- **Vector store:** a local **SQLite** database (via `sql.js` / WebAssembly) persisted to the app's user-data directory. Document text is chunked, embedded, and stored as Float32 vector blobs alongside their source page, with deduplication by content hash so re-opening a document doesn't re-index it.
+- **Retrieval:** queries are embedded with the same model and ranked by **cosine similarity** against the stored chunk vectors, with a configurable score threshold (loose / balanced / strict) to tune precision vs. recall.
+- **Tunable chunking:** precise, balanced, and contextual presets control chunk size and overlap to trade granularity against context.
+- **Text extraction:** native PDF text where available, falling back to **Tesseract.js OCR** for scanned pages so even image-only PDFs become searchable.
 
 ## Development
 
