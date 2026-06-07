@@ -946,6 +946,137 @@ select {
   justify-content: center;
 }
 
+.markdown-document-scroll {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 36px 24px 56px;
+}
+
+.markdown-preview {
+  width: min(880px, 100%);
+  margin: 0 auto;
+  padding: 42px 56px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 12px 32px rgba(30, 36, 46, 0.12);
+}
+
+.markdown-preview > :first-child {
+  margin-top: 0;
+}
+
+.markdown-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview h4,
+.markdown-preview h5,
+.markdown-preview h6 {
+  margin: 1.25em 0 0.45em;
+  line-height: 1.18;
+  letter-spacing: 0;
+}
+
+.markdown-preview h1 {
+  font-size: 30px;
+}
+
+.markdown-preview h2 {
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+  font-size: 23px;
+}
+
+.markdown-preview h3 {
+  font-size: 18px;
+}
+
+.markdown-preview p,
+.markdown-preview li {
+  font-size: 15px;
+  line-height: 1.72;
+}
+
+.markdown-preview p {
+  margin: 0.75em 0;
+}
+
+.markdown-preview ul,
+.markdown-preview ol {
+  margin: 0.75em 0;
+  padding-left: 1.45em;
+}
+
+.markdown-preview blockquote {
+  margin: 1em 0;
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+}
+
+.markdown-preview pre {
+  position: relative;
+  overflow: auto;
+  margin: 1em 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
+.markdown-preview pre code {
+  display: block;
+  white-space: pre;
+}
+
+.markdown-preview code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+}
+
+.markdown-code-language {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.markdown-preview a {
+  color: var(--accent);
+}
+
+.markdown-preview img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1em 0;
+  border-radius: 6px;
+}
+
+.markdown-preview hr {
+  height: 1px;
+  margin: 1.5em 0;
+  border: 0;
+  background: var(--border);
+}
+
+.markdown-preview mark {
+  border-radius: 3px;
+  background: rgba(255, 215, 0, 0.82);
+  color: #1f2937;
+}
+
 .page-wrap {
   display: grid;
   grid-template-columns: 72px minmax(0, max-content);

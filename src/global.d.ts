@@ -87,6 +87,7 @@ declare global {
       confirmUnsaved: (documentName?: string) => Promise<"save" | "discard" | "cancel">;
       readPdf: (filePath: string) => Promise<{ path: string; name: string; bytes: number[] }>;
       readImage: (filePath: string) => Promise<{ path: string; name: string; mimeType: string; bytes: number[] }>;
+      readMarkdown: (filePath: string) => Promise<{ path: string; name: string; markdown: string }>;
       writePdf: (filePath: string, bytes: number[]) => Promise<{ path: string; name: string }>;
       writeMarkdown: (filePath: string, markdown: string) => Promise<{ path: string; name: string }>;
       openFileInNewWindow: (filePath: string) => Promise<void>;

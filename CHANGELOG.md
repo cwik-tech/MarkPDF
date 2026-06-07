@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Added read-only Markdown preview tabs, Markdown file opening from dialog/drop/Finder handoff, and packaged `.md`/`.markdown` file association support alongside PDFs.
 - Added optional app-managed Docling Markdown conversion with engine availability detection, settings-based installation, and fallback to the built-in exporter.
 - Added Save as Markdown with a dedicated document-conversion layer, Markdown export settings, OCR fallback, annotation inclusion, and save progress feedback.
 - Added Semantic Search score display and configurable relevance cutoff presets, with Balanced defaulting to a stricter 0.30 minimum score.

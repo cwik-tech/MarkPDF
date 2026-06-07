@@ -173,11 +173,12 @@ app.on("window-all-closed", () => {
 
 ipcMain.handle("dialog:open-pdf", async () => {
   const result = await dialog.showOpenDialog({
-    title: "Open PDF or Images",
+    title: "Open PDF, Markdown, or Images",
     properties: ["openFile", "multiSelections"],
     filters: [
-      { name: "PDF and image files", extensions: ["pdf", "png", "jpg", "jpeg", "webp", "gif"] },
+      { name: "PDF, Markdown, and image files", extensions: ["pdf", "md", "markdown", "png", "jpg", "jpeg", "webp", "gif"] },
       { name: "PDF files", extensions: ["pdf"] },
+      { name: "Markdown files", extensions: ["md", "markdown"] },
       { name: "Image files", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }
     ]
   });
@@ -251,6 +252,16 @@ ipcMain.handle("file:read-image", async (_event, filePath: string) => {
     name: basename(filePath),
     mimeType: imageMimeTypeForPath(filePath),
     bytes: Array.from(data)
+  };
+});
+
+ipcMain.handle("file:read-markdown", async (_event, filePath: string) => {
+  const markdown = await readFile(filePath, "utf8");
+  addRecentFile(filePath);
+  return {
+    path: filePath,
+    name: basename(filePath),
+    markdown
   };
 });
 
