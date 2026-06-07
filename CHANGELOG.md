@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-07 13:51
+
+- Updated the macOS release workflow to import the Developer ID certificate into a temporary CI keychain with explicit codesign access before electron-builder packaging.
+
 ## 2026-06-07 13:22
 
 - Ignored local Apple certificate request, certificate, private key, and signing identity files to prevent accidental commits of release credentials.
