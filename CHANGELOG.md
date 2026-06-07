@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Fixed Finder/Open With launches so PDFs and Markdown files open as tabs in the running app instead of spawning another window.
 - Added explicit macOS document UTIs so Finder recommends the app for Markdown and PDF default-open selection.
 - Added Docling Markdown post-processing with stable page anchors, app annotation export, and clearer scanned/low-confidence page warnings.
 - Added a read-only Markdown settings summary showing the default conversion engine and fallback engine.

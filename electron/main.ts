@@ -54,6 +54,13 @@ const imageMimeTypes = new Map([
   [".png", "image/png"],
   [".webp", "image/webp"]
 ]);
+const supportedFileExtensions = new Set([".pdf", ".md", ".markdown", ...imageMimeTypes.keys()]);
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
 
 function addRecentFile(filePath: string) {
   const recentFiles = store.get("recentFiles", []);
@@ -62,6 +69,10 @@ function addRecentFile(filePath: string) {
 
 function imageMimeTypeForPath(filePath: string) {
   return imageMimeTypes.get(extname(filePath).toLowerCase()) ?? "application/octet-stream";
+}
+
+function filePathArgsFromArgv(argv: string[]) {
+  return argv.filter((arg) => supportedFileExtensions.has(extname(arg).toLowerCase()));
 }
 
 function removeRecentFile(filePath: string) {
@@ -91,8 +102,38 @@ function queueOpenPath(filePath: string) {
     const paths = pendingOpenPaths;
     pendingOpenPaths = [];
     openPathFlushTimer = null;
-    void createWindow(paths);
+    void openPathsInApp(paths);
   }, 150);
+}
+
+function sendOpenPathsToWindow(window: BrowserWindow, filePaths: string[]) {
+  if (window.isMinimized()) {
+    window.restore();
+  }
+  window.show();
+  window.focus();
+
+  const sendPaths = () => window.webContents.send("app:open-files", filePaths);
+  if (window.webContents.isLoading()) {
+    window.webContents.once("did-finish-load", sendPaths);
+    return;
+  }
+
+  sendPaths();
+}
+
+async function openPathsInApp(filePaths: string[]) {
+  if (filePaths.length === 0) return;
+
+  const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
+  const targetWindow = BrowserWindow.getFocusedWindow() ?? windows[windows.length - 1];
+
+  if (!targetWindow) {
+    await createWindow(filePaths);
+    return;
+  }
+
+  sendOpenPathsToWindow(targetWindow, filePaths);
 }
 
 const createWindow = async (filePaths: string[] = []) => {
@@ -148,6 +189,7 @@ const createWindow = async (filePaths: string[] = []) => {
 
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
+  if (!gotSingleInstanceLock) return;
   if (!app.isReady()) {
     pendingOpenPaths = [...pendingOpenPaths.filter((item) => item !== filePath), filePath];
     return;
@@ -155,7 +197,24 @@ app.on("open-file", (event, filePath) => {
   queueOpenPath(filePath);
 });
 
+app.on("second-instance", (_event, argv) => {
+  const filePaths = filePathArgsFromArgv(argv);
+  if (filePaths.length > 0) {
+    void openPathsInApp(filePaths);
+    return;
+  }
+
+  const targetWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().at(-1);
+  if (!targetWindow) return;
+  if (targetWindow.isMinimized()) {
+    targetWindow.restore();
+  }
+  targetWindow.show();
+  targetWindow.focus();
+});
+
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return;
   setDockIcon();
   const initialOpenPaths = pendingOpenPaths;
   pendingOpenPaths = [];

@@ -80,7 +80,7 @@
             ],
             "CFBundleTypeIconFile": "icon.icns",
             "CFBundleTypeName": "Markdown Document",
-            "CFBundleTypeRole": "Viewer",
+            "CFBundleTypeRole": "Editor",
             "LSHandlerRank": "Alternate",
             "LSItemContentTypes": [
               "net.daringfireball.markdown"
