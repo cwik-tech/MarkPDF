@@ -1,6 +1,6 @@
 # MarkPDF
 
-An open-source, minimalistic, standalone PDF and Markdown reader that puts the features usually locked behind paywalls — editing PDFs, annotating, filling forms, and signing — into a free, local-first desktop app.
+An open-source, minimalistic, standalone PDF and Markdown reader that puts the features usually locked behind paywalls (editing PDFs, annotating, and signing) — into a free, local-first desktop app with advanced AI features.
 
 ![MarkPDF reading a PDF](docs/screenshots/app-window.png)
 
