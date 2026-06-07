@@ -60,6 +60,7 @@ export interface SemanticDatabaseInfo {
 
 export type MarkdownEngineId = "builtin-text" | "docling-managed";
 export type MarkdownExportMode = "readable" | "page-preserving";
+type BytePayload = Uint8Array | number[];
 
 export interface MarkdownEngineAvailability {
   id: MarkdownEngineId;
@@ -92,10 +93,10 @@ declare global {
       savePdfDialog: (defaultPath?: string) => Promise<string | null>;
       saveMarkdownDialog: (defaultPath?: string) => Promise<string | null>;
       confirmUnsaved: (documentName?: string) => Promise<"save" | "discard" | "cancel">;
-      readPdf: (filePath: string) => Promise<{ path: string; name: string; bytes: number[] }>;
-      readImage: (filePath: string) => Promise<{ path: string; name: string; mimeType: string; bytes: number[] }>;
+      readPdf: (filePath: string) => Promise<{ path: string; name: string; bytes: Uint8Array }>;
+      readImage: (filePath: string) => Promise<{ path: string; name: string; mimeType: string; bytes: Uint8Array }>;
       readMarkdown: (filePath: string) => Promise<{ path: string; name: string; markdown: string }>;
-      writePdf: (filePath: string, bytes: number[]) => Promise<{ path: string; name: string }>;
+      writePdf: (filePath: string, bytes: BytePayload) => Promise<{ path: string; name: string }>;
       writeMarkdown: (filePath: string, markdown: string) => Promise<{ path: string; name: string }>;
       openFileInNewWindow: (filePath: string) => Promise<void>;
       setFullScreen: (enabled: boolean) => Promise<boolean>;
@@ -122,7 +123,7 @@ declare global {
         markModelDownloaded: (modelId: string) => Promise<SemanticSearchSettings>;
         removeModel: (modelId: string) => Promise<SemanticSearchSettings>;
         loadDatabase: () => Promise<number[] | null>;
-        saveDatabase: (bytes: number[]) => Promise<void>;
+        saveDatabase: (bytes: BytePayload) => Promise<void>;
         clearDatabase: () => Promise<SemanticDatabaseInfo>;
         databaseInfo: () => Promise<SemanticDatabaseInfo>;
       };
@@ -132,7 +133,7 @@ declare global {
         listEngines: () => Promise<MarkdownEngineAvailability[]>;
         installState: () => Promise<MarkdownInstallProgress | null>;
         installDocling: () => Promise<MarkdownEngineAvailability[]>;
-        convertWithDocling: (bytes: number[], settings: MarkdownExportSettings) => Promise<{ markdown: string; engineId: MarkdownEngineId; warnings: string[] }>;
+        convertWithDocling: (bytes: BytePayload, settings: MarkdownExportSettings) => Promise<{ markdown: string; engineId: MarkdownEngineId; warnings: string[] }>;
       };
       onMarkdownInstallProgress: (callback: (progress: MarkdownInstallProgress) => void) => () => void;
       onFullScreenChange: (callback: (enabled: boolean) => void) => () => void;

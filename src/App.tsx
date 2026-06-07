@@ -1264,7 +1264,7 @@ export default function App() {
         current: 1,
         total: 3
       });
-      const written = await window.pdfReader.writePdf(targetPath, Array.from(bytes));
+      const written = await window.pdfReader.writePdf(targetPath, bytes);
       const nextBytes = Uint8Array.from(bytes);
       await showOperationProgress({
         title: "Saving PDF",

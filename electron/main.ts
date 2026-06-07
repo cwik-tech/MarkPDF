@@ -80,8 +80,24 @@ function imageMimeTypeForPath(filePath: string) {
   return imageMimeTypes.get(extname(filePath).toLowerCase()) ?? "application/octet-stream";
 }
 
+function bytesForIpc(data: Buffer) {
+  return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+}
+
+function filePathFromArg(arg: string) {
+  const filePath = arg.startsWith("file://") ? fileURLToPath(arg) : arg;
+  return supportedFileExtensions.has(extname(filePath).toLowerCase()) ? filePath : null;
+}
+
 function filePathArgsFromArgv(argv: string[]) {
-  return argv.filter((arg) => supportedFileExtensions.has(extname(arg).toLowerCase()));
+  return argv.flatMap((arg) => {
+    try {
+      const filePath = filePathFromArg(arg);
+      return filePath ? [filePath] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 function uniqueFilePaths(filePaths: string[]) {
@@ -239,6 +255,7 @@ if (openFileBootstrapState) {
   });
 }
 
+pendingOpenPaths = uniqueFilePaths([...pendingOpenPaths, ...filePathArgsFromArgv(process.argv)]);
 gotSingleInstanceLock = app.requestSingleInstanceLock({ filePaths: pendingOpenPaths } satisfies SingleInstanceData);
 
 if (!gotSingleInstanceLock) {
@@ -352,7 +369,7 @@ ipcMain.handle("file:read-pdf", async (_event, filePath: string) => {
   return {
     path: filePath,
     name: basename(filePath),
-    bytes: Array.from(data)
+    bytes: bytesForIpc(data)
   };
 });
 
@@ -362,7 +379,7 @@ ipcMain.handle("file:read-image", async (_event, filePath: string) => {
     path: filePath,
     name: basename(filePath),
     mimeType: imageMimeTypeForPath(filePath),
-    bytes: Array.from(data)
+    bytes: bytesForIpc(data)
   };
 });
 
@@ -376,7 +393,7 @@ ipcMain.handle("file:read-markdown", async (_event, filePath: string) => {
   };
 });
 
-ipcMain.handle("file:write-pdf", async (_event, filePath: string, bytes: number[]) => {
+ipcMain.handle("file:write-pdf", async (_event, filePath: string, bytes: Uint8Array | number[]) => {
   await writeFile(filePath, Buffer.from(bytes));
   addRecentFile(filePath);
   return { path: filePath, name: basename(filePath) };
@@ -466,7 +483,7 @@ ipcMain.handle("semantic:remove-model", async (_event, modelId: string) => {
 
 ipcMain.handle("semantic:load-db", async () => loadSemanticDatabase());
 
-ipcMain.handle("semantic:save-db", async (_event, bytes: number[]) => {
+ipcMain.handle("semantic:save-db", async (_event, bytes: Uint8Array | number[]) => {
   await saveSemanticDatabase(bytes);
 });
 
@@ -503,7 +520,7 @@ ipcMain.handle("markdown:install-docling", async (event) =>
   })
 );
 
-ipcMain.handle("markdown:convert-docling", async (_event, bytes: number[], settings: MarkdownExportSettings) =>
+ipcMain.handle("markdown:convert-docling", async (_event, bytes: Uint8Array | number[], settings: MarkdownExportSettings) =>
   convertPdfWithDocling(bytes, settings)
 );
 

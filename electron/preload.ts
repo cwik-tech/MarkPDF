@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld("pdfReader", {
   readPdf: (filePath: string) => ipcRenderer.invoke("file:read-pdf", filePath),
   readImage: (filePath: string) => ipcRenderer.invoke("file:read-image", filePath),
   readMarkdown: (filePath: string) => ipcRenderer.invoke("file:read-markdown", filePath),
-  writePdf: (filePath: string, bytes: number[]) => ipcRenderer.invoke("file:write-pdf", filePath, bytes),
+  writePdf: (filePath: string, bytes: Uint8Array | number[]) => ipcRenderer.invoke("file:write-pdf", filePath, bytes),
   writeMarkdown: (filePath: string, markdown: string) => ipcRenderer.invoke("file:write-markdown", filePath, markdown),
   openFileInNewWindow: (filePath: string) => ipcRenderer.invoke("window:new-for-file", filePath),
   setFullScreen: (enabled: boolean) => ipcRenderer.invoke("window:set-full-screen", enabled),
@@ -35,7 +35,7 @@ contextBridge.exposeInMainWorld("pdfReader", {
     markModelDownloaded: (modelId: string) => ipcRenderer.invoke("semantic:mark-model-downloaded", modelId),
     removeModel: (modelId: string) => ipcRenderer.invoke("semantic:remove-model", modelId),
     loadDatabase: () => ipcRenderer.invoke("semantic:load-db"),
-    saveDatabase: (bytes: number[]) => ipcRenderer.invoke("semantic:save-db", bytes),
+    saveDatabase: (bytes: Uint8Array | number[]) => ipcRenderer.invoke("semantic:save-db", bytes),
     clearDatabase: () => ipcRenderer.invoke("semantic:clear-db"),
     databaseInfo: () => ipcRenderer.invoke("semantic:db-info")
   },
@@ -45,7 +45,7 @@ contextBridge.exposeInMainWorld("pdfReader", {
     listEngines: () => ipcRenderer.invoke("markdown:list-engines"),
     installState: () => ipcRenderer.invoke("markdown:install-state"),
     installDocling: () => ipcRenderer.invoke("markdown:install-docling"),
-    convertWithDocling: (bytes: number[], settings: unknown) => ipcRenderer.invoke("markdown:convert-docling", bytes, settings)
+    convertWithDocling: (bytes: Uint8Array | number[], settings: unknown) => ipcRenderer.invoke("markdown:convert-docling", bytes, settings)
   },
   onMarkdownInstallProgress: (callback: (progress: unknown) => void) => {
     const listener = (_event: unknown, progress: unknown) => callback(progress);

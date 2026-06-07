@@ -16,7 +16,7 @@ export const doclingCliMarkdownEngine: MarkdownConversionEngine = {
       current: input.pdfDoc.numPages + 1,
       total: input.pdfDoc.numPages + 1
     });
-    const result = await window.pdfReader.markdown.convertWithDocling(Array.from(input.bytes), input.settings);
+    const result = await window.pdfReader.markdown.convertWithDocling(input.bytes, input.settings);
     const processed = postProcessMarkdownWithPageContext(result.markdown, pageContext.pages, input.settings);
 
     input.onProgress?.({

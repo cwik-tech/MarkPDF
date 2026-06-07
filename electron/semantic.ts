@@ -51,7 +51,7 @@ export async function loadSemanticDatabase() {
   }
 }
 
-export async function saveSemanticDatabase(bytes: number[]) {
+export async function saveSemanticDatabase(bytes: Uint8Array | number[]) {
   const dbPath = semanticDbPath();
   await mkdir(dirname(dbPath), { recursive: true });
   await writeFile(dbPath, Buffer.from(bytes));

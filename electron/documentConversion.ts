@@ -289,7 +289,7 @@ async function readNewestMarkdownFile(directory: string) {
   return readFile(markdownPath, "utf8");
 }
 
-export async function convertPdfWithDocling(bytes: number[], settings: MarkdownExportSettings) {
+export async function convertPdfWithDocling(bytes: Uint8Array | number[], settings: MarkdownExportSettings) {
   const doclingPath = doclingExecutablePath();
   if (!(await pathExists(doclingPath))) {
     throw new Error("Docling is not installed in the app-managed engine directory.");

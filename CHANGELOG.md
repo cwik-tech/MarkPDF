@@ -2,6 +2,8 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Fixed large PDF Open With/read failures by sending typed byte arrays over Electron IPC instead of expanded number arrays.
+- Fixed macOS cold-start Open With launches by seeding pending files from process arguments before the single-instance lock.
 - Fixed macOS Finder/Open With handoff by capturing and draining file-open events in a lightweight Electron bootstrap before the main process modules load.
 - Renamed the app identity, package metadata, window title, and user-facing branding to MarkPDF while preserving legacy saved settings and annotation metadata.
 - Kept the macOS bundle identifier stable across the MarkPDF rename so existing Finder Markdown/PDF file associations hand files to the running app instead of launching a second app.
