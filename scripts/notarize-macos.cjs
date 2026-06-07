@@ -3,8 +3,8 @@ const { mkdtemp, rm, stat } = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 
-const SUBMIT_TIMEOUT = process.env.MARKPDF_NOTARY_TIMEOUT || "30m";
-const HARD_TIMEOUT_MS = Number(process.env.MARKPDF_NOTARY_HARD_TIMEOUT_MS || 35 * 60 * 1000);
+const SUBMIT_TIMEOUT = process.env.MARKPDF_NOTARY_TIMEOUT || "60m";
+const HARD_TIMEOUT_MS = Number(process.env.MARKPDF_NOTARY_HARD_TIMEOUT_MS || 65 * 60 * 1000);
 
 module.exports = async function notarizeMacos(context) {
   if (context.electronPlatformName !== "darwin") {

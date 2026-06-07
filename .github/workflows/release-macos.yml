@@ -81,5 +81,5 @@ jobs:
           security find-identity -v -p codesigning "${KEYCHAIN_PATH}"
 
       - name: Build, sign, notarize, and publish
-        timeout-minutes: 55
+        timeout-minutes: 80
         run: npm run "${{ matrix.release_script }}"

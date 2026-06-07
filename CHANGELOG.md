@@ -7,6 +7,7 @@
 - Added a timeout to the GitHub Actions macOS release build step so notarization cannot hang indefinitely.
 - Moved the macOS signing identity name into the `MAC_CSC_NAME` GitHub Actions secret so it is not hardcoded in the public workflow.
 - Documented the `MAC_CSC_NAME` value format expected by electron-builder.
+- Excluded non-mac `onnxruntime-node` native binaries from packaged macOS builds and extended the Apple notarization wait window for large release archives.
 
 ## 2026-06-07 14:24
 

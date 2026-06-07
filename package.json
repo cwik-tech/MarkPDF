@@ -62,7 +62,9 @@
       "dist/**/*",
       "dist-electron/**/*",
       "build/icon.png",
-      "package.json"
+      "package.json",
+      "!node_modules/onnxruntime-node/bin/napi-v6/linux/**/*",
+      "!node_modules/onnxruntime-node/bin/napi-v6/win32/**/*"
     ],
     "directories": {
       "buildResources": "build"
