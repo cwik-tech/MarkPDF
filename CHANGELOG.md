@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-07 01:00
+
+- Added Apache-2.0 repository licensing, NOTICE attribution, trademark policy, third-party notices, and contribution terms for open-source release preparation.
+- Updated package metadata and README licensing sections to identify the code license and separate MarkPDF branding rights.
+
 ## 0.1.0 - 2026-06-04
 
 - Fixed stale recent-file menus by broadcasting recent-list updates to every open window.
@@ -87,4 +92,3 @@ Updated the Electron preload bridge in `electron/preload.ts` and refined type de
 ## 2026-06-07 00:49
 
 Fixed bugs in the Electron bootstrap and main process logic in `electron/bootstrap.ts` and `electron/main.ts` to address issues with file handling and macOS integration. The changes target the app's startup sequence and main process initialization to improve reliability of file operations and system handoff behavior.
-

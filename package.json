@@ -1,9 +1,10 @@
 {
   "name": "markpdf",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "description": "A standalone PDF reader with tabs, viewing controls, lightweight editing, comments, form filling, and visual signing.",
+  "license": "Apache-2.0",
   "main": "dist-electron/bootstrap.js",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && npm run electron:dev\"",

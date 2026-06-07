@@ -2,6 +2,15 @@
 
 Standalone Electron PDF reader built with TypeScript, React, PDF.js, and pdf-lib.
 
+## License and Rights
+
+MarkPDF source code is licensed under the Apache License, Version 2.0. See LICENSE.
+
+The MarkPDF name, logo, icons, product identity, and associated branding are not
+licensed under Apache-2.0. See NOTICE and TRADEMARKS.md.
+
+Third-party package notices are listed in THIRD_PARTY_NOTICES.md.
+
 ## Current Scope
 
 - Open local PDFs.
@@ -31,3 +40,7 @@ npm run build
 ```bash
 npm run package
 ```
+
+## Contributing
+
+Contributions are accepted under Apache-2.0. See CONTRIBUTING.md.
