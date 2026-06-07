@@ -2,6 +2,7 @@
 
 ## 0.1.0 - 2026-06-04
 
+- Improved Docling Markdown page placement by matching normalized token windows instead of one exact PDF text snippet.
 - Fixed Docling Markdown page markers so unmatched pages are appended instead of being silently dropped.
 - Fixed Finder/Open With launches so PDFs and Markdown files open as tabs in the running app instead of spawning another window.
 - Added explicit macOS document UTIs so Finder recommends the app for Markdown and PDF default-open selection.

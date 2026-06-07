@@ -89,21 +89,109 @@ function escapeRegExp(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function snippetRegex(text: string) {
-  const words = normalizeMarkdownText(text)
-    .split(" ")
-    .filter((word) => /[A-Za-z0-9]/.test(word))
-    .slice(0, 14);
-
-  if (words.length < 6) return null;
-  return new RegExp(words.map(escapeRegExp).join("\\s+"), "i");
+interface MatchToken {
+  value: string;
+  index: number;
 }
 
-function findPageInsertionPoint(markdown: string, page: MarkdownPage, fromIndex: number) {
-  const regex = snippetRegex(page.text);
-  if (!regex) return -1;
-  const match = markdown.slice(fromIndex).match(regex);
-  return typeof match?.index === "number" ? fromIndex + match.index : -1;
+interface MarkdownTokenIndex {
+  tokens: MatchToken[];
+  byValue: Map<string, number[]>;
+}
+
+function normalizeMatchToken(token: string) {
+  return token
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLocaleLowerCase();
+}
+
+function tokenizeForMatching(text: string): MatchToken[] {
+  return [...text.matchAll(/[\p{L}\p{N}]+/gu)].map((match) => ({
+    value: normalizeMatchToken(match[0]),
+    index: match.index ?? 0
+  }));
+}
+
+function indexMarkdownTokens(tokens: MatchToken[]): MarkdownTokenIndex {
+  const byValue = new Map<string, number[]>();
+  tokens.forEach((token, index) => {
+    const tokenIndexes = byValue.get(token.value) ?? [];
+    tokenIndexes.push(index);
+    byValue.set(token.value, tokenIndexes);
+  });
+
+  return { tokens, byValue };
+}
+
+function firstCandidateAtOrAfter(tokens: MatchToken[], tokenIndexes: number[], fromIndex: number) {
+  let low = 0;
+  let high = tokenIndexes.length;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (tokens[tokenIndexes[middle]].index < fromIndex) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  return low;
+}
+
+function findTokenSequence(markdownIndex: MarkdownTokenIndex, sequence: string[], fromIndex: number) {
+  const tokenIndexes = markdownIndex.byValue.get(sequence[0]);
+  if (!tokenIndexes) return -1;
+
+  for (let candidateIndex = firstCandidateAtOrAfter(markdownIndex.tokens, tokenIndexes, fromIndex); candidateIndex < tokenIndexes.length; candidateIndex += 1) {
+    const tokenIndex = tokenIndexes[candidateIndex];
+    if (tokenIndex > markdownIndex.tokens.length - sequence.length) break;
+    let matched = true;
+    for (let offset = 0; offset < sequence.length; offset += 1) {
+      if (markdownIndex.tokens[tokenIndex + offset].value !== sequence[offset]) {
+        matched = false;
+        break;
+      }
+    }
+
+    if (matched) return markdownIndex.tokens[tokenIndex].index;
+  }
+
+  return -1;
+}
+
+function candidateTokenWindows(tokens: string[], size: number) {
+  const windows: string[][] = [];
+  const step = Math.max(1, Math.floor(size / 2));
+
+  for (let start = 0; start <= tokens.length - size; start += step) {
+    const window = tokens.slice(start, start + size);
+    if (new Set(window).size >= Math.ceil(size * 0.65)) {
+      windows.push(window);
+    }
+  }
+
+  return windows;
+}
+
+function findPageInsertionPoint(markdownIndex: MarkdownTokenIndex, page: MarkdownPage, fromIndex: number) {
+  const pageTokens = tokenizeForMatching(page.text).map((token) => token.value);
+  if (pageTokens.length < 6) return -1;
+
+  for (const size of [14, 12, 10, 8, 6]) {
+    let bestPosition = Number.POSITIVE_INFINITY;
+    for (const window of candidateTokenWindows(pageTokens, size)) {
+      const position = findTokenSequence(markdownIndex, window, fromIndex);
+      if (position >= 0) {
+        bestPosition = Math.min(bestPosition, position);
+      }
+    }
+
+    if (Number.isFinite(bestPosition)) return bestPosition;
+  }
+
+  return -1;
 }
 
 function hasPageMarker(markdown: string, pageNumber: number) {
@@ -131,6 +219,7 @@ export function postProcessMarkdownWithPageContext(
   const inserts: Array<{ position: number; block: string }> = [];
   const unmatchedBlocks: string[] = [];
   const warnings: string[] = [];
+  const markdownIndex = indexMarkdownTokens(tokenizeForMatching(markdown));
   let cursor = 0;
 
   if (!includeAnchors && !settings.includeAnnotations) {
@@ -149,7 +238,7 @@ export function postProcessMarkdownWithPageContext(
 
     if (blockParts.length === 0) continue;
 
-    const position = findPageInsertionPoint(markdown, page, cursor);
+    const position = findPageInsertionPoint(markdownIndex, page, cursor);
     const block = blockParts.join("\n\n");
     if (position >= 0) {
       inserts.push({ position, block });
