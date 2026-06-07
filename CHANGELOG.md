@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-06-07 16:05
+
+- Replaced electron-builder's hidden macOS notarization call with a custom after-sign notarization hook that disables S3 acceleration, adds hard timeouts, staples the accepted ticket, and prints visible notarytool output in CI.
+- Added a timeout to the GitHub Actions macOS release build step so notarization cannot hang indefinitely.
+- Moved the macOS signing identity name into the `MAC_CSC_NAME` GitHub Actions secret so it is not hardcoded in the public workflow.
+
 ## 2026-06-07 13:51
 
 - Updated the macOS release workflow to import the Developer ID certificate into a temporary CI keychain with explicit codesign access before electron-builder packaging.

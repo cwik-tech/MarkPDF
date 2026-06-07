@@ -26,7 +26,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-      CSC_NAME: "Tomasz Cwik (8Z5M7Q8M5S)"
+      CSC_NAME: ${{ secrets.MAC_CSC_NAME }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -46,7 +46,7 @@ jobs:
       - name: Verify macOS signing secrets
         run: |
           missing=0
-          for name in MAC_CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+          for name in MAC_CSC_LINK CSC_KEY_PASSWORD CSC_NAME APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
             if [ -z "${!name}" ]; then
               echo "::error::Missing required secret for ${name}."
               missing=1
@@ -81,4 +81,5 @@ jobs:
           security find-identity -v -p codesigning "${KEYCHAIN_PATH}"
 
       - name: Build, sign, notarize, and publish
+        timeout-minutes: 55
         run: npm run "${{ matrix.release_script }}"

@@ -57,6 +57,7 @@
   "build": {
     "appId": "tech.cwik.markpdf",
     "productName": "MarkPDF",
+    "afterSign": "scripts/notarize-macos.cjs",
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
@@ -74,7 +75,7 @@
       ],
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
-      "notarize": true,
+      "notarize": false,
       "extendInfo": {
         "CFBundleDocumentTypes": [
           {
