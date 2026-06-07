@@ -92,3 +92,17 @@ Updated the Electron preload bridge in `electron/preload.ts` and refined type de
 ## 2026-06-07 00:49
 
 Fixed bugs in the Electron bootstrap and main process logic in `electron/bootstrap.ts` and `electron/main.ts` to address issues with file handling and macOS integration. The changes target the app's startup sequence and main process initialization to improve reliability of file operations and system handoff behavior.
+## 2026-06-07 10:42
+
+The README was updated with comprehensive documentation for MarkPDF, a cross-platform desktop PDF reader and editor built with Electron, React, TypeScript, and PDF.js. The documentation covers the application's core features including PDF viewing with multiple view modes, annotation and editing capabilities, form filling, visual signatures, text search with OCR support, and local AI provider integration, along with technology stack details and build/development instructions.
+
+## 2026-06-07 10:50
+
+I don't have visibility into what the actual changes were in `README.md` from the JSONL log alone—it only shows that the file was edited twice but not what content was modified. To write an accurate changelog entry, I'd need to either read the file's current state or see a git diff of those changes. Could you share what was updated in the README, or should I check the git history for those commits?
+
+## 2026-06-07 11:22
+
+The most recent commit (8ba327d) at 11:21:51 on 2026-06-07 matches your edit. Here's the changelog paragraph:
+
+Updated the README with AI Providers and Semantic Search settings documentation, adding visual screenshots to illustrate the configuration options for LLM integration and semantic search features. The changes reorganized content in `README.md` to better highlight these features alongside the newly added screenshot assets in the `docs/screenshots/` directory.
+

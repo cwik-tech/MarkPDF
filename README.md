@@ -24,11 +24,13 @@ On top of typical pdf reader features (view, rotate, zoom etc.) the app contains
 - Connect any LLM provider (remote or local)
 - Semantic search in your file (type keyward and press enter to see the results)
 
+
 ![AI Providers settings](docs/screenshots/ai-providers-settings.png)
 
 ![Semantic Search settings](docs/screenshots/semantic-search-settings.png)
 
-Typically behind paywall features
+
+### Typically behind paywall features
 - OCR conversion
 - Group of images to PDF conversion
 - Edit PDF (for now just page ordering)
@@ -76,7 +78,7 @@ I am at the very early stage of what this app should be, but so far I see it as:
 1. Free, open-source alternative to paid alternatives
 3. PDF/Markdown viewer with advanced AI features for humans and AI agents.
 3. Minimalistic design
-4. Extensible with community plugins (like Obsidian)
+4. Extensible with community plugins (just like Obsidian is)
 5. Not a "chat with pdf" app - you have your favorite chatbot for that (though possible via plugins in future - see below)
 
 ## Roadmap & Ideas
@@ -84,9 +86,13 @@ I am at the very early stage of what this app should be, but so far I see it as:
 Looking for people who want to contribute to codebase and bring it to next level. Thus far, these are my ideas:
 
 1. Plugin interface - to enable community building easily on top of the core (just like in Obsidian)
-2. Signature interface - Bring Your Own Key (BYOK) for any signature provider to remove vendor lock-in 
-3. Expose as MCP/CLI for pdf-to-markdown and image-to-pdf conversions
-4. Discussion interface for AI agents - read your paper and discuss with multiple AI agents
+2. Signature interface - Bring Your Own Key (BYOK) for any signature provider - to remove vendor lock-in like the one in traditial PDF reader 
+3. Expose as MCP/CLI (plus a Skill.md) for pdf-to-markdown and image-to-pdf conversions - to have a fixed realiable tool for this task
+4. Discussion interface for AI agents - read your PDF and discuss with multiple AI agents
+5. Make semantic search state-of-the-art - I just did the basic one, good but not great
+6. Make OCR state of the art - handling images is missing
+
+and anything else you think we should implement to make it awesome :)
 
 ## Development
 
