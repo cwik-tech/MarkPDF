@@ -72,6 +72,7 @@ const defaultMarkdownSettings: MarkdownExportSettings = {
   includePageMarkers: true,
   useOcrFallback: true,
   includeAnnotations: true,
+  includeImageDescriptions: true,
   aiCleanup: false,
   engineSelectionExplicit: false
 };
@@ -634,6 +635,12 @@ function MarkdownSettingsPage({
             description="Adds exported text, comment, highlight, and signature notes."
             checked={settings.includeAnnotations}
             onChange={(includeAnnotations) => onChange({ includeAnnotations })}
+          />
+          <MarkdownToggle
+            title="Describe images"
+            description="Adds locally generated descriptions below exported images."
+            checked={settings.includeImageDescriptions}
+            onChange={(includeImageDescriptions) => onChange({ includeImageDescriptions })}
           />
           <MarkdownToggle
             title="AI cleanup"

@@ -137,6 +137,7 @@ const defaultMarkdownSettings: MarkdownExportSettings = {
   includePageMarkers: true,
   useOcrFallback: true,
   includeAnnotations: true,
+  includeImageDescriptions: true,
   aiCleanup: false,
   engineSelectionExplicit: false,
 };

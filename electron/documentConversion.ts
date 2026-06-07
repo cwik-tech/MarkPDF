@@ -34,6 +34,7 @@ export interface MarkdownExportSettings {
   includePageMarkers: boolean;
   useOcrFallback: boolean;
   includeAnnotations: boolean;
+  includeImageDescriptions: boolean;
   aiCleanup: boolean;
   engineSelectionExplicit?: boolean;
 }
@@ -48,6 +49,7 @@ export const defaultMarkdownExportSettings: MarkdownExportSettings = {
   includePageMarkers: true,
   useOcrFallback: true,
   includeAnnotations: true,
+  includeImageDescriptions: true,
   aiCleanup: false,
   engineSelectionExplicit: false
 };
@@ -310,22 +312,30 @@ export async function installManagedDocling(onProgress?: (progress: MarkdownInst
 }
 
 async function readNewestMarkdownFile(directory: string) {
+  return readNewestTextFile(directory, ".md");
+}
+
+async function readNewestJsonFile(directory: string) {
+  return readNewestTextFile(directory, ".json");
+}
+
+async function readNewestTextFile(directory: string, extension: string) {
   const entries = await readdir(directory, { recursive: true });
-  const markdownFiles: Array<{ path: string; mtimeMs: number }> = [];
+  const outputFiles: Array<{ path: string; mtimeMs: number }> = [];
 
   for (const entry of entries) {
-    if (typeof entry !== "string" || !entry.endsWith(".md")) continue;
+    if (typeof entry !== "string" || extname(entry).toLowerCase() !== extension) continue;
     const path = join(directory, entry);
     const fileStat = await stat(path);
     if (fileStat.isFile()) {
-      markdownFiles.push({ path, mtimeMs: fileStat.mtimeMs });
+      outputFiles.push({ path, mtimeMs: fileStat.mtimeMs });
     }
   }
 
-  markdownFiles.sort((left, right) => right.mtimeMs - left.mtimeMs);
-  const markdownPath = markdownFiles[0]?.path;
-  if (!markdownPath) return null;
-  return readFile(markdownPath, "utf8");
+  outputFiles.sort((left, right) => right.mtimeMs - left.mtimeMs);
+  const outputPath = outputFiles[0]?.path;
+  if (!outputPath) return null;
+  return readFile(outputPath, "utf8");
 }
 
 function isExternalMarkdownUrl(url: string) {
@@ -340,6 +350,107 @@ function rewriteReferencedImagePaths(markdown: string, assetsDirName: string) {
   });
 }
 
+const imageAssetExtensions = new Set([
+  ".avif",
+  ".bmp",
+  ".gif",
+  ".jpeg",
+  ".jpg",
+  ".png",
+  ".svg",
+  ".tif",
+  ".tiff",
+  ".webp"
+]);
+
+function normalizeImageDescription(text: unknown) {
+  return typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
+}
+
+function pictureDescriptionFromJsonPicture(picture: unknown) {
+  if (!picture || typeof picture !== "object") return "";
+  const record = picture as {
+    meta?: { description?: { text?: unknown } };
+    annotations?: Array<{ kind?: unknown; text?: unknown }>;
+  };
+
+  const metaDescription = normalizeImageDescription(record.meta?.description?.text);
+  if (metaDescription) return metaDescription;
+
+  const annotation = record.annotations?.find((item) => item.kind === "description");
+  return normalizeImageDescription(annotation?.text);
+}
+
+function extractPictureDescriptions(jsonText: string | null) {
+  if (!jsonText) return [];
+
+  try {
+    const parsed = JSON.parse(jsonText) as { pictures?: unknown[] };
+    if (!Array.isArray(parsed.pictures)) return [];
+    return parsed.pictures.map(pictureDescriptionFromJsonPicture).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function countMarkdownImages(markdown: string) {
+  return [...markdown.matchAll(/!\[[^\]]*]\([^)]+\)/g)].length;
+}
+
+function normalizeDescriptionBlock(text: string) {
+  return text
+    .replace(/^\s*(?:\*\*)?image description:(?:\*\*)?\s*/i, "")
+    .replace(/^\s*\[description]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function previousBlockMatchesDescription(lines: string[], description: string) {
+  const previousText = lines.join(" ");
+  return normalizeDescriptionBlock(previousText) === normalizeImageDescription(description);
+}
+
+function removePreviousDescriptionBlock(lines: string[], description: string) {
+  let blockEnd = lines.length - 1;
+  while (blockEnd >= 0 && !lines[blockEnd].trim()) blockEnd -= 1;
+  if (blockEnd < 0) return;
+
+  let blockStart = blockEnd;
+  while (blockStart > 0 && lines[blockStart - 1].trim()) blockStart -= 1;
+
+  if (previousBlockMatchesDescription(lines.slice(blockStart, blockEnd + 1), description)) {
+    lines.splice(blockStart);
+  }
+}
+
+function insertImageDescriptionsBelowImages(markdown: string, descriptions: string[]) {
+  if (descriptions.length === 0) return markdown;
+
+  const outputLines: string[] = [];
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  let imageIndex = 0;
+
+  for (const line of lines) {
+    if (!/!\[[^\]]*]\([^)]+\)/.test(line)) {
+      outputLines.push(line);
+      continue;
+    }
+
+    const description = descriptions[imageIndex];
+    imageIndex += 1;
+
+    if (!description) {
+      outputLines.push(line);
+      continue;
+    }
+
+    removePreviousDescriptionBlock(outputLines, description);
+    outputLines.push(line, "", `**Image description:** ${description}`);
+  }
+
+  return outputLines.join("\n");
+}
+
 async function copyReferencedOutputAssets(outputDir: string, outputMarkdownPath: string) {
   const entries = await readdir(outputDir, { recursive: true });
   const targetBaseName = basename(outputMarkdownPath, extname(outputMarkdownPath));
@@ -348,7 +459,7 @@ async function copyReferencedOutputAssets(outputDir: string, outputMarkdownPath:
   let copied = false;
 
   for (const entry of entries) {
-    if (typeof entry !== "string" || entry.endsWith(".md")) continue;
+    if (typeof entry !== "string" || !imageAssetExtensions.has(extname(entry).toLowerCase())) continue;
     const sourcePath = join(outputDir, entry);
     const fileStat = await stat(sourcePath);
     if (!fileStat.isFile()) continue;
@@ -390,6 +501,9 @@ export async function convertPdfWithDocling(
       "--table-mode",
       "accurate"
     ];
+    if (settings.includeImageDescriptions) {
+      args.push("--to", "json", "--enrich-picture-description");
+    }
     if (settings.defaultEngine === "docling-vlm-smoldocling") {
       args.push("--pipeline", "vlm", "--vlm-model", "smoldocling");
     }
@@ -409,6 +523,22 @@ export async function convertPdfWithDocling(
       throw new Error(stderr.trim() || "Docling produced empty Markdown.");
     }
 
+    const warnings: string[] = [];
+    if (settings.includeImageDescriptions) {
+      const imageCount = countMarkdownImages(markdown);
+      const descriptions = extractPictureDescriptions(await readNewestJsonFile(outputDir));
+      if (descriptions.length > 0) {
+        markdown = insertImageDescriptionsBelowImages(markdown, descriptions);
+      }
+      if (imageCount > descriptions.length) {
+        warnings.push(
+          descriptions.length === 0
+            ? "Image descriptions were enabled, but Docling did not return picture descriptions."
+            : "Some exported images did not receive descriptions."
+        );
+      }
+    }
+
     if (outputMarkdownPath) {
       const assetsDirName = await copyReferencedOutputAssets(outputDir, outputMarkdownPath);
       if (assetsDirName) {
@@ -419,7 +549,7 @@ export async function convertPdfWithDocling(
     return {
       markdown: `${markdown}\n`,
       engineId: settings.defaultEngine === "docling-vlm-smoldocling" ? "docling-vlm-smoldocling" as const : "docling-managed" as const,
-      warnings: stderr.trim() ? [stderr.trim()] : []
+      warnings: [...warnings, ...(stderr.trim() ? [stderr.trim()] : [])]
     };
   } finally {
     await rm(tempDir, { recursive: true, force: true });

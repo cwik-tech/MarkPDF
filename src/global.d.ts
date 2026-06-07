@@ -89,6 +89,7 @@ export interface MarkdownExportSettings {
   includePageMarkers: boolean;
   useOcrFallback: boolean;
   includeAnnotations: boolean;
+  includeImageDescriptions: boolean;
   aiCleanup: boolean;
   engineSelectionExplicit?: boolean;
 }

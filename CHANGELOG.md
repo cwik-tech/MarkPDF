@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-07 17:28
+
+- Added a default-on Markdown export option to describe images and insert the generated descriptions below exported image links.
+
 ## 2026-06-07 17:06
 
 - Fixed Markdown preview image loading by resolving relative image and link URLs against the opened Markdown file's folder.
