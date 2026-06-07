@@ -64,7 +64,7 @@ export interface SemanticDatabaseInfo {
   sizeBytes: number;
 }
 
-export type MarkdownEngineId = "builtin-text" | "docling-managed";
+export type MarkdownEngineId = "auto" | "builtin-text" | "docling-managed" | "docling-vlm-smoldocling";
 export type MarkdownExportMode = "readable" | "page-preserving";
 type BytePayload = Uint8Array | number[];
 
@@ -172,6 +172,7 @@ declare global {
         convertWithDocling: (
           bytes: BytePayload,
           settings: MarkdownExportSettings,
+          outputMarkdownPath?: string,
         ) => Promise<{
           markdown: string;
           engineId: MarkdownEngineId;

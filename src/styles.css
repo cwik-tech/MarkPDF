@@ -1014,6 +1014,48 @@ select {
   padding-left: 1.45em;
 }
 
+.markdown-table-scroll {
+  overflow-x: auto;
+  margin: 1em 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.markdown-preview table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.markdown-preview th,
+.markdown-preview td {
+  padding: 9px 11px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.markdown-preview th:last-child,
+.markdown-preview td:last-child {
+  border-right: 0;
+}
+
+.markdown-preview tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown-preview th {
+  background: var(--panel-2);
+  color: var(--text);
+  font-weight: 650;
+}
+
+.markdown-preview td {
+  color: var(--text);
+}
+
 .markdown-preview blockquote {
   margin: 1em 0;
   padding: 2px 0 2px 16px;

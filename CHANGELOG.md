@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-06-07 14:24
+
+- Added Markdown table parsing, rendering, alignment support, and scroll-safe table styling for Markdown preview tabs.
+- Made Docling Markdown export explicitly use table extraction with accurate table mode and preserve referenced PDF image assets beside the saved Markdown file.
+- Added Auto as the default Markdown export engine, with modular document profiling that selects standard Docling for healthy text-layer PDFs and SmolDocling VLM for weak-text visual PDFs while keeping basic text extraction as the fallback.
+
 ## 2026-06-07 13:51
 
 - Updated the macOS release workflow to import the Developer ID certificate into a temporary CI keychain with explicit codesign access before electron-builder packaging.

@@ -23,6 +23,7 @@ export interface MarkdownConversionInput {
   ocrPages: OcrPageText[];
   overlays: OverlayItem[];
   settings: MarkdownExportSettings;
+  targetPath?: string;
   onProgress?: (progress: MarkdownConversionProgress) => void;
 }
 
