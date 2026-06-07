@@ -29,6 +29,7 @@ import {
   getMarkdownEngineAvailability,
   getManagedDoclingInstallProgress,
   installManagedDocling,
+  normalizeMarkdownExportSettings,
   type MarkdownInstallProgress,
   type MarkdownExportSettings
 } from "./documentConversion.js";
@@ -345,14 +346,18 @@ ipcMain.handle("semantic:clear-db", async () => {
 
 ipcMain.handle("semantic:db-info", async () => getSemanticDatabaseInfo());
 
-ipcMain.handle("markdown:get-settings", async () => store.get("markdownExport", defaultMarkdownExportSettings));
+ipcMain.handle("markdown:get-settings", async () => {
+  const settings = normalizeMarkdownExportSettings(store.get("markdownExport", defaultMarkdownExportSettings));
+  store.set("markdownExport", settings);
+  return settings;
+});
 
 ipcMain.handle("markdown:save-settings", async (_event, settings: Partial<MarkdownExportSettings>) => {
   const current = store.get("markdownExport", defaultMarkdownExportSettings);
-  const next = {
+  const next = normalizeMarkdownExportSettings({
     ...current,
     ...settings
-  };
+  });
   store.set("markdownExport", next);
   return next;
 });

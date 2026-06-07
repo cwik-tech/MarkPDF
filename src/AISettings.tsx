@@ -18,9 +18,7 @@ import type {
   AIProviderKind,
   AIProviderView,
   LocalAgentInfo,
-  MarkdownEngineAvailability,
   MarkdownExportSettings,
-  MarkdownInstallProgress,
   SemanticDatabaseInfo,
   SemanticSearchSettings
 } from "./global";
@@ -69,7 +67,7 @@ const defaultSemanticSettings: SemanticSearchSettings = {
 };
 
 const defaultMarkdownSettings: MarkdownExportSettings = {
-  defaultEngine: "builtin-text",
+  defaultEngine: "docling-managed",
   exportMode: "readable",
   includePageMarkers: true,
   useOcrFallback: true,
@@ -146,17 +144,12 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
   const [localAgents, setLocalAgents] = useState<LocalAgentInfo[]>([]);
   const [semanticSettings, setSemanticSettings] = useState<SemanticSearchSettings>(defaultSemanticSettings);
   const [markdownSettings, setMarkdownSettings] = useState<MarkdownExportSettings>(defaultMarkdownSettings);
-  const [markdownEngines, setMarkdownEngines] = useState<MarkdownEngineAvailability[]>([
-    { id: "builtin-text", name: "Built-in text export", available: true }
-  ]);
   const [databaseInfo, setDatabaseInfo] = useState<SemanticDatabaseInfo>({ sizeBytes: 0 });
   const [draft, setDraft] = useState<ProviderDraft | null>(null);
   const [loadingProviders, setLoadingProviders] = useState(true);
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
   const [busySemanticModelId, setBusySemanticModelId] = useState<string | null>(null);
-  const [installingDocling, setInstallingDocling] = useState(false);
-  const [doclingInstallProgress, setDoclingInstallProgress] = useState<MarkdownInstallProgress | null>(null);
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
 
   const enabledModels = useMemo(
@@ -210,10 +203,6 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
   const loadMarkdownSettings = async () => {
     if (!window.pdfReader?.markdown) return;
     setMarkdownSettings(await window.pdfReader.markdown.getSettings());
-    setMarkdownEngines(await window.pdfReader.markdown.listEngines());
-    const progress = await window.pdfReader.markdown.installState();
-    setDoclingInstallProgress(progress);
-    setInstallingDocling(Boolean(progress && progress.status !== "ready" && progress.status !== "error"));
   };
 
   useEffect(() => {
@@ -221,14 +210,6 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
     void loadAgents();
     void loadSemanticSettings();
     void loadMarkdownSettings();
-  }, []);
-
-  useEffect(() => {
-    if (!window.pdfReader?.onMarkdownInstallProgress) return undefined;
-    return window.pdfReader.onMarkdownInstallProgress((progress) => {
-      setDoclingInstallProgress(progress);
-      setInstallingDocling(progress.status !== "ready" && progress.status !== "error");
-    });
   }, []);
 
   useEffect(() => {
@@ -336,27 +317,12 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
 
   const saveMarkdownSettings = async (patch: Partial<MarkdownExportSettings>) => {
     if (!window.pdfReader?.markdown) return;
-    const nextSettings = await window.pdfReader.markdown.saveSettings(patch);
+    const nextSettings = await window.pdfReader.markdown.saveSettings({
+      ...patch,
+      defaultEngine: "docling-managed"
+    });
     setMarkdownSettings(nextSettings);
     showToast("Markdown settings saved.");
-  };
-
-  const installDocling = async () => {
-    if (!window.pdfReader?.markdown) return;
-    setInstallingDocling(true);
-    showToast("Installing Docling. This can take several minutes.");
-    try {
-      const engines = await window.pdfReader.markdown.installDocling();
-      setMarkdownEngines(engines);
-      setDoclingInstallProgress({ status: "ready", message: "Docling installed.", current: 4, total: 4 });
-      showToast("Docling installed.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Docling installation failed.";
-      setDoclingInstallProgress({ status: "error", message, current: 0, total: 4 });
-      showToast(message);
-    } finally {
-      setInstallingDocling(false);
-    }
   };
 
   const downloadModel = async (modelId: string) => {
@@ -573,11 +539,6 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
           {page === "markdown" && (
             <MarkdownSettingsPage
               settings={markdownSettings}
-              engines={markdownEngines}
-              installingDocling={installingDocling}
-              installProgress={doclingInstallProgress}
-              onInstallDocling={() => void installDocling()}
-              onRefresh={() => void loadMarkdownSettings()}
               onChange={(patch) => void saveMarkdownSettings(patch)}
             />
           )}
@@ -589,43 +550,21 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
 
 function MarkdownSettingsPage({
   settings,
-  engines,
-  installingDocling,
-  installProgress,
-  onInstallDocling,
-  onRefresh,
   onChange
 }: {
   settings: MarkdownExportSettings;
-  engines: MarkdownEngineAvailability[];
-  installingDocling: boolean;
-  installProgress: MarkdownInstallProgress | null;
-  onInstallDocling: () => void;
-  onRefresh: () => void;
   onChange: (patch: Partial<MarkdownExportSettings>) => void;
 }) {
-  const doclingEngine = engines.find((engine) => engine.id === "docling-managed");
   return (
     <>
       <section className="settings-section">
         <div className="settings-section-heading">
           <div>
-            <h3>Conversion Engine</h3>
-            <p>Use a replaceable local engine for Markdown export.</p>
+            <h3>Output</h3>
+            <p>Control Markdown structure and readability.</p>
           </div>
-          <button className="secondary-button" onClick={onRefresh}>
-            <RefreshCw size={15} />
-            Refresh
-          </button>
         </div>
         <div className="provider-editor">
-          <label>
-            Default engine
-            <select value={settings.defaultEngine} onChange={(event) => onChange({ defaultEngine: event.target.value as MarkdownExportSettings["defaultEngine"] })}>
-              <option value="builtin-text">Built-in text export</option>
-              <option value="docling-managed">Docling</option>
-            </select>
-          </label>
           <label>
             Export mode
             <select value={settings.exportMode} onChange={(event) => onChange({ exportMode: event.target.value as MarkdownExportSettings["exportMode"] })}>
@@ -634,40 +573,6 @@ function MarkdownSettingsPage({
             </select>
           </label>
         </div>
-        <div className="settings-summary semantic-box">
-          <span>Built-in text export: available</span>
-          <span>
-            Docling:{" "}
-            {doclingEngine?.available
-              ? doclingEngine.version ?? "available"
-              : "not installed"}
-          </span>
-        </div>
-        {installProgress && (
-          <div className={`markdown-install-progress ${installProgress.status}`}>
-            <div>
-              <span>{installProgress.message}</span>
-              {installProgress.total && (
-                <small>
-                  {installProgress.current ?? 0} / {installProgress.total}
-                </small>
-              )}
-            </div>
-            {installProgress.total && (
-              <div className="operation-progress-bar">
-                <span style={{ width: `${Math.round(((installProgress.current ?? 0) / installProgress.total) * 100)}%` }} />
-              </div>
-            )}
-          </div>
-        )}
-        {!doclingEngine?.available && (
-          <div className="settings-button-row">
-            <button className="primary-button" disabled={installingDocling} onClick={onInstallDocling}>
-              {installingDocling ? <RefreshCw size={15} /> : <Plus size={15} />}
-              Install Docling
-            </button>
-          </div>
-        )}
       </section>
 
       <section className="settings-section">

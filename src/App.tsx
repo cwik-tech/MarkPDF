@@ -56,6 +56,7 @@ import {
 } from "./pdf/document";
 import { detectOcrNeed, runDocumentOcr } from "./pdf/ocr";
 import { convertDocumentToMarkdown } from "./documentConversion/markdown";
+import type { MarkdownConversionProgress } from "./documentConversion/types";
 import type {
   FitMode,
   FormFieldState,
@@ -97,7 +98,7 @@ const defaultSemanticSettings: SemanticSearchSettings = {
 };
 
 const defaultMarkdownSettings: MarkdownExportSettings = {
-  defaultEngine: "builtin-text",
+  defaultEngine: "docling-managed",
   exportMode: "readable",
   includePageMarkers: true,
   useOcrFallback: true,
@@ -887,7 +888,7 @@ export default function App() {
       } catch (error) {
         await showOperationProgress({
           title: "Preparing Markdown Export",
-          message: error instanceof Error ? error.message : "Docling installation failed.",
+          message: error instanceof Error ? error.message : "Markdown converter setup failed.",
           current: 0,
           total: 4
         });
@@ -1219,55 +1220,97 @@ export default function App() {
         total: activeTab.pageCount + 3
       });
 
-      const settings = (await window.pdfReader?.markdown.getSettings()) ?? defaultMarkdownSettings;
-      if (settings.defaultEngine === "docling-managed" && window.pdfReader?.markdown) {
-        const engines = await window.pdfReader.markdown.listEngines();
-        const doclingEngine = engines.find((engine) => engine.id === "docling-managed");
-        if (!doclingEngine?.available) {
-          await showOperationProgress({
-            title: "Saving Markdown",
-            message: "Preparing Markdown converter",
-            current: 0,
-            total: 4
-          });
-          const cleanup = window.pdfReader.onMarkdownInstallProgress?.((progress) => {
-            void showOperationProgress({
+      const savedSettings = (await window.pdfReader?.markdown.getSettings()) ?? defaultMarkdownSettings;
+      const settings: MarkdownExportSettings = {
+        ...savedSettings,
+        defaultEngine: "docling-managed"
+      };
+      let useBuiltInFallback = false;
+      let fallbackWarning: string | null = null;
+
+      if (window.pdfReader?.markdown) {
+        try {
+          const engines = await window.pdfReader.markdown.listEngines();
+          let managedEngine = engines.find((engine) => engine.id === "docling-managed");
+          if (!managedEngine?.available) {
+            await showOperationProgress({
               title: "Saving Markdown",
-              message: progress.message,
-              current: progress.current,
-              total: progress.total
+              message: "Preparing Markdown converter",
+              current: 0,
+              total: 4
             });
-          });
-          try {
-            await window.pdfReader.markdown.installDocling();
-          } finally {
-            cleanup?.();
+            const cleanup = window.pdfReader.onMarkdownInstallProgress?.((progress) => {
+              void showOperationProgress({
+                title: "Saving Markdown",
+                message: progress.message,
+                current: progress.current,
+                total: progress.total
+              });
+            });
+            try {
+              await window.pdfReader.markdown.installDocling();
+            } finally {
+              cleanup?.();
+            }
+
+            const nextEngines = await window.pdfReader.markdown.listEngines();
+            managedEngine = nextEngines.find((engine) => engine.id === "docling-managed");
           }
 
-          const nextEngines = await window.pdfReader.markdown.listEngines();
-          const nextDoclingEngine = nextEngines.find((engine) => engine.id === "docling-managed");
-          if (!nextDoclingEngine?.available) {
-            throw new Error(nextDoclingEngine?.error ?? "The Markdown converter is not available.");
+          if (!managedEngine?.available) {
+            throw new Error(managedEngine?.error ?? "The Markdown converter is not available.");
           }
+        } catch {
+          useBuiltInFallback = true;
+          fallbackWarning = "Advanced Markdown conversion was unavailable; saved with basic text extraction.";
         }
+      } else {
+        useBuiltInFallback = true;
+        fallbackWarning = "Advanced Markdown conversion is available only in the desktop app; saved with basic text extraction.";
       }
 
-      const result = await convertDocumentToMarkdown({
-        name: activeTab.name,
-        bytes: activeTab.bytes,
-        pdfDoc: activeTab.pdfDoc,
-        ocrPages: activeTab.ocrPages,
-        overlays: activeTab.overlays,
-        settings,
-        onProgress: (progress) => {
-          void showOperationProgress({
-            title: "Saving Markdown",
-            message: progress.message,
-            current: progress.current,
-            total: progress.total ? progress.total + 2 : activeTab.pageCount + 3
+      const onProgress = (progress: MarkdownConversionProgress) => {
+        void showOperationProgress({
+          title: "Saving Markdown",
+          message: progress.message,
+          current: progress.current,
+          total: progress.total ? progress.total + 2 : activeTab.pageCount + 3
+        });
+      };
+
+      const convertWithSettings = (conversionSettings: MarkdownExportSettings) =>
+        convertDocumentToMarkdown({
+          name: activeTab.name,
+          bytes: activeTab.bytes,
+          pdfDoc: activeTab.pdfDoc,
+          ocrPages: activeTab.ocrPages,
+          overlays: activeTab.overlays,
+          settings: conversionSettings,
+          onProgress
+        });
+
+      let result = await (async () => {
+        try {
+          return await convertWithSettings({
+            ...settings,
+            defaultEngine: useBuiltInFallback ? "builtin-text" : "docling-managed"
+          });
+        } catch (error) {
+          if (useBuiltInFallback) throw error;
+          fallbackWarning = "Advanced Markdown conversion failed; saved with basic text extraction.";
+          return convertWithSettings({
+            ...settings,
+            defaultEngine: "builtin-text"
           });
         }
-      });
+      })();
+
+      if (fallbackWarning) {
+        result = {
+          ...result,
+          warnings: [fallbackWarning, ...result.warnings]
+        };
+      }
 
       await showOperationProgress({
         title: "Saving Markdown",
@@ -1284,7 +1327,7 @@ export default function App() {
 
       await showOperationProgress({
         title: "Saving Markdown",
-        message: result.warnings.length > 0 ? `Markdown saved with warnings: ${result.warnings[0].slice(0, 120)}` : "Markdown saved",
+        message: result.warnings.length > 0 ? "Markdown saved with warnings" : "Markdown saved",
         current: activeTab.pageCount + 3,
         total: activeTab.pageCount + 3
       });
