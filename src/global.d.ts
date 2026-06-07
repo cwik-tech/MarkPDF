@@ -1,6 +1,12 @@
 export {};
 
-export type AIProviderKind = "openai-compatible" | "openrouter" | "ollama" | "lmstudio" | "anthropic" | "custom";
+export type AIProviderKind =
+  | "openai-compatible"
+  | "openrouter"
+  | "ollama"
+  | "lmstudio"
+  | "anthropic"
+  | "custom";
 
 export interface AIModelInfo {
   id: string;
@@ -92,17 +98,37 @@ declare global {
       openPdfDialog: () => Promise<string[]>;
       savePdfDialog: (defaultPath?: string) => Promise<string | null>;
       saveMarkdownDialog: (defaultPath?: string) => Promise<string | null>;
-      confirmUnsaved: (documentName?: string) => Promise<"save" | "discard" | "cancel">;
-      readPdf: (filePath: string) => Promise<{ path: string; name: string; bytes: Uint8Array }>;
-      readImage: (filePath: string) => Promise<{ path: string; name: string; mimeType: string; bytes: Uint8Array }>;
-      readMarkdown: (filePath: string) => Promise<{ path: string; name: string; markdown: string }>;
-      writePdf: (filePath: string, bytes: BytePayload) => Promise<{ path: string; name: string }>;
-      writeMarkdown: (filePath: string, markdown: string) => Promise<{ path: string; name: string }>;
+      confirmUnsaved: (
+        documentName?: string,
+      ) => Promise<"save" | "discard" | "cancel">;
+      readPdf: (
+        filePath: string,
+      ) => Promise<{ path: string; name: string; bytes: Uint8Array }>;
+      readImage: (
+        filePath: string,
+      ) => Promise<{
+        path: string;
+        name: string;
+        mimeType: string;
+        bytes: Uint8Array;
+      }>;
+      readMarkdown: (
+        filePath: string,
+      ) => Promise<{ path: string; name: string; markdown: string }>;
+      writePdf: (
+        filePath: string,
+        bytes: BytePayload,
+      ) => Promise<{ path: string; name: string }>;
+      writeMarkdown: (
+        filePath: string,
+        markdown: string,
+      ) => Promise<{ path: string; name: string }>;
       openFileInNewWindow: (filePath: string) => Promise<void>;
       setFullScreen: (enabled: boolean) => Promise<boolean>;
       isFullScreen: () => Promise<boolean>;
       closeWindowAfterConfirm: () => Promise<void>;
       showItemInFolder: (filePath: string) => Promise<void>;
+      addRecentFile: (filePath: string) => Promise<string[]>;
       listRecentFiles: () => Promise<string[]>;
       removeRecentFile: (filePath: string) => Promise<string[]>;
       clearRecentFiles: () => Promise<string[]>;
@@ -115,12 +141,19 @@ declare global {
         fetchProviderModels: (id: string) => Promise<AIProviderView>;
         listLocalAgents: () => Promise<LocalAgentInfo[]>;
         refreshLocalAgents: () => Promise<LocalAgentInfo[]>;
-        setLocalAgentEnabled: (id: string, enabled: boolean) => Promise<LocalAgentInfo[]>;
+        setLocalAgentEnabled: (
+          id: string,
+          enabled: boolean,
+        ) => Promise<LocalAgentInfo[]>;
       };
       semantic: {
         getSettings: () => Promise<SemanticSearchSettings>;
-        saveSettings: (settings: Partial<SemanticSearchSettings>) => Promise<SemanticSearchSettings>;
-        markModelDownloaded: (modelId: string) => Promise<SemanticSearchSettings>;
+        saveSettings: (
+          settings: Partial<SemanticSearchSettings>,
+        ) => Promise<SemanticSearchSettings>;
+        markModelDownloaded: (
+          modelId: string,
+        ) => Promise<SemanticSearchSettings>;
         removeModel: (modelId: string) => Promise<SemanticSearchSettings>;
         loadDatabase: () => Promise<number[] | null>;
         saveDatabase: (bytes: BytePayload) => Promise<void>;
@@ -129,18 +162,31 @@ declare global {
       };
       markdown: {
         getSettings: () => Promise<MarkdownExportSettings>;
-        saveSettings: (settings: Partial<MarkdownExportSettings>) => Promise<MarkdownExportSettings>;
+        saveSettings: (
+          settings: Partial<MarkdownExportSettings>,
+        ) => Promise<MarkdownExportSettings>;
         listEngines: () => Promise<MarkdownEngineAvailability[]>;
         installState: () => Promise<MarkdownInstallProgress | null>;
         installDocling: () => Promise<MarkdownEngineAvailability[]>;
-        convertWithDocling: (bytes: BytePayload, settings: MarkdownExportSettings) => Promise<{ markdown: string; engineId: MarkdownEngineId; warnings: string[] }>;
+        convertWithDocling: (
+          bytes: BytePayload,
+          settings: MarkdownExportSettings,
+        ) => Promise<{
+          markdown: string;
+          engineId: MarkdownEngineId;
+          warnings: string[];
+        }>;
       };
-      onMarkdownInstallProgress: (callback: (progress: MarkdownInstallProgress) => void) => () => void;
+      onMarkdownInstallProgress: (
+        callback: (progress: MarkdownInstallProgress) => void,
+      ) => () => void;
       onFullScreenChange: (callback: (enabled: boolean) => void) => () => void;
       onWindowRequestClose: (callback: () => void) => () => void;
       onOpenFile: (callback: (filePath: string) => void) => () => void;
       onOpenFiles: (callback: (filePaths: string[]) => void) => () => void;
-      onRecentFilesChanged: (callback: (filePaths: string[]) => void) => () => void;
+      onRecentFilesChanged: (
+        callback: (filePaths: string[]) => void,
+      ) => () => void;
     };
   }
 }

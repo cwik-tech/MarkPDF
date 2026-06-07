@@ -1,4 +1,12 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeImage,
+  nativeTheme,
+  shell,
+} from "electron";
 import type { MessageBoxOptions } from "electron";
 import Store from "electron-store";
 import { readFile, writeFile } from "node:fs/promises";
@@ -12,7 +20,7 @@ import {
   setLocalAgentEnabled,
   validateAIProvider,
   type AIProviderInput,
-  type AIStoreSchema
+  type AIStoreSchema,
 } from "./ai.js";
 import {
   clearSemanticDatabase,
@@ -21,7 +29,7 @@ import {
   loadSemanticDatabase,
   normalizeSemanticSearchSettings,
   saveSemanticDatabase,
-  type SemanticSearchSettings
+  type SemanticSearchSettings,
 } from "./semantic.js";
 import {
   convertPdfWithDocling,
@@ -31,7 +39,7 @@ import {
   installManagedDocling,
   normalizeMarkdownExportSettings,
   type MarkdownInstallProgress,
-  type MarkdownExportSettings
+  type MarkdownExportSettings,
 } from "./documentConversion.js";
 
 type OpenFileBootstrapState = {
@@ -43,13 +51,20 @@ type SingleInstanceData = {
   filePaths?: string[];
 };
 
-const openFileBootstrapState = (globalThis as typeof globalThis & { markPdfOpenFileBootstrap?: OpenFileBootstrapState })
-  .markPdfOpenFileBootstrap;
-let pendingOpenPaths: string[] = [...(openFileBootstrapState?.pendingOpenPaths ?? [])];
+const openFileBootstrapState = (
+  globalThis as typeof globalThis & {
+    markPdfOpenFileBootstrap?: OpenFileBootstrapState;
+  }
+).markPdfOpenFileBootstrap;
+let pendingOpenPaths: string[] = [
+  ...(openFileBootstrapState?.pendingOpenPaths ?? []),
+];
 let openPathFlushTimer: NodeJS.Timeout | null = null;
 const rendererReadyWindows = new WeakSet<BrowserWindow>();
 const pendingWindowOpenPaths = new WeakMap<BrowserWindow, string[]>();
-const appIconPath = fileURLToPath(new URL("../build/icon.png", import.meta.url));
+const appIconPath = fileURLToPath(
+  new URL("../build/icon.png", import.meta.url),
+);
 const confirmedCloseWindows = new WeakSet<BrowserWindow>();
 const store = new Store<AIStoreSchema>({
   defaults: {
@@ -57,23 +72,30 @@ const store = new Store<AIStoreSchema>({
     aiProviders: [],
     localAgentEnabled: {},
     semanticSearch: defaultSemanticSearchSettings,
-    markdownExport: defaultMarkdownExportSettings
-  }
+    markdownExport: defaultMarkdownExportSettings,
+  },
 });
 const imageMimeTypes = new Map([
   [".gif", "image/gif"],
   [".jpeg", "image/jpeg"],
   [".jpg", "image/jpeg"],
   [".png", "image/png"],
-  [".webp", "image/webp"]
+  [".webp", "image/webp"],
 ]);
-const supportedFileExtensions = new Set([".pdf", ".md", ".markdown", ...imageMimeTypes.keys()]);
+const supportedFileExtensions = new Set([
+  ".pdf",
+  ".md",
+  ".markdown",
+  ...imageMimeTypes.keys(),
+]);
 
 let gotSingleInstanceLock = false;
 
 function addRecentFile(filePath: string) {
   const recentFiles = store.get("recentFiles", []);
-  return setRecentFiles([filePath, ...recentFiles.filter((item) => item !== filePath)].slice(0, 12));
+  return setRecentFiles(
+    [filePath, ...recentFiles.filter((item) => item !== filePath)].slice(0, 12),
+  );
 }
 
 function setRecentFiles(recentFiles: string[]) {
@@ -87,7 +109,10 @@ function setRecentFiles(recentFiles: string[]) {
 }
 
 function imageMimeTypeForPath(filePath: string) {
-  return imageMimeTypes.get(extname(filePath).toLowerCase()) ?? "application/octet-stream";
+  return (
+    imageMimeTypes.get(extname(filePath).toLowerCase()) ??
+    "application/octet-stream"
+  );
 }
 
 function bytesForIpc(data: Buffer) {
@@ -96,7 +121,9 @@ function bytesForIpc(data: Buffer) {
 
 function filePathFromArg(arg: string) {
   const filePath = arg.startsWith("file://") ? fileURLToPath(arg) : arg;
-  return supportedFileExtensions.has(extname(filePath).toLowerCase()) ? filePath : null;
+  return supportedFileExtensions.has(extname(filePath).toLowerCase())
+    ? filePath
+    : null;
 }
 
 function filePathArgsFromArgv(argv: string[]) {
@@ -115,7 +142,10 @@ function uniqueFilePaths(filePaths: string[]) {
 }
 
 function rememberPendingOpenPath(filePath: string) {
-  pendingOpenPaths = [...pendingOpenPaths.filter((item) => item !== filePath), filePath];
+  pendingOpenPaths = [
+    ...pendingOpenPaths.filter((item) => item !== filePath),
+    filePath,
+  ];
 }
 
 function removeRecentFile(filePath: string) {
@@ -173,7 +203,10 @@ function sendOpenPathsToWindow(window: BrowserWindow, filePaths: string[]) {
     }
 
     const pendingPaths = pendingWindowOpenPaths.get(window) ?? [];
-    pendingWindowOpenPaths.set(window, uniqueFilePaths([...pendingPaths, ...nextFilePaths]));
+    pendingWindowOpenPaths.set(
+      window,
+      uniqueFilePaths([...pendingPaths, ...nextFilePaths]),
+    );
   };
 
   if (window.webContents.isLoading()) {
@@ -187,8 +220,11 @@ function sendOpenPathsToWindow(window: BrowserWindow, filePaths: string[]) {
 async function openPathsInApp(filePaths: string[]) {
   if (filePaths.length === 0) return;
 
-  const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
-  const targetWindow = BrowserWindow.getFocusedWindow() ?? windows[windows.length - 1];
+  const windows = BrowserWindow.getAllWindows().filter(
+    (window) => !window.isDestroyed(),
+  );
+  const targetWindow =
+    BrowserWindow.getFocusedWindow() ?? windows[windows.length - 1];
 
   if (!targetWindow) {
     await createWindow(filePaths);
@@ -212,8 +248,8 @@ const createWindow = async (filePaths: string[] = []) => {
       preload: fileURLToPath(new URL("./preload.js", import.meta.url)),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
-    }
+      sandbox: false,
+    },
   });
 
   window.on("close", (event) => {
@@ -239,7 +275,9 @@ const createWindow = async (filePaths: string[] = []) => {
   if (process.env.VITE_DEV_SERVER_URL) {
     await window.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    await window.loadFile(fileURLToPath(new URL("../dist/index.html", import.meta.url)));
+    await window.loadFile(
+      fileURLToPath(new URL("../dist/index.html", import.meta.url)),
+    );
   }
 
   window.on("enter-full-screen", () => {
@@ -254,7 +292,10 @@ const createWindow = async (filePaths: string[] = []) => {
 };
 
 if (openFileBootstrapState) {
-  pendingOpenPaths = uniqueFilePaths([...pendingOpenPaths, ...openFileBootstrapState.pendingOpenPaths]);
+  pendingOpenPaths = uniqueFilePaths([
+    ...pendingOpenPaths,
+    ...openFileBootstrapState.pendingOpenPaths,
+  ]);
   openFileBootstrapState.pendingOpenPaths = [];
   openFileBootstrapState.onOpenFile = handleOpenFile;
 } else {
@@ -264,8 +305,13 @@ if (openFileBootstrapState) {
   });
 }
 
-pendingOpenPaths = uniqueFilePaths([...pendingOpenPaths, ...filePathArgsFromArgv(process.argv)]);
-gotSingleInstanceLock = app.requestSingleInstanceLock({ filePaths: pendingOpenPaths } satisfies SingleInstanceData);
+pendingOpenPaths = uniqueFilePaths([
+  ...pendingOpenPaths,
+  ...filePathArgsFromArgv(process.argv),
+]);
+gotSingleInstanceLock = app.requestSingleInstanceLock({
+  filePaths: pendingOpenPaths,
+} satisfies SingleInstanceData);
 
 if (!gotSingleInstanceLock) {
   app.quit();
@@ -273,13 +319,17 @@ if (!gotSingleInstanceLock) {
 
 app.on("second-instance", (_event, argv, ...args: unknown[]) => {
   const additionalData = (args.at(1) ?? {}) as SingleInstanceData;
-  const filePaths = uniqueFilePaths([...(additionalData.filePaths ?? []), ...filePathArgsFromArgv(argv)]);
+  const filePaths = uniqueFilePaths([
+    ...(additionalData.filePaths ?? []),
+    ...filePathArgsFromArgv(argv),
+  ]);
   if (filePaths.length > 0) {
     void openPathsInApp(filePaths);
     return;
   }
 
-  const targetWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().at(-1);
+  const targetWindow =
+    BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().at(-1);
   if (!targetWindow) return;
   if (targetWindow.isMinimized()) {
     targetWindow.restore();
@@ -313,11 +363,26 @@ ipcMain.handle("dialog:open-pdf", async () => {
     title: "Open PDF, Markdown, or Images",
     properties: ["openFile", "multiSelections"],
     filters: [
-      { name: "PDF, Markdown, and image files", extensions: ["pdf", "md", "markdown", "png", "jpg", "jpeg", "webp", "gif"] },
+      {
+        name: "PDF, Markdown, and image files",
+        extensions: [
+          "pdf",
+          "md",
+          "markdown",
+          "png",
+          "jpg",
+          "jpeg",
+          "webp",
+          "gif",
+        ],
+      },
       { name: "PDF files", extensions: ["pdf"] },
       { name: "Markdown files", extensions: ["md", "markdown"] },
-      { name: "Image files", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }
-    ]
+      {
+        name: "Image files",
+        extensions: ["png", "jpg", "jpeg", "webp", "gif"],
+      },
+    ],
   });
 
   if (result.canceled) {
@@ -331,7 +396,7 @@ ipcMain.handle("dialog:save-pdf", async (_event, defaultPath?: string) => {
   const result = await dialog.showSaveDialog({
     title: "Save PDF",
     defaultPath,
-    filters: [{ name: "PDF files", extensions: ["pdf"] }]
+    filters: [{ name: "PDF files", extensions: ["pdf"] }],
   });
 
   if (result.canceled || !result.filePath) {
@@ -345,7 +410,7 @@ ipcMain.handle("dialog:save-markdown", async (_event, defaultPath?: string) => {
   const result = await dialog.showSaveDialog({
     title: "Save Markdown",
     defaultPath,
-    filters: [{ name: "Markdown files", extensions: ["md"] }]
+    filters: [{ name: "Markdown files", extensions: ["md"] }],
   });
 
   if (result.canceled || !result.filePath) {
@@ -355,22 +420,31 @@ ipcMain.handle("dialog:save-markdown", async (_event, defaultPath?: string) => {
   return result.filePath;
 });
 
-ipcMain.handle("dialog:confirm-unsaved", async (event, documentName?: string) => {
-  const window = BrowserWindow.fromWebContents(event.sender);
-  const options: MessageBoxOptions = {
-    type: "warning",
-    title: "Unsaved changes",
-    message: documentName ? `Save changes to "${documentName}" before closing?` : "Save changes before closing?",
-    detail: "Your changes will be lost if you do not save them.",
-    buttons: ["Save", "Discard", "Cancel"],
-    defaultId: 0,
-    cancelId: 2,
-    noLink: true
-  };
-  const result = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
+ipcMain.handle(
+  "dialog:confirm-unsaved",
+  async (event, documentName?: string) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const options: MessageBoxOptions = {
+      type: "warning",
+      title: "Unsaved changes",
+      message: documentName
+        ? `Save changes to "${documentName}" before closing?`
+        : "Save changes before closing?",
+      detail: "Your changes will be lost if you do not save them.",
+      buttons: ["Save", "Discard", "Cancel"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    };
+    const result = window
+      ? await dialog.showMessageBox(window, options)
+      : await dialog.showMessageBox(options);
 
-  return (["save", "discard", "cancel"] as const)[result.response] ?? "cancel";
-});
+    return (
+      (["save", "discard", "cancel"] as const)[result.response] ?? "cancel"
+    );
+  },
+);
 
 ipcMain.handle("file:read-pdf", async (_event, filePath: string) => {
   const data = await readFile(filePath);
@@ -378,17 +452,18 @@ ipcMain.handle("file:read-pdf", async (_event, filePath: string) => {
   return {
     path: filePath,
     name: basename(filePath),
-    bytes: bytesForIpc(data)
+    bytes: bytesForIpc(data),
   };
 });
 
 ipcMain.handle("file:read-image", async (_event, filePath: string) => {
   const data = await readFile(filePath);
+  addRecentFile(filePath);
   return {
     path: filePath,
     name: basename(filePath),
     mimeType: imageMimeTypeForPath(filePath),
-    bytes: bytesForIpc(data)
+    bytes: bytesForIpc(data),
   };
 });
 
@@ -398,20 +473,26 @@ ipcMain.handle("file:read-markdown", async (_event, filePath: string) => {
   return {
     path: filePath,
     name: basename(filePath),
-    markdown
+    markdown,
   };
 });
 
-ipcMain.handle("file:write-pdf", async (_event, filePath: string, bytes: Uint8Array | number[]) => {
-  await writeFile(filePath, Buffer.from(bytes));
-  addRecentFile(filePath);
-  return { path: filePath, name: basename(filePath) };
-});
+ipcMain.handle(
+  "file:write-pdf",
+  async (_event, filePath: string, bytes: Uint8Array | number[]) => {
+    await writeFile(filePath, Buffer.from(bytes));
+    addRecentFile(filePath);
+    return { path: filePath, name: basename(filePath) };
+  },
+);
 
-ipcMain.handle("file:write-markdown", async (_event, filePath: string, markdown: string) => {
-  await writeFile(filePath, markdown, "utf8");
-  return { path: filePath, name: basename(filePath) };
-});
+ipcMain.handle(
+  "file:write-markdown",
+  async (_event, filePath: string, markdown: string) => {
+    await writeFile(filePath, markdown, "utf8");
+    return { path: filePath, name: basename(filePath) };
+  },
+);
 
 ipcMain.handle("window:new-for-file", async (_event, filePath: string) => {
   await createWindow([filePath]);
@@ -453,38 +534,68 @@ ipcMain.handle("shell:show-item", async (_event, filePath: string) => {
 
 ipcMain.handle("recent:list", async () => store.get("recentFiles", []));
 
-ipcMain.handle("recent:remove", async (_event, filePath: string) => removeRecentFile(filePath));
+ipcMain.handle("recent:add", async (_event, filePath: string) =>
+  addRecentFile(filePath),
+);
 
-ipcMain.handle("semantic:get-settings", async () => normalizeSemanticSearchSettings(store.get("semanticSearch", defaultSemanticSearchSettings)));
+ipcMain.handle("recent:remove", async (_event, filePath: string) =>
+  removeRecentFile(filePath),
+);
 
-ipcMain.handle("semantic:save-settings", async (_event, settings: Partial<SemanticSearchSettings>) => {
-  const current = normalizeSemanticSearchSettings(store.get("semanticSearch", defaultSemanticSearchSettings));
-  const next = normalizeSemanticSearchSettings({
-    ...current,
-    ...settings,
-    downloadedModelIds: settings.downloadedModelIds ?? current.downloadedModelIds
-  });
-  store.set("semanticSearch", next);
-  return next;
-});
+ipcMain.handle("semantic:get-settings", async () =>
+  normalizeSemanticSearchSettings(
+    store.get("semanticSearch", defaultSemanticSearchSettings),
+  ),
+);
 
-ipcMain.handle("semantic:mark-model-downloaded", async (_event, modelId: string) => {
-  const current = normalizeSemanticSearchSettings(store.get("semanticSearch", defaultSemanticSearchSettings));
-  const next = normalizeSemanticSearchSettings({
-    ...current,
-    downloadedModelIds: [...new Set([...current.downloadedModelIds, modelId])]
-  });
-  store.set("semanticSearch", next);
-  return next;
-});
+ipcMain.handle(
+  "semantic:save-settings",
+  async (_event, settings: Partial<SemanticSearchSettings>) => {
+    const current = normalizeSemanticSearchSettings(
+      store.get("semanticSearch", defaultSemanticSearchSettings),
+    );
+    const next = normalizeSemanticSearchSettings({
+      ...current,
+      ...settings,
+      downloadedModelIds:
+        settings.downloadedModelIds ?? current.downloadedModelIds,
+    });
+    store.set("semanticSearch", next);
+    return next;
+  },
+);
+
+ipcMain.handle(
+  "semantic:mark-model-downloaded",
+  async (_event, modelId: string) => {
+    const current = normalizeSemanticSearchSettings(
+      store.get("semanticSearch", defaultSemanticSearchSettings),
+    );
+    const next = normalizeSemanticSearchSettings({
+      ...current,
+      downloadedModelIds: [
+        ...new Set([...current.downloadedModelIds, modelId]),
+      ],
+    });
+    store.set("semanticSearch", next);
+    return next;
+  },
+);
 
 ipcMain.handle("semantic:remove-model", async (_event, modelId: string) => {
-  const current = normalizeSemanticSearchSettings(store.get("semanticSearch", defaultSemanticSearchSettings));
-  const downloadedModelIds = current.downloadedModelIds.filter((id) => id !== modelId);
+  const current = normalizeSemanticSearchSettings(
+    store.get("semanticSearch", defaultSemanticSearchSettings),
+  );
+  const downloadedModelIds = current.downloadedModelIds.filter(
+    (id) => id !== modelId,
+  );
   const next = normalizeSemanticSearchSettings({
     ...current,
     downloadedModelIds,
-    activeModelId: current.activeModelId === modelId && downloadedModelIds[0] ? downloadedModelIds[0] : current.activeModelId
+    activeModelId:
+      current.activeModelId === modelId && downloadedModelIds[0]
+        ? downloadedModelIds[0]
+        : current.activeModelId,
   });
   store.set("semanticSearch", next);
   return next;
@@ -492,9 +603,12 @@ ipcMain.handle("semantic:remove-model", async (_event, modelId: string) => {
 
 ipcMain.handle("semantic:load-db", async () => loadSemanticDatabase());
 
-ipcMain.handle("semantic:save-db", async (_event, bytes: Uint8Array | number[]) => {
-  await saveSemanticDatabase(bytes);
-});
+ipcMain.handle(
+  "semantic:save-db",
+  async (_event, bytes: Uint8Array | number[]) => {
+    await saveSemanticDatabase(bytes);
+  },
+);
 
 ipcMain.handle("semantic:clear-db", async () => {
   await clearSemanticDatabase();
@@ -504,33 +618,47 @@ ipcMain.handle("semantic:clear-db", async () => {
 ipcMain.handle("semantic:db-info", async () => getSemanticDatabaseInfo());
 
 ipcMain.handle("markdown:get-settings", async () => {
-  const settings = normalizeMarkdownExportSettings(store.get("markdownExport", defaultMarkdownExportSettings));
+  const settings = normalizeMarkdownExportSettings(
+    store.get("markdownExport", defaultMarkdownExportSettings),
+  );
   store.set("markdownExport", settings);
   return settings;
 });
 
-ipcMain.handle("markdown:save-settings", async (_event, settings: Partial<MarkdownExportSettings>) => {
-  const current = store.get("markdownExport", defaultMarkdownExportSettings);
-  const next = normalizeMarkdownExportSettings({
-    ...current,
-    ...settings
-  });
-  store.set("markdownExport", next);
-  return next;
-});
+ipcMain.handle(
+  "markdown:save-settings",
+  async (_event, settings: Partial<MarkdownExportSettings>) => {
+    const current = store.get("markdownExport", defaultMarkdownExportSettings);
+    const next = normalizeMarkdownExportSettings({
+      ...current,
+      ...settings,
+    });
+    store.set("markdownExport", next);
+    return next;
+  },
+);
 
-ipcMain.handle("markdown:list-engines", async () => getMarkdownEngineAvailability());
+ipcMain.handle("markdown:list-engines", async () =>
+  getMarkdownEngineAvailability(),
+);
 
-ipcMain.handle("markdown:install-state", async () => getManagedDoclingInstallProgress());
+ipcMain.handle("markdown:install-state", async () =>
+  getManagedDoclingInstallProgress(),
+);
 
 ipcMain.handle("markdown:install-docling", async (event) =>
   installManagedDocling((progress: MarkdownInstallProgress) => {
     event.sender.send("markdown:install-progress", progress);
-  })
+  }),
 );
 
-ipcMain.handle("markdown:convert-docling", async (_event, bytes: Uint8Array | number[], settings: MarkdownExportSettings) =>
-  convertPdfWithDocling(bytes, settings)
+ipcMain.handle(
+  "markdown:convert-docling",
+  async (
+    _event,
+    bytes: Uint8Array | number[],
+    settings: MarkdownExportSettings,
+  ) => convertPdfWithDocling(bytes, settings),
 );
 
 ipcMain.handle("recent:clear", async () => {
@@ -539,21 +667,30 @@ ipcMain.handle("recent:clear", async () => {
 
 ipcMain.handle("ai:list-providers", async () => listAIProviders(store));
 
-ipcMain.handle("ai:save-provider", async (_event, provider: AIProviderInput) => saveAIProvider(store, provider));
+ipcMain.handle("ai:save-provider", async (_event, provider: AIProviderInput) =>
+  saveAIProvider(store, provider),
+);
 
 ipcMain.handle("ai:delete-provider", async (_event, id: string) => {
   deleteAIProvider(store, id);
 });
 
-ipcMain.handle("ai:validate-provider", async (_event, id: string) => validateAIProvider(store, id));
+ipcMain.handle("ai:validate-provider", async (_event, id: string) =>
+  validateAIProvider(store, id),
+);
 
-ipcMain.handle("ai:fetch-provider-models", async (_event, id: string) => validateAIProvider(store, id));
+ipcMain.handle("ai:fetch-provider-models", async (_event, id: string) =>
+  validateAIProvider(store, id),
+);
 
 ipcMain.handle("ai:list-local-agents", async () => detectLocalAgents(store));
 
 ipcMain.handle("ai:refresh-local-agents", async () => detectLocalAgents(store));
 
-ipcMain.handle("ai:set-local-agent-enabled", async (_event, id: string, enabled: boolean) => {
-  setLocalAgentEnabled(store, id, enabled);
-  return detectLocalAgents(store);
-});
+ipcMain.handle(
+  "ai:set-local-agent-enabled",
+  async (_event, id: string, enabled: boolean) => {
+    setLocalAgentEnabled(store, id, enabled);
+    return detectLocalAgents(store);
+  },
+);
