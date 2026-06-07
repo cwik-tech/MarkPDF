@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-07 13:22
+
+- Ignored local Apple certificate request, certificate, private key, and signing identity files to prevent accidental commits of release credentials.
+
 ## 2026-06-07 12:31
 
 - Changed the Electron bundle identifier to `tech.cwik.markpdf` before public macOS distribution.
