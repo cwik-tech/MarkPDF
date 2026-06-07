@@ -1453,7 +1453,7 @@ export default function App() {
 
       await showOperationProgress({
         title: "Saving Markdown",
-        message: result.warnings.length > 0 ? "Markdown saved with warnings" : "Markdown saved",
+        message: result.warnings[0] ?? "Markdown saved",
         current: activePdfTab.pageCount + 3,
         total: activePdfTab.pageCount + 3
       });

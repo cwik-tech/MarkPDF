@@ -7,6 +7,7 @@ export interface MarkdownPage {
   text: string;
   source: "pdf" | "ocr";
   annotations: OverlayItem[];
+  nativeTextLength?: number;
 }
 
 export interface MarkdownConversionProgress {
