@@ -66,6 +66,13 @@ const appIconPath = fileURLToPath(
   new URL("../build/icon.png", import.meta.url),
 );
 const confirmedCloseWindows = new WeakSet<BrowserWindow>();
+const testUserDataPath = process.env.MARKPDF_TEST_USER_DATA;
+const isTestRun = Boolean(testUserDataPath);
+
+if (testUserDataPath) {
+  app.setPath("userData", testUserDataPath);
+}
+
 const store = new Store<AIStoreSchema>({
   defaults: {
     recentFiles: [],
@@ -315,34 +322,38 @@ pendingOpenPaths = uniqueFilePaths([
   ...pendingOpenPaths,
   ...filePathArgsFromArgv(process.argv),
 ]);
-gotSingleInstanceLock = app.requestSingleInstanceLock({
-  filePaths: pendingOpenPaths,
-} satisfies SingleInstanceData);
+gotSingleInstanceLock =
+  isTestRun ||
+  app.requestSingleInstanceLock({
+    filePaths: pendingOpenPaths,
+  } satisfies SingleInstanceData);
 
 if (!gotSingleInstanceLock) {
   app.quit();
 }
 
-app.on("second-instance", (_event, argv, ...args: unknown[]) => {
-  const additionalData = (args.at(1) ?? {}) as SingleInstanceData;
-  const filePaths = uniqueFilePaths([
-    ...(additionalData.filePaths ?? []),
-    ...filePathArgsFromArgv(argv),
-  ]);
-  if (filePaths.length > 0) {
-    void openPathsInApp(filePaths);
-    return;
-  }
+if (!isTestRun) {
+  app.on("second-instance", (_event, argv, ...args: unknown[]) => {
+    const additionalData = (args.at(1) ?? {}) as SingleInstanceData;
+    const filePaths = uniqueFilePaths([
+      ...(additionalData.filePaths ?? []),
+      ...filePathArgsFromArgv(argv),
+    ]);
+    if (filePaths.length > 0) {
+      void openPathsInApp(filePaths);
+      return;
+    }
 
-  const targetWindow =
-    BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().at(-1);
-  if (!targetWindow) return;
-  if (targetWindow.isMinimized()) {
-    targetWindow.restore();
-  }
-  targetWindow.show();
-  targetWindow.focus();
-});
+    const targetWindow =
+      BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().at(-1);
+    if (!targetWindow) return;
+    if (targetWindow.isMinimized()) {
+      targetWindow.restore();
+    }
+    targetWindow.show();
+    targetWindow.focus();
+  });
+}
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;

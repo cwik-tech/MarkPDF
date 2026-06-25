@@ -5,7 +5,7 @@ export type ViewMode = "single" | "two";
 export type FitMode = "actual" | "page" | "width" | "height";
 export type ToolMode = "select" | "text" | "comment" | "highlight" | "signature";
 
-export type OverlayKind = "text" | "comment" | "highlight" | "signature";
+export type OverlayKind = "text" | "comment" | "highlight" | "signature" | "bookmark";
 
 export interface OverlayItem {
   id: string;
@@ -75,6 +75,8 @@ export interface OutlineItem {
   children: OutlineItem[];
 }
 
+export type OutlineSource = "native" | "synthetic";
+
 export interface OcrTextLine {
   text: string;
   x: number;
@@ -113,6 +115,7 @@ export interface TabHistoryState {
   overlays: OverlayItem[];
   formFields: FormFieldState[];
   outline: OutlineItem[];
+  outlineSource: OutlineSource | null;
 }
 
 export interface PdfTab {
@@ -132,6 +135,7 @@ export interface PdfTab {
   overlays: OverlayItem[];
   formFields: FormFieldState[];
   outline: OutlineItem[];
+  outlineSource: OutlineSource | null;
   searchQuery: string;
   searchMatches: SearchMatch[];
   activeSearchMatch: number;

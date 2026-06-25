@@ -631,8 +631,8 @@ select {
 }
 
 .sidebar {
-  width: 286px;
-  min-width: 286px;
+  width: 340px;
+  min-width: 340px;
   overflow: auto;
   overflow-x: hidden;
   padding: 14px;
@@ -652,7 +652,7 @@ select {
 
 .sidebar-switch {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   margin-bottom: 12px;
   padding: 3px;
@@ -1266,6 +1266,14 @@ select {
   mix-blend-mode: multiply;
 }
 
+.overlay-box.bookmark {
+  overflow: visible;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
 .overlay-box.signature {
   align-items: center;
   color: #111827;
@@ -1309,7 +1317,8 @@ select {
   cursor: pointer;
 }
 
-.comment-pin {
+.comment-pin,
+.bookmark-pin {
   position: absolute;
   left: -34px;
   top: -2px;
@@ -1325,6 +1334,32 @@ select {
   color: var(--accent);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
   cursor: pointer;
+}
+
+.bookmark-pin {
+  overflow: visible;
+}
+
+.bookmark-pin.selected {
+  background: var(--accent-2);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.bookmark-delete {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--danger);
 }
 
 .comment-popup {
@@ -1454,6 +1489,12 @@ select {
   gap: 4px;
 }
 
+.outline-source-note {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .outline-list .outline-list {
   margin-left: 12px;
   padding-left: 8px;
@@ -1515,6 +1556,12 @@ select {
 
 .comment-row span {
   color: var(--muted);
+}
+
+.comment-row.active,
+.bookmark-row.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .field-row {

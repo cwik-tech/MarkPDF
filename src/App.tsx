@@ -1,6 +1,7 @@
 import {
   Check,
   BookOpen,
+  Bookmark,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -50,8 +51,8 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
   deletePdfPage,
   detectFormFields,
+  extractDocumentOutline,
   extractEditableOverlays,
-  extractOutline,
   createPdfFromImages,
   exportPdfBytes,
   findTextMatches,
@@ -107,6 +108,7 @@ const signatureStorageKey = "markpdf-signatures";
 const legacySignatureStorageKey = "open-pdf-reader-signatures";
 const themeStorageKey = "markpdf-theme";
 const legacyThemeStorageKey = "open-pdf-reader-theme";
+const isE2eRun = import.meta.env.VITE_MARKPDF_E2E === "1";
 
 type SignatureAssetKind =
   | "typed-signature"
@@ -118,6 +120,7 @@ type ToolbarMenu = "fit" | "view" | "recent" | "save";
 type SidebarMode =
   | "pages"
   | "outline"
+  | "bookmarks"
   | "comments"
   | "forms"
   | "signature"
@@ -908,7 +911,7 @@ export default function App() {
       }
 
       const formFields = await detectFormFields(bytes);
-      const outline = await extractOutline(pdfDoc);
+      const outlineResult = await extractDocumentOutline(pdfDoc, bytes);
       const overlays = await extractEditableOverlays(bytes);
       const tab: PdfTab = {
         kind: "pdf",
@@ -926,7 +929,8 @@ export default function App() {
         scrolling: false,
         overlays,
         formFields,
-        outline,
+        outline: outlineResult.outline,
+        outlineSource: outlineResult.source,
         searchQuery: "",
         searchMatches: [],
         activeSearchMatch: -1,
@@ -942,7 +946,7 @@ export default function App() {
             : { status: "checking", message: "Checking text layer" },
         undoStack: [],
         redoStack: [],
-        dirty: options.dirty ?? false,
+        dirty: options.dirty ?? outlineResult.generated,
       };
 
       setTabs((current) => [...current, tab]);
@@ -1157,7 +1161,7 @@ export default function App() {
   }, [applySemanticSettings]);
 
   useEffect(() => {
-    if (!window.pdfReader?.markdown) return;
+    if (isE2eRun || !window.pdfReader?.markdown) return;
     let cancelled = false;
 
     void window.pdfReader.markdown.listEngines().then(async (engines) => {
@@ -1211,7 +1215,8 @@ export default function App() {
   }, [hideOperationProgress, showOperationProgress]);
 
   useEffect(() => {
-    if (!window.pdfReader?.semantic || !semanticSettings.enabled) return;
+    if (isE2eRun || !window.pdfReader?.semantic || !semanticSettings.enabled)
+      return;
     if (
       semanticSettings.downloadedModelIds.includes(recommendedEmbeddingModelId)
     )
@@ -1493,6 +1498,9 @@ export default function App() {
           bakeOverlays: flattenForms,
           persistEditable: !flattenForms,
           writeStandardAnnotations: !flattenForms,
+          persistSyntheticOutline: tabToSave.outlineSource === "synthetic",
+          syntheticOutline:
+            tabToSave.outlineSource === "synthetic" ? tabToSave.outline : [],
         },
       );
 
@@ -1525,7 +1533,7 @@ export default function App() {
       });
       const pdfDoc = await loadPdfDocument(nextBytes);
       const formFields = flattenForms ? [] : await detectFormFields(nextBytes);
-      const outline = await extractOutline(pdfDoc);
+      const outlineResult = await extractDocumentOutline(pdfDoc, nextBytes);
       const overlays = flattenForms
         ? []
         : await extractEditableOverlays(nextBytes);
@@ -1538,7 +1546,8 @@ export default function App() {
         pageCount: pdfDoc.numPages,
         overlays,
         formFields,
-        outline,
+        outline: outlineResult.outline,
+        outlineSource: outlineResult.source,
         searchMatches: [],
         activeSearchMatch: -1,
         semanticResults: [],
@@ -1853,6 +1862,7 @@ export default function App() {
     overlays: structuredClone(tab.overlays),
     formFields: structuredClone(tab.formFields),
     outline: structuredClone(tab.outline),
+    outlineSource: tab.outlineSource,
   });
 
   const pushHistory = (tab: PdfTab) => ({
@@ -1961,20 +1971,22 @@ export default function App() {
     }));
   };
 
-  const addSelectionOverlay = (kind: "highlight" | "comment") => {
+  const addSelectionOverlay = (kind: "highlight" | "comment" | "bookmark") => {
     if (!activePdfTab || !selectionAction) return;
+    const isComment = kind === "comment";
+    const isBookmark = kind === "bookmark";
     const overlay: OverlayItem = {
       id: newId(kind),
       kind,
       page: selectionAction.page,
       x: selectionAction.x,
       y: selectionAction.y,
-      width: selectionAction.width,
-      height: selectionAction.height,
-      text: kind === "comment" ? "" : undefined,
-      fontSize: kind === "comment" ? 12 : undefined,
+      width: isBookmark ? 1 : selectionAction.width,
+      height: isBookmark ? 1 : selectionAction.height,
+      text: isComment ? "" : isBookmark ? selectionAction.text : undefined,
+      fontSize: isComment ? 12 : undefined,
       color: "#facc15",
-      minimized: kind === "comment" ? true : undefined,
+      minimized: isComment ? true : undefined,
     };
 
     updatePdfTab(activePdfTab.id, (tab) => ({
@@ -2017,6 +2029,7 @@ export default function App() {
       overlays: state.overlays,
       formFields: state.formFields,
       outline: state.outline,
+      outlineSource: state.outlineSource,
       searchMatches: [],
       activeSearchMatch: -1,
       semanticResults: [],
@@ -2063,7 +2076,9 @@ export default function App() {
     if (!activePdfTab) return;
     const pdfDoc = await loadPdfDocument(bytes);
     const formFields = await detectFormFields(bytes);
-    const outline = await extractOutline(pdfDoc);
+    const outlineResult = await extractDocumentOutline(pdfDoc, bytes, {
+      preferPersistedSynthetic: false,
+    });
     updatePdfTab(activePdfTab.id, (tab) => ({
       ...pushHistory(tab),
       bytes,
@@ -2072,7 +2087,8 @@ export default function App() {
       currentPage: Math.min(Math.max(1, page), pdfDoc.numPages),
       overlays: updateOverlays(tab.overlays),
       formFields,
-      outline,
+      outline: outlineResult.outline,
+      outlineSource: outlineResult.source,
       searchMatches: [],
       activeSearchMatch: -1,
       semanticResults: [],
@@ -2561,6 +2577,7 @@ export default function App() {
         <button
           className="icon-button"
           title="Pages"
+          aria-label="Pages"
           disabled={!activePdfTab}
           onClick={() => setSidebar(sidebar === "pages" ? null : "pages")}
         >
@@ -2835,6 +2852,7 @@ export default function App() {
           >
             <button
               title="Highlight selection"
+              aria-label="Highlight selection"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => addSelectionOverlay("highlight")}
             >
@@ -2842,10 +2860,19 @@ export default function App() {
             </button>
             <button
               title="Comment on selection"
+              aria-label="Comment on selection"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => addSelectionOverlay("comment")}
             >
               <MessageSquarePlus size={16} />
+            </button>
+            <button
+              title="Bookmark selection"
+              aria-label="Bookmark selection"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => addSelectionOverlay("bookmark")}
+            >
+              <Bookmark size={16} />
             </button>
           </div>
         )}
@@ -2910,6 +2937,7 @@ export default function App() {
                     },
                   });
                 }}
+                onSelectOverlay={setSelectedOverlayId}
                 onModeChange={setSidebar}
               />
             </ResizablePanel>
@@ -2969,6 +2997,7 @@ export default function App() {
                 }}
                 onOpenDrawingSignature={() => setDrawingSignatureOpen(true)}
                 onSelectSemanticResult={() => undefined}
+                onSelectOverlay={setSelectedOverlayId}
                 onModeChange={setSidebar}
               />
             )}
@@ -4200,7 +4229,11 @@ function PdfPage({
         }}
       >
         <canvas ref={canvasRef} />
-        <div className="text-layer" ref={textLayerRef} />
+        <div
+          className="text-layer"
+          data-testid={`text-layer-${pageNumber}`}
+          ref={textLayerRef}
+        />
         <div className="search-highlight-layer" ref={searchHighlightLayerRef} />
         {renderError && (
           <div className="render-error">
@@ -4607,7 +4640,37 @@ function OverlayBox({
         if (nextText !== null) onUpdate({ text: nextText }, true);
       }}
     >
-      {overlay.kind === "comment" && overlay.minimized ? (
+      {overlay.kind === "bookmark" ? (
+        <button
+          className={`bookmark-pin ${selected ? "selected" : ""}`}
+          title={overlay.text?.trim() || "Bookmark"}
+          aria-label={`Bookmark: ${overlay.text?.trim() || "Bookmark"}`}
+          style={{ left: -(overlay.x * zoom + 34) }}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onSelect();
+          }}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect();
+          }}
+        >
+          <Bookmark size={15} />
+          {selected && (
+            <span
+              className="bookmark-delete"
+              title="Delete bookmark"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete();
+              }}
+            >
+              <X size={11} />
+            </span>
+          )}
+        </button>
+      ) : overlay.kind === "comment" && overlay.minimized ? (
         <>
           <button
             className="comment-pin"
@@ -4656,7 +4719,7 @@ function OverlayBox({
           {overlay.text}
         </span>
       )}
-      {selected && (
+      {selected && overlay.kind !== "bookmark" && (
         <>
           <button
             className="delete-handle"
@@ -4803,6 +4866,7 @@ function Sidebar({
   onSaveSignatureAsset,
   onOpenDrawingSignature,
   onSelectSemanticResult,
+  onSelectOverlay,
   onModeChange,
 }: {
   mode: SidebarMode;
@@ -4828,13 +4892,18 @@ function Sidebar({
   onSaveSignatureAsset: (asset: SignatureAsset) => void;
   onOpenDrawingSignature: () => void;
   onSelectSemanticResult: (result: PdfTab["semanticResults"][number]) => void;
+  onSelectOverlay: (id: string | null) => void;
   onModeChange: (mode: SidebarMode | null) => void;
 }) {
   const typedInitials = initialsFromName(signatureText) || "AB";
+  const bookmarkOverlays =
+    tab?.overlays
+      .filter((overlay) => overlay.kind === "bookmark")
+      .sort((a, b) => a.page - b.page || a.y - b.y || a.x - b.x) ?? [];
 
   return (
     <aside className={`sidebar ${mode === "semantic" ? "right" : ""}`}>
-      {(mode === "pages" || mode === "outline") && (
+      {(mode === "pages" || mode === "outline" || mode === "bookmarks") && (
         <div className="sidebar-switch">
           <button
             className={mode === "pages" ? "active" : ""}
@@ -4848,6 +4917,13 @@ function Sidebar({
             onClick={() => onModeChange("outline")}
           >
             <BookOpen size={15} />
+            Outline
+          </button>
+          <button
+            className={mode === "bookmarks" ? "active" : ""}
+            onClick={() => onModeChange("bookmarks")}
+          >
+            <Bookmark size={15} />
             Bookmarks
           </button>
         </div>
@@ -4970,10 +5046,38 @@ function Sidebar({
 
       {mode === "outline" && (
         <>
+          {tab?.outlineSource === "synthetic" && tab.outline.length > 0 && (
+            <p className="outline-source-note">Generated outline</p>
+          )}
           {tab?.outline.length ? (
             <OutlineList items={tab.outline} onSelectPage={onSelectPage} />
           ) : (
-            <p>No bookmarks found.</p>
+            <p>No outline found.</p>
+          )}
+        </>
+      )}
+
+      {mode === "bookmarks" && (
+        <>
+          {bookmarkOverlays.length ? (
+            <div className="stack">
+              {bookmarkOverlays.map((overlay) => (
+                <button
+                  key={overlay.id}
+                  className={`comment-row bookmark-row ${selectedOverlay?.id === overlay.id ? "active" : ""}`}
+                  aria-label={`Bookmark on page ${overlay.page}: ${overlay.text?.trim() || "Bookmark"}`}
+                  onClick={() => {
+                    onSelectPage(overlay.page);
+                    onSelectOverlay(overlay.id);
+                  }}
+                >
+                  <strong>Page {overlay.page}</strong>
+                  <span>{overlay.text?.trim() || "Bookmark"}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p>No bookmarks yet.</p>
           )}
         </>
       )}
@@ -5175,7 +5279,7 @@ function Sidebar({
         </>
       )}
 
-      {selectedOverlay && (
+      {selectedOverlay && selectedOverlay.kind !== "bookmark" && (
         <div className="inspector">
           <h2>Selection</h2>
           {selectedOverlay.kind !== "highlight" && (

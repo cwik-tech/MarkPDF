@@ -15,16 +15,51 @@ import {
   rgb,
   StandardFonts
 } from "pdf-lib";
-import type { FormFieldState, ImagePdfSource, OcrPageText, OutlineItem, OverlayItem, SearchMatch } from "../types";
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+import type { FormFieldState, ImagePdfSource, OcrPageText, OutlineItem, OutlineSource, OverlayItem, SearchMatch } from "../types";
 
 const pdfAssetBase = `${import.meta.env.BASE_URL}pdfjs/`;
+const pdfWorkerSrc =
+  import.meta.env.MODE === "test"
+    ? new URL("../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs", import.meta.url).href
+    : pdfWorker;
 const overlayMetadataPrefix = "markpdf-overlays:";
 const legacyOverlayMetadataPrefix = "open-pdf-reader-overlays:";
+const syntheticOutlineMetadataPrefix = "markpdf-outline:";
 const standardAnnotationNamePrefix = "markpdf:";
 const legacyStandardAnnotationNamePrefix = "open-pdf-reader:";
 const standardAnnotationAuthor = "MarkPDF";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+
+export interface DocumentOutline {
+  outline: OutlineItem[];
+  source: OutlineSource | null;
+  generated: boolean;
+}
+
+interface ExtractDocumentOutlineOptions {
+  preferPersistedSynthetic?: boolean;
+}
+
+interface SyntheticTextAtom {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  fontSize: number;
+  fontName: string;
+}
+
+interface SyntheticTextLine {
+  text: string;
+  page: number;
+  pageHeight: number;
+  x: number;
+  y: number;
+  width: number;
+  fontSize: number;
+  bold: boolean;
+}
 
 export async function loadPdfDocument(bytes: Uint8Array, password?: string) {
   return pdfjsLib.getDocument({
@@ -67,6 +102,92 @@ export async function extractOutline(pdfDoc: pdfjsLib.PDFDocumentProxy): Promise
   return normalize(outline, "outline");
 }
 
+export async function extractDocumentOutline(
+  pdfDoc: pdfjsLib.PDFDocumentProxy,
+  bytes?: Uint8Array,
+  options: ExtractDocumentOutlineOptions = {}
+): Promise<DocumentOutline> {
+  const nativeOutline = await extractOutline(pdfDoc);
+  if (nativeOutline.length > 0) {
+    return { outline: nativeOutline, source: "native", generated: false };
+  }
+
+  if (bytes && options.preferPersistedSynthetic !== false) {
+    const persistedOutline = await extractPersistedSyntheticOutline(bytes);
+    if (persistedOutline.length > 0) {
+      return { outline: persistedOutline, source: "synthetic", generated: false };
+    }
+  }
+
+  const syntheticOutline = await extractSyntheticOutline(pdfDoc);
+  return {
+    outline: syntheticOutline,
+    source: syntheticOutline.length > 0 ? "synthetic" : null,
+    generated: syntheticOutline.length > 0
+  };
+}
+
+export async function extractSyntheticOutline(pdfDoc: pdfjsLib.PDFDocumentProxy): Promise<OutlineItem[]> {
+  const lines: SyntheticTextLine[] = [];
+
+  for (let pageNumber = 1; pageNumber <= pdfDoc.numPages; pageNumber += 1) {
+    const page = await pdfDoc.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 1 });
+    const textContent = await page.getTextContent();
+    lines.push(...groupSyntheticTextLines(textContent.items, pageNumber, viewport.height));
+  }
+
+  if (lines.length === 0) return [];
+
+  const bodyFontSize = median(
+    lines
+      .map((line) => line.fontSize)
+      .filter((fontSize) => Number.isFinite(fontSize) && fontSize > 0)
+  );
+  const repeatedPages = getRepeatedLinePages(lines);
+  const candidates = lines.filter((line) =>
+    isSyntheticHeadingCandidate(line, bodyFontSize, repeatedPages.get(normalizeSyntheticHeadingText(line.text))?.size ?? 0, pdfDoc.numPages)
+  );
+
+  if (candidates.length === 0) return [];
+
+  const fontBands = getSyntheticHeadingFontBands(candidates);
+  const stack: Array<{ level: number; children: OutlineItem[] }> = [{ level: 0, children: [] }];
+
+  candidates.slice(0, 250).forEach((line, index) => {
+    const level = getSyntheticHeadingLevel(line, bodyFontSize, fontBands);
+    const item: OutlineItem = {
+      id: `synthetic-outline-${line.page}-${index}`,
+      title: cleanSyntheticHeadingTitle(line.text),
+      page: line.page,
+      children: []
+    };
+
+    while (stack.length > 1 && stack[stack.length - 1].level >= level) {
+      stack.pop();
+    }
+
+    stack[stack.length - 1].children.push(item);
+    stack.push({ level, children: item.children });
+  });
+
+  return stack[0].children;
+}
+
+export async function extractPersistedSyntheticOutline(bytes: Uint8Array): Promise<OutlineItem[]> {
+  try {
+    const pdfDoc = await PDFDocument.load(bytes.slice(), { ignoreEncryption: true });
+    const encoded = getKeywordEntries(pdfDoc)
+      .map((keyword) => readSyntheticOutlineKeyword(keyword.trim()))
+      .find((value) => value !== null);
+
+    if (!encoded) return [];
+    return normalizePersistedOutlineItems(JSON.parse(decodeBase64Json(encoded)), "outline");
+  } catch {
+    return [];
+  }
+}
+
 async function resolveOutlinePage(pdfDoc: pdfjsLib.PDFDocumentProxy, dest: unknown) {
   try {
     const resolved = typeof dest === "string" ? await pdfDoc.getDestination(dest) : dest;
@@ -75,6 +196,168 @@ async function resolveOutlinePage(pdfDoc: pdfjsLib.PDFDocumentProxy, dest: unkno
   } catch {
     return undefined;
   }
+}
+
+function groupSyntheticTextLines(items: unknown[], page: number, pageHeight: number): SyntheticTextLine[] {
+  const atoms = items
+    .map(toSyntheticTextAtom)
+    .filter((atom): atom is SyntheticTextAtom => atom !== null)
+    .sort((a, b) => b.y - a.y || a.x - b.x);
+  const grouped: SyntheticTextAtom[][] = [];
+
+  for (const atom of atoms) {
+    const current = grouped[grouped.length - 1];
+    const currentFontSize = current ? median(current.map((item) => item.fontSize)) : atom.fontSize;
+    const sameLineTolerance = Math.max(2, Math.max(currentFontSize, atom.fontSize) * 0.35);
+
+    if (current && Math.abs(median(current.map((item) => item.y)) - atom.y) <= sameLineTolerance) {
+      current.push(atom);
+    } else {
+      grouped.push([atom]);
+    }
+  }
+
+  return grouped
+    .map((line) => {
+      const ordered = [...line].sort((a, b) => a.x - b.x);
+      const text = ordered
+        .map((item) => item.text)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const left = Math.min(...ordered.map((item) => item.x));
+      const right = Math.max(...ordered.map((item) => item.x + item.width));
+
+      return {
+        text,
+        page,
+        pageHeight,
+        x: left,
+        y: median(ordered.map((item) => item.y)),
+        width: Math.max(0, right - left),
+        fontSize: median(ordered.map((item) => item.fontSize)),
+        bold: ordered.some((item) => /bold|black|heavy|semibold/i.test(item.fontName))
+      };
+    })
+    .filter((line) => line.text.length > 0);
+}
+
+function toSyntheticTextAtom(item: unknown): SyntheticTextAtom | null {
+  if (!item || typeof item !== "object" || !("str" in item)) return null;
+
+  const text = String((item as { str?: unknown }).str ?? "").trim();
+  if (!text) return null;
+
+  const rawTransform = (item as { transform?: unknown }).transform;
+  const transform = Array.isArray(rawTransform) ? rawTransform : [];
+  const x = toFiniteNumber(transform[4]);
+  const y = toFiniteNumber(transform[5]);
+  if (x === null || y === null) return null;
+
+  const width = toFiniteNumber((item as { width?: unknown }).width) ?? 0;
+  const height = toFiniteNumber((item as { height?: unknown }).height) ?? 0;
+  const transformFontSize = Math.max(
+    Math.abs(toFiniteNumber(transform[0]) ?? 0),
+    Math.abs(toFiniteNumber(transform[3]) ?? 0)
+  );
+  const fontSize = Math.max(transformFontSize, Math.abs(height), 1);
+
+  return {
+    text,
+    x,
+    y,
+    width,
+    fontSize,
+    fontName: String((item as { fontName?: unknown }).fontName ?? "")
+  };
+}
+
+function isSyntheticHeadingCandidate(line: SyntheticTextLine, bodyFontSize: number, repeatedPageCount: number, pageCount: number) {
+  const title = cleanSyntheticHeadingTitle(line.text);
+  const words = title.split(/\s+/).filter(Boolean);
+  const numberedDepth = getNumberedHeadingDepth(title);
+  const prominent = line.fontSize >= bodyFontSize * 1.12;
+  const veryProminent = line.fontSize >= bodyFontSize * 1.28;
+  const sentenceLike = words.length > 10 && /[.!?]$/.test(title);
+  const repeatedAcrossPages = repeatedPageCount >= 3 && repeatedPageCount / Math.max(1, pageCount) >= 0.25;
+  const nearFooter = line.y < line.pageHeight * 0.08;
+
+  if (title.length < 3 || title.length > 140) return false;
+  if (words.length > 22) return false;
+  if (/^\d+$/.test(title) || /^page\s+\d+/i.test(title)) return false;
+  if (/^\d{4}[.)]/.test(title) || /https?:\/\//i.test(title) || /\bwww\./i.test(title)) return false;
+  if (/^[\d\s._-]+$/.test(title)) return false;
+  if (repeatedAcrossPages) return false;
+  if (nearFooter && !numberedDepth) return false;
+  if (numberedDepth && line.fontSize < bodyFontSize * 1.08 && !line.bold) return false;
+
+  if (numberedDepth && words.length <= 22) return true;
+  if (veryProminent && words.length <= 18) return true;
+  if (prominent && words.length <= 14 && !sentenceLike) return true;
+  return line.bold && line.fontSize >= bodyFontSize * 1.04 && words.length <= 16 && !sentenceLike;
+}
+
+function getSyntheticHeadingLevel(line: SyntheticTextLine, bodyFontSize: number, fontBands: number[]) {
+  const numberedDepth = getNumberedHeadingDepth(line.text);
+  if (numberedDepth) return Math.min(3, numberedDepth);
+
+  const fontBandIndex = fontBands.findIndex((fontSize) => Math.abs(fontSize - line.fontSize) <= 0.75);
+  if (fontBandIndex >= 0) return Math.min(3, fontBandIndex + 1);
+  if (line.fontSize >= bodyFontSize * 1.35) return 1;
+  if (line.fontSize >= bodyFontSize * 1.18) return 2;
+  return 3;
+}
+
+function getNumberedHeadingDepth(text: string) {
+  const match = cleanSyntheticHeadingTitle(text).match(/^(\d+(?:\.\d+){0,4})([.)])?\s+\S/);
+  if (!match) return null;
+  if (!match[1].includes(".") && !match[2]) return null;
+  return match[1].split(".").length;
+}
+
+function getRepeatedLinePages(lines: SyntheticTextLine[]) {
+  const repeatedPages = new Map<string, Set<number>>();
+  for (const line of lines) {
+    const key = normalizeSyntheticHeadingText(line.text);
+    if (!key) continue;
+    const pages = repeatedPages.get(key) ?? new Set<number>();
+    pages.add(line.page);
+    repeatedPages.set(key, pages);
+  }
+  return repeatedPages;
+}
+
+function getSyntheticHeadingFontBands(lines: SyntheticTextLine[]) {
+  return [...lines]
+    .map((line) => line.fontSize)
+    .sort((a, b) => b - a)
+    .reduce<number[]>((bands, fontSize) => {
+      if (!bands.some((existing) => Math.abs(existing - fontSize) <= 0.75)) {
+        bands.push(fontSize);
+      }
+      return bands;
+    }, [])
+    .slice(0, 3);
+}
+
+function cleanSyntheticHeadingTitle(text: string) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function normalizeSyntheticHeadingText(text: string) {
+  return cleanSyntheticHeadingTitle(text).toLowerCase();
+}
+
+function toFiniteNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function median(values: number[]) {
+  const sorted = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (sorted.length === 0) return 1;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
 
 export async function detectFormFields(bytes: Uint8Array): Promise<FormFieldState[]> {
@@ -168,9 +451,7 @@ export async function findTextMatches(
 export async function extractEditableOverlays(bytes: Uint8Array): Promise<OverlayItem[]> {
   try {
     const pdfDoc = await PDFDocument.load(bytes.slice(), { ignoreEncryption: true });
-    const keywords = pdfDoc.getKeywords() ?? "";
-    const encoded = keywords
-      .split(/,\s*/)
+    const encoded = getKeywordEntries(pdfDoc)
       .map((keyword) => readEditableOverlayKeyword(keyword))
       .find((encoded) => encoded !== null);
 
@@ -188,7 +469,13 @@ export async function exportPdfBytes(
   overlays: OverlayItem[],
   formFields: FormFieldState[],
   flattenForms: boolean,
-  options: { bakeOverlays?: boolean; persistEditable?: boolean; writeStandardAnnotations?: boolean } = {}
+  options: {
+    bakeOverlays?: boolean;
+    persistEditable?: boolean;
+    writeStandardAnnotations?: boolean;
+    persistSyntheticOutline?: boolean;
+    syntheticOutline?: OutlineItem[];
+  } = {}
 ) {
   const pdfDoc = await PDFDocument.load(sourceBytes.slice(), { ignoreEncryption: true });
   const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -231,6 +518,10 @@ export async function exportPdfBytes(
     writeEditableOverlayMetadata(pdfDoc, overlays);
   } else if (bakeOverlays) {
     clearEditableOverlayMetadata(pdfDoc);
+  }
+
+  if (options.persistSyntheticOutline) {
+    writeSyntheticOutlineMetadata(pdfDoc, options.syntheticOutline ?? []);
   }
 
   if (writeStandardAnnotations || bakeOverlays) {
@@ -408,7 +699,11 @@ function scaleImagePage(width: number, height: number) {
 function writeEditableOverlayMetadata(pdfDoc: PDFDocument, overlays: OverlayItem[]) {
   const existingKeywords = getKeywordsWithoutEditableOverlayMetadata(pdfDoc);
   const editableOverlays = overlays.filter(
-    (overlay) => overlay.kind === "highlight" || overlay.kind === "comment" || overlay.kind === "signature"
+    (overlay) =>
+      overlay.kind === "highlight" ||
+      overlay.kind === "comment" ||
+      overlay.kind === "signature" ||
+      overlay.kind === "bookmark"
   );
   const encoded = encodeBase64Json(JSON.stringify(editableOverlays));
   pdfDoc.setKeywords([...existingKeywords, `${overlayMetadataPrefix}${encoded}`]);
@@ -419,11 +714,33 @@ function clearEditableOverlayMetadata(pdfDoc: PDFDocument) {
 }
 
 function getKeywordsWithoutEditableOverlayMetadata(pdfDoc: PDFDocument) {
-  return (pdfDoc.getKeywords() ?? "")
-    .split(/,\s*/)
-    .map((keyword) => keyword.trim())
+  return getKeywordEntries(pdfDoc)
     .filter(Boolean)
     .filter((keyword) => readEditableOverlayKeyword(keyword) === null);
+}
+
+function writeSyntheticOutlineMetadata(pdfDoc: PDFDocument, outline: OutlineItem[]) {
+  const existingKeywords = getKeywordsWithoutSyntheticOutlineMetadata(pdfDoc);
+  if (outline.length === 0) {
+    pdfDoc.setKeywords(existingKeywords);
+    return;
+  }
+
+  const encoded = encodeBase64Json(JSON.stringify(outline));
+  pdfDoc.setKeywords([...existingKeywords, `${syntheticOutlineMetadataPrefix}${encoded}`]);
+}
+
+function getKeywordsWithoutSyntheticOutlineMetadata(pdfDoc: PDFDocument) {
+  return getKeywordEntries(pdfDoc)
+    .filter(Boolean)
+    .filter((keyword) => readSyntheticOutlineKeyword(keyword) === null);
+}
+
+function getKeywordEntries(pdfDoc: PDFDocument) {
+  return (pdfDoc.getKeywords() ?? "")
+    .split(/[\s,]+/)
+    .map((keyword) => keyword.trim())
+    .filter(Boolean);
 }
 
 export async function insertBlankPageAfter(sourceBytes: Uint8Array, pageNumber: number) {
@@ -603,6 +920,38 @@ function readEditableOverlayKeyword(keyword: string) {
     return keyword.slice(legacyOverlayMetadataPrefix.length);
   }
   return null;
+}
+
+function readSyntheticOutlineKeyword(keyword: string) {
+  return keyword.startsWith(syntheticOutlineMetadataPrefix)
+    ? keyword.slice(syntheticOutlineMetadataPrefix.length)
+    : null;
+}
+
+function normalizePersistedOutlineItems(value: unknown, path: string): OutlineItem[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map<OutlineItem | null>((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const rawTitle = (item as { title?: unknown }).title;
+      if (typeof rawTitle !== "string" || !rawTitle.trim()) return null;
+
+      const rawPage = (item as { page?: unknown }).page;
+      const page = Number.isInteger(rawPage) && Number(rawPage) > 0 ? Number(rawPage) : undefined;
+      const id = typeof (item as { id?: unknown }).id === "string" && (item as { id: string }).id.trim()
+        ? (item as { id: string }).id
+        : `${path}-${index}`;
+      const outlineItem: OutlineItem = {
+        id,
+        title: rawTitle.trim().slice(0, 200),
+        children: normalizePersistedOutlineItems((item as { children?: unknown }).children, `${path}-${index}`)
+      };
+
+      if (page) outlineItem.page = page;
+      return outlineItem;
+    })
+    .filter((item): item is OutlineItem => item !== null);
 }
 
 function getPdfText(dict: PDFDict, key: string) {

@@ -20,6 +20,7 @@ export function defaultMarkdownTitle(name: string) {
 function annotationLabel(kind: string) {
   if (kind === "comment") return "Comment";
   if (kind === "highlight") return "Highlight";
+  if (kind === "bookmark") return "Bookmark";
   if (kind === "text") return "Text";
   if (kind === "signature") return "Signature";
   return "Annotation";

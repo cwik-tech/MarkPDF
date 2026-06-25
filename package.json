@@ -18,6 +18,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run --maxWorkers=2",
+    "test:e2e": "tsc -p tsconfig.electron.json && playwright test",
     "package": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
@@ -40,6 +42,7 @@
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "^25.0.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
@@ -48,10 +51,11 @@
     "cross-env": "^10.1.0",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
-    "playwright": "^1.60.0",
+    "playwright": "^1.61.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.6",
     "vite-plugin-static-copy": "^4.1.0",
+    "vitest": "^4.1.9",
     "wait-on": "^9.0.3"
   },
   "build": {

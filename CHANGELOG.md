@@ -152,3 +152,16 @@ I don't have visibility into what the actual changes were in `README.md` from th
 The most recent commit (8ba327d) at 11:21:51 on 2026-06-07 matches your edit. Here's the changelog paragraph:
 
 Updated the README with AI Providers and Semantic Search settings documentation, adding visual screenshots to illustrate the configuration options for LLM integration and semantic search features. The changes reorganized content in `README.md` to better highlight these features alongside the newly added screenshot assets in the `docs/screenshots/` directory.
+## 2026-06-07 18:21
+
+Created a new memory document to track the macOS notarization issue blocking the MarkPDF release CI process, then updated the project memory index to reference it. The memory captures that Apple's notarization service is stuck in progress on the account side, not a code-related problem.
+
+## 2026-06-24
+
+Renamed the PDF-provided bookmark sidebar tab to Outline and added user-created bookmarks from selected PDF text. Bookmarks now appear as page-side pins, list in a dedicated Bookmarks sidebar tab, persist through MarkPDF editable overlay metadata, and are covered by Vitest PDF/Markdown tests plus a Playwright Electron flow. Added test scripts/configuration and verified the production app build.
+
+Widened the left PDF sidebar so the Pages, Outline, and Bookmarks controls and bookmark rows have more room.
+
+Hid the generic selection inspector for bookmark overlays so bookmark selections only appear in the Bookmarks list and page-side pin.
+
+Added synthetic Outline generation for PDFs without embedded outline data. MarkPDF now infers headings from real PDF text layout, labels generated outlines in the sidebar, persists them in MarkPDF PDF metadata on save, reloads persisted generated outlines, and covers extraction/persistence with Vitest plus the Electron Playwright flow.
