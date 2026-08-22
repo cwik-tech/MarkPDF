@@ -698,7 +698,7 @@ function GeneralSettingsPage({
       </div>
 
       {status.supported && missing.length > 1 && (
-        <div className="settings-section-heading">
+        <div className="default-app-actions">
           <p className="settings-note">MarkPDF is not the default app for {missing.length} of these file types.</p>
           <button
             className="primary-button"
