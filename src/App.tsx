@@ -2510,6 +2510,7 @@ export default function App() {
       ) : (
         <DocumentView
           tab={activeTab}
+          theme={theme}
           tool={tool}
           selectedOverlayId={selectedOverlayId}
           onPageClick={addOverlay}
@@ -3697,6 +3698,7 @@ function rectangleOverlapRatio(a: DOMRect, b: DOMRect) {
 
 function DocumentView({
   tab,
+  theme,
   tool,
   selectedOverlayId,
   onPageClick,
@@ -3708,6 +3710,7 @@ function DocumentView({
   onWheelPage,
 }: {
   tab: DocumentTab;
+  theme: ThemeMode;
   tool: ToolMode;
   selectedOverlayId: string | null;
   onPageClick: (page: number, x: number, y: number) => void;
@@ -3734,7 +3737,7 @@ function DocumentView({
   onWheelPage: (direction: -1 | 1) => void;
 }) {
   if (isMarkdownTab(tab)) {
-    return <MarkdownDocumentView tab={tab} />;
+    return <MarkdownDocumentView tab={tab} theme={theme} />;
   }
 
   return (
@@ -3895,10 +3898,21 @@ function PdfDocumentView({
   );
 }
 
-function MarkdownDocumentView({ tab }: { tab: MarkdownTab }) {
+function MarkdownDocumentView({
+  tab,
+  theme,
+}: {
+  tab: MarkdownTab;
+  theme: ThemeMode;
+}) {
   return (
     <div className="markdown-document-scroll">
-      <MarkdownPreview markdown={tab.markdown} searchQuery={tab.searchQuery} baseUrl={tab.baseUrl} />
+      <MarkdownPreview
+        markdown={tab.markdown}
+        theme={theme}
+        searchQuery={tab.searchQuery}
+        baseUrl={tab.baseUrl}
+      />
     </div>
   );
 }

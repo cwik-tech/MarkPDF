@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Render Mermaid fenced blocks as theme-aware SVG charts in Markdown previews instead of displaying their source code.
+
 ## 2026-06-07 17:40
 
 - Fixed Markdown image-description export so copied image assets are referenced instead of Docling temp paths, bad fragment descriptions are skipped, and description ordering stays aligned with exported images.

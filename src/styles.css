@@ -1078,6 +1078,31 @@ select {
   white-space: pre;
 }
 
+.markdown-mermaid {
+  min-height: 120px;
+  overflow: auto;
+  margin: 1em 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
+.markdown-mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.markdown-mermaid-error {
+  margin: 1em 0;
+}
+
+.markdown-mermaid-error > p {
+  color: var(--danger);
+}
+
 .markdown-preview code {
   padding: 2px 5px;
   border-radius: 4px;

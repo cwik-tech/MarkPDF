@@ -1,7 +1,7 @@
 # Third-Party Notices
 
 This file summarizes direct package dependencies listed in package.json as
-of 2026-06-07. Review bundled transitive dependencies and generated release
+of 2026-08-22. Review bundled transitive dependencies and generated release
 artifacts before publishing installers.
 
 ## Runtime Dependencies
@@ -12,6 +12,7 @@ artifacts before publishing installers.
 | @vitejs/plugin-react | ^5.1.1 | MIT | https://github.com/vitejs/vite-plugin-react |
 | electron-store | ^11.0.2 | MIT | https://github.com/sindresorhus/electron-store |
 | lucide-react | ^0.556.0 | ISC | https://lucide.dev |
+| mermaid | 11.17.0 | MIT | https://mermaid.js.org |
 | pdf-lib | ^1.17.1 | MIT | https://pdf-lib.js.org |
 | pdfjs-dist | ^5.4.394 | Apache-2.0 | https://mozilla.github.io/pdf.js/ |
 | react | ^19.2.1 | MIT | https://react.dev/ |

@@ -1,7 +1,10 @@
 import { Fragment, type ReactNode } from "react";
+import type { ThemeMode } from "../types";
+import { MermaidDiagram } from "./MermaidDiagram";
 
 interface MarkdownPreviewProps {
   markdown: string;
+  theme: ThemeMode;
   searchQuery?: string;
   baseUrl?: string;
 }
@@ -292,7 +295,7 @@ function inlineMarkdown(text: string, searchQuery?: string, baseUrl?: string): R
   });
 }
 
-export function MarkdownPreview({ markdown, searchQuery, baseUrl }: MarkdownPreviewProps) {
+export function MarkdownPreview({ markdown, theme, searchQuery, baseUrl }: MarkdownPreviewProps) {
   const blocks = parseMarkdown(markdown);
 
   return (
@@ -312,6 +315,10 @@ export function MarkdownPreview({ markdown, searchQuery, baseUrl }: MarkdownPrev
         }
 
         if (block.kind === "code") {
+          if (block.language.toLocaleLowerCase() === "mermaid") {
+            return <MermaidDiagram key={index} source={block.text} theme={theme} />;
+          }
+
           return (
             <pre key={index}>
               {block.language && <span className="markdown-code-language">{block.language}</span>}
