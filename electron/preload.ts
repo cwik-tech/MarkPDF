@@ -35,6 +35,11 @@ contextBridge.exposeInMainWorld("pdfReader", {
   clearRecentFiles: () => ipcRenderer.invoke("recent:clear"),
   readyForOpenFiles: () =>
     ipcRenderer.invoke("app:renderer-ready-for-open-files"),
+  defaultApp: {
+    getStatus: () => ipcRenderer.invoke("default-app:status"),
+    setAsDefault: (fileTypeIds: string[]) =>
+      ipcRenderer.invoke("default-app:set", fileTypeIds),
+  },
   ai: {
     listProviders: () => ipcRenderer.invoke("ai:list-providers"),
     saveProvider: (provider: unknown) =>

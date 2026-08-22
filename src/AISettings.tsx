@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  SlidersHorizontal,
   Trash2,
   XCircle
 } from "lucide-react";
@@ -17,6 +18,8 @@ import type {
   AIProviderInput,
   AIProviderKind,
   AIProviderView,
+  DefaultAppFileTypeId,
+  DefaultAppStatus,
   LocalAgentInfo,
   MarkdownExportSettings,
   SemanticDatabaseInfo,
@@ -56,7 +59,14 @@ interface AISettingsDialogProps {
   onSemanticIndexCleared?: () => void;
 }
 
-type SettingsPage = "providers" | "semantic" | "markdown";
+type SettingsPage = "general" | "providers" | "semantic" | "markdown";
+
+const emptyDefaultAppStatus: DefaultAppStatus = {
+  supported: false,
+  bundleId: null,
+  bundlePath: null,
+  fileTypes: []
+};
 
 const defaultSemanticSettings: SemanticSearchSettings = {
   enabled: true,
@@ -147,7 +157,9 @@ function formatCheckedAt(value?: string) {
 }
 
 export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemanticIndexCleared }: AISettingsDialogProps) {
-  const [page, setPage] = useState<SettingsPage>("providers");
+  const [page, setPage] = useState<SettingsPage>("general");
+  const [defaultAppStatus, setDefaultAppStatus] = useState<DefaultAppStatus>(emptyDefaultAppStatus);
+  const [busyDefaultAppFileTypeId, setBusyDefaultAppFileTypeId] = useState<DefaultAppFileTypeId | "all" | null>(null);
   const [providers, setProviders] = useState<AIProviderView[]>([]);
   const [localAgents, setLocalAgents] = useState<LocalAgentInfo[]>([]);
   const [semanticSettings, setSemanticSettings] = useState<SemanticSearchSettings>(defaultSemanticSettings);
@@ -213,11 +225,20 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
     setMarkdownSettings(await window.pdfReader.markdown.getSettings());
   };
 
+  const loadDefaultAppStatus = async () => {
+    if (!window.pdfReader?.defaultApp) {
+      setDefaultAppStatus(emptyDefaultAppStatus);
+      return;
+    }
+    setDefaultAppStatus(await window.pdfReader.defaultApp.getStatus());
+  };
+
   useEffect(() => {
     void loadProviders();
     void loadAgents();
     void loadSemanticSettings();
     void loadMarkdownSettings();
+    void loadDefaultAppStatus();
   }, []);
 
   useEffect(() => {
@@ -228,6 +249,25 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
 
   const showToast = (message: string) => {
     setToast({ id: Date.now(), message });
+  };
+
+  const setAsDefaultApp = async (fileTypeIds: DefaultAppFileTypeId[], busyKey: DefaultAppFileTypeId | "all") => {
+    if (!window.pdfReader?.defaultApp) return;
+    setBusyDefaultAppFileTypeId(busyKey);
+    try {
+      const status = await window.pdfReader.defaultApp.setAsDefault(fileTypeIds);
+      setDefaultAppStatus(status);
+      const pending = status.fileTypes.filter((fileType) => fileTypeIds.includes(fileType.id) && !fileType.isDefault);
+      if (pending.length === 0) {
+        showToast(fileTypeIds.length > 1 ? "MarkPDF is now the default app for these files." : "MarkPDF is now the default app.");
+      } else {
+        showToast(status.reason ?? `macOS did not apply the change for ${pending.map((fileType) => fileType.label).join(", ")}.`);
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Could not change the default application.");
+    } finally {
+      setBusyDefaultAppFileTypeId(null);
+    }
   };
 
   const saveDraft = async (validateAfterSave: boolean) => {
@@ -384,6 +424,10 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
             <Settings size={18} />
             <span>Settings</span>
           </div>
+          <button className={`settings-nav-item ${page === "general" ? "active" : ""}`} onClick={() => setPage("general")}>
+            <SlidersHorizontal size={16} />
+            <span>General</span>
+          </button>
           <button className={`settings-nav-item ${page === "providers" ? "active" : ""}`} onClick={() => setPage("providers")}>
             <Bot size={16} />
             <span>AI Providers</span>
@@ -401,13 +445,23 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
         <div className="settings-content">
           <header className="settings-header">
             <div>
-              <h2 id="settings-title">{page === "providers" ? "AI Providers" : page === "semantic" ? "Semantic Search" : "Markdown"}</h2>
+              <h2 id="settings-title">
+                {page === "general"
+                  ? "General"
+                  : page === "providers"
+                    ? "AI Providers"
+                    : page === "semantic"
+                      ? "Semantic Search"
+                      : "Markdown"}
+              </h2>
               <p>
-                {page === "providers"
-                  ? "Manage model providers, local servers, and detected CLI agents."
-                  : page === "semantic"
-                    ? "Manage local embedding models and the private document index."
-                    : "Manage Markdown export behavior and conversion defaults."}
+                {page === "general"
+                  ? "Choose which files macOS opens with MarkPDF."
+                  : page === "providers"
+                    ? "Manage model providers, local servers, and detected CLI agents."
+                    : page === "semantic"
+                      ? "Manage local embedding models and the private document index."
+                      : "Manage Markdown export behavior and conversion defaults."}
               </p>
             </div>
             <button className="icon-button" title="Close settings" onClick={onClose}>
@@ -415,7 +469,19 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
             </button>
           </header>
 
-          {page === "providers" ? (
+          {page === "general" ? (
+            <div className="settings-summary">
+              {!defaultAppStatus.supported ? (
+                <span>Default app changes unavailable</span>
+              ) : (
+                defaultAppStatus.fileTypes.map((fileType) => (
+                  <span key={fileType.id}>
+                    {fileType.description}: {fileType.isDefault ? "MarkPDF" : fileType.currentAppName ?? "not set"}
+                  </span>
+                ))
+              )}
+            </div>
+          ) : page === "providers" ? (
             <div className="settings-summary">
               <span>{providers.length} providers</span>
               <span>{enabledModels} models enabled</span>
@@ -433,6 +499,15 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
               <span>{markdownSettings.useOcrFallback ? "OCR fallback" : "PDF text only"}</span>
               <span>{markdownSettings.includeAnnotations ? "Annotations included" : "Annotations off"}</span>
             </div>
+          )}
+
+          {page === "general" && (
+            <GeneralSettingsPage
+              status={defaultAppStatus}
+              busyFileTypeId={busyDefaultAppFileTypeId}
+              onRefresh={() => void loadDefaultAppStatus()}
+              onSetDefault={(fileTypeIds, busyKey) => void setAsDefaultApp(fileTypeIds, busyKey)}
+            />
           )}
 
           {page === "providers" && (
@@ -550,6 +625,91 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
         </div>
       </section>
     </div>
+  );
+}
+
+function GeneralSettingsPage({
+  status,
+  busyFileTypeId,
+  onRefresh,
+  onSetDefault
+}: {
+  status: DefaultAppStatus;
+  busyFileTypeId: DefaultAppFileTypeId | "all" | null;
+  onRefresh: () => void;
+  onSetDefault: (fileTypeIds: DefaultAppFileTypeId[], busyKey: DefaultAppFileTypeId | "all") => void;
+}) {
+  const missing = status.fileTypes.filter((fileType) => !fileType.isDefault);
+  const busy = busyFileTypeId !== null;
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-heading">
+        <div>
+          <h3>Default Application</h3>
+          <p>Pick the file types that open in MarkPDF when you double-click them in Finder.</p>
+        </div>
+        <button className="secondary-button" disabled={busy} onClick={onRefresh}>
+          <RefreshCw size={15} />
+          Refresh
+        </button>
+      </div>
+
+      {!status.supported && status.reason && <p className="settings-note">{status.reason}</p>}
+
+      <div className="agent-list">
+        {status.fileTypes.length === 0 ? (
+          <div className="empty-row">No file types available.</div>
+        ) : (
+          status.fileTypes.map((fileType) => (
+            <div className="agent-row" key={fileType.id}>
+              <div className="agent-main">
+                <span className={`status-dot ${fileType.isDefault ? "connected" : ""}`} />
+                <div>
+                  <strong>{fileType.label}</strong>
+                  <span>
+                    {!status.supported
+                      ? fileType.description
+                      : fileType.isDefault
+                        ? `${fileType.description} — opens in MarkPDF`
+                        : fileType.currentAppName
+                          ? `${fileType.description} — opens in ${fileType.currentAppName}`
+                          : `${fileType.description} — no default app set`}
+                  </span>
+                </div>
+              </div>
+              {fileType.isDefault ? (
+                <span className="default-app-badge">
+                  <CheckCircle2 size={14} />
+                  Default
+                </span>
+              ) : (
+                <button
+                  className="secondary-button"
+                  disabled={!status.supported || busy}
+                  onClick={() => onSetDefault([fileType.id], fileType.id)}
+                >
+                  {busyFileTypeId === fileType.id ? "Setting..." : "Set as default"}
+                </button>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      {status.supported && missing.length > 1 && (
+        <div className="settings-section-heading">
+          <p className="settings-note">MarkPDF is not the default app for {missing.length} of these file types.</p>
+          <button
+            className="primary-button"
+            disabled={busy}
+            onClick={() => onSetDefault(missing.map((fileType) => fileType.id), "all")}
+          >
+            {busyFileTypeId === "all" ? "Setting..." : "Set as default for all"}
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 
