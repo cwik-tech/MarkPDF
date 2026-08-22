@@ -32,6 +32,11 @@ import {
   type SemanticSearchSettings,
 } from "./semantic.js";
 import {
+  getDefaultAppStatus,
+  setAsDefaultApp,
+  type DefaultAppFileTypeId,
+} from "./defaultApp.js";
+import {
   convertPdfWithDocling,
   defaultMarkdownExportSettings,
   getMarkdownEngineAvailability,
@@ -545,6 +550,14 @@ ipcMain.handle("window:close-after-confirm", async (event) => {
   confirmedCloseWindows.add(window);
   window.close();
 });
+
+ipcMain.handle("default-app:status", async () => getDefaultAppStatus());
+
+ipcMain.handle(
+  "default-app:set",
+  async (_event, fileTypeIds: DefaultAppFileTypeId[]) =>
+    setAsDefaultApp(Array.isArray(fileTypeIds) ? fileTypeIds : []),
+);
 
 ipcMain.handle("shell:show-item", async (_event, filePath: string) => {
   shell.showItemInFolder(filePath);

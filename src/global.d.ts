@@ -94,6 +94,25 @@ export interface MarkdownExportSettings {
   engineSelectionExplicit?: boolean;
 }
 
+export type DefaultAppFileTypeId = "pdf" | "markdown";
+
+export interface DefaultAppFileTypeStatus {
+  id: DefaultAppFileTypeId;
+  label: string;
+  description: string;
+  isDefault: boolean;
+  currentAppName: string | null;
+  currentBundleId: string | null;
+}
+
+export interface DefaultAppStatus {
+  supported: boolean;
+  reason?: string;
+  bundleId: string | null;
+  bundlePath: string | null;
+  fileTypes: DefaultAppFileTypeStatus[];
+}
+
 declare global {
   interface Window {
     pdfReader?: {
@@ -136,6 +155,12 @@ declare global {
       removeRecentFile: (filePath: string) => Promise<string[]>;
       clearRecentFiles: () => Promise<string[]>;
       readyForOpenFiles: () => Promise<void>;
+      defaultApp: {
+        getStatus: () => Promise<DefaultAppStatus>;
+        setAsDefault: (
+          fileTypeIds: DefaultAppFileTypeId[],
+        ) => Promise<DefaultAppStatus>;
+      };
       ai: {
         listProviders: () => Promise<AIProviderView[]>;
         saveProvider: (provider: AIProviderInput) => Promise<AIProviderView>;

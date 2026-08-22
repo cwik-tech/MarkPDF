@@ -2164,6 +2164,31 @@ select {
   padding: 0 8px;
 }
 
+.default-app-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  border: 1px solid rgba(46, 160, 67, 0.4);
+  border-radius: 999px;
+  color: #2ea043;
+  font-size: 12px;
+  padding: 0 10px;
+}
+
+.settings-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.default-app-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .danger-icon {
   color: var(--danger);
 }
