@@ -171,3 +171,19 @@ Widened the left PDF sidebar so the Pages, Outline, and Bookmarks controls and b
 Hid the generic selection inspector for bookmark overlays so bookmark selections only appear in the Bookmarks list and page-side pin.
 
 Added synthetic Outline generation for PDFs without embedded outline data. MarkPDF now infers headings from real PDF text layout, labels generated outlines in the sidebar, persists them in MarkPDF PDF metadata on save, reloads persisted generated outlines, and covers extraction/persistence with Vitest plus the Electron Playwright flow.
+## 2026-08-22 21:45
+
+A new project plan was created at `golden-wondering-candy.md` to organize the development strategy and approach for the MarkPDF MCP CLI work. This plan document serves as a reference for tracking progress, decisions, and next steps on the project.
+
+## 2026-08-22 21:49
+
+A planning document was created for the MCP CLI project to outline the implementation strategy and approach for upcoming work.
+
+## 2026-08-22 22:04
+
+Drafted a comprehensive implementation plan for extracting MarkPDF's core capabilities—conditional OCR, embeddings, and Markdown conversion—into a reusable Node.js package and exposing them through a CLI and MCP server. The plan settled five key architectural decisions, including choosing `better-sqlite3` v13 for the index store, moving storage out of the Electron renderer to enable safe concurrent access, and scoping the initial work to Phase 0 (core extraction), Phase 1 (Markdown-as-index), and Phase 2a (CLI), with the MCP server deferred. Documented detailed findings about packaging constraints, page anchoring challenges, and dependency availability to ground realistic delivery estimates.
+
+## 2026-08-22 22:11
+
+Created a comprehensive implementation plan in `golden-wondering-candy.md` documenting the MarkPDF MCP and agent integration project, including settled architectural decisions (store engine choice, scope boundaries, semantic pipeline migration, CLI command set, and installation mechanism), verified findings that affect estimates, identified errors in the strategy document requiring correction, and project conventions around TypeScript, validation, ADRs, and testing that implementation work must honor. The plan records five key decisions with detailed rationale and consequences, establishing the framework for extracting MarkPDF's capabilities into reusable Node.js packages and a CLI before the MCP server layer.
+
