@@ -153,14 +153,16 @@ of widening the first test indefinitely.
 | Pure renderer, document, conversion, or parsing logic | Co-located `src/**/*.test.ts` using Vitest |
 | Pure Node core logic: store, chunking, embeddings, search, reading, OCR, consent | Co-located `core/**/*.test.ts` using Vitest |
 | Command line argument handling, exit codes, and output shape | Co-located `cli/**/*.test.ts` using Vitest |
+| MCP tool schemas, argument validation, access classes, and reply bounds | Co-located `mcp/**/*.test.ts` using Vitest, plus a stdio journey under `mcp/journeys/` driving the official SDK client against the real server process |
 | React behavior that can be expressed through an extracted pure rule | Co-located `src/**/*.test.ts` using Vitest |
 | Electron lifecycle, preload/IPC, filesystem, window, or complete UI behavior | `tests/e2e/*.spec.ts` using Playwright's Electron support |
 | Real external provider or managed tool | An explicit opt-in test or manual check that is excluded from the default suite. The embedding model is covered by `npm run test:live`; the default suite substitutes a deterministic embedder and the reason is documented in `core/index/embeddings.live.test.ts` |
 
-The Vitest configuration includes `src/**/*.test.ts`, `core/**/*.test.ts`, and
-`cli/**/*.test.ts`, and excludes `**/*.live.test.ts`, which run through `npm run
-test:live`. It does not configure a browser DOM environment. Do not assume a
-browser component-test harness or an Electron integration-test harness exists.
+The Vitest configuration includes `src/**/*.test.ts`, `core/**/*.test.ts`,
+`cli/**/*.test.ts`, and `mcp/**/*.test.ts`, and excludes `**/*.live.test.ts`, which
+run through `npm run test:live`. It does not configure a browser DOM environment.
+Do not assume a browser component-test harness or an Electron integration-test
+harness exists.
 Adding a new harness or dependency requires approval.
 
 Use the lowest layer that can observe the complete requirement. Add a real
