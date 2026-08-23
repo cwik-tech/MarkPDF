@@ -12,7 +12,6 @@ const validIndex = {
 describe("validating an index request", () => {
   it("accepts a well-formed request", () => {
     expect(parseIndexRequest(validIndex).name).toBe("a.pdf");
-    expect(parseIndexRequest(validIndex).ocrCandidates).toEqual([]);
   });
 
 });
@@ -29,41 +28,30 @@ describe("validating the scalar fields of an index request", () => {
   });
 });
 
-describe("validating renderer OCR candidates", () => {
-  const withOverrides = (ocrCandidates: unknown) => parseIndexRequest({ ...validIndex, ocrCandidates });
+describe("what a window may put into the index", () => {
+  /**
+   * A window contributes a document to index; it does not contribute what the pages say.
+   *
+   * It used to. The window recognised scanned pages for its own display and offered that text
+   * here, and reading accepted it in place of doing the work itself — which meant a page the
+   * window had *not* recognised was a page nothing recognised, and a page it had recognised went
+   * into the index in whatever shape the window's engine happened to produce. Both are how one
+   * document came to read differently depending on which surface indexed it.
+   *
+   * So the field is gone rather than merely unused. A parameter kept only so a second producer of
+   * page text could reappear is the drift this closes.
+   */
+  const parsed = (request: unknown): Record<string, unknown> => ({ ...parseIndexRequest(request) });
 
-  it("treats an absent list as no candidates at all", () => {
-    // The common case: a document with a text layer on every page. PDF Inspector reads it and
-    // the renderer contributes nothing.
-    expect(parseIndexRequest(validIndex).ocrCandidates).toEqual([]);
+  it("carries no page text, so a window cannot decide what a page says", () => {
+    expect(parsed(validIndex)).not.toHaveProperty("ocrCandidates");
   });
 
-  it("accepts candidates in strictly ascending page order", () => {
-    expect(withOverrides([{ page: 2, text: "scanned words" }, { page: 5, text: "more" }]).ocrCandidates).toEqual([
-      { page: 2, text: "scanned words" },
-      { page: 5, text: "more" },
-    ]);
-  });
+  it("ignores page text a window offers anyway, rather than indexing it", () => {
+    const offered = { ...validIndex, ocrCandidates: [{ page: 2, text: "scanned words" }] };
 
-  it("rejects a list that is not an array", () => {
-    expect(() => withOverrides("2")).toThrow(/ocrCandidates/);
-  });
-
-  it("rejects a page that is not a whole number at or above one", () => {
-    for (const page of [0, -1, 1.5, "2", null, undefined, Number.NaN]) {
-      expect(() => withOverrides([{ page, text: "x" }])).toThrow(/ocrCandidates/);
-    }
-  });
-
-  it("rejects empty or blank candidate text, which would index a page as read when it was not", () => {
-    for (const text of ["", "   ", null, 7, undefined]) {
-      expect(() => withOverrides([{ page: 1, text }])).toThrow(/text/);
-    }
-  });
-
-  it("rejects duplicate or out-of-order pages rather than sorting them", () => {
-    expect(() => withOverrides([{ page: 2, text: "a" }, { page: 2, text: "b" }])).toThrow(/ascending/);
-    expect(() => withOverrides([{ page: 3, text: "a" }, { page: 1, text: "b" }])).toThrow(/ascending/);
+    expect(parsed(offered)).not.toHaveProperty("ocrCandidates");
+    expect(JSON.stringify(parsed(offered))).not.toContain("scanned words");
   });
 });
 

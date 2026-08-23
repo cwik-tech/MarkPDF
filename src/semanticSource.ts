@@ -1,5 +1,4 @@
 import type { SemanticIndexRequest } from "./global";
-import type { OcrPageText } from "./types";
 
 export interface IndexableTab {
   path?: string | undefined;
@@ -24,23 +23,42 @@ export function buildIndexSource(tab: IndexableTab): SemanticIndexRequest["sourc
     : { kind: "bytes", bytes: tab.bytes, path: tab.path };
 }
 
+/** How many unread pages are worth naming before the sentence becomes a list. */
+const NAMEABLE_UNRESOLVED_PAGES = 6;
+
+export interface SemanticIndexOutcome {
+  /** What the tab's badge should say. */
+  status: "ready";
+  /** What the tab's progress line should read. */
+  message: string;
+}
+
 /**
- * The OCR text worth sending to the main process.
+ * What a finished index job leaves on the tab.
  *
- * Main reads the document itself now, so this is the only page text that still crosses IPC. OCR
- * stays here as a Phase 2 scope decision rather than a capability limit — the main process has
- * `@napi-rs/canvas` and could rasterise — but this window has already scanned these pages for
- * the visible text layer, so sending the result costs nothing while redoing it would cost a
- * second full pass.
+ * A document with a page nothing could read is two things at once, and the interface has to say
+ * both. It **is** searchable — every other page is indexed, and refusing to search them would help
+ * nobody — so the badge reads ready. And it is incomplete, so the line beside it says which pages
+ * are missing. Reporting only the first half is the silent success this exists to stop: a reader
+ * searches for something on the unread page, finds nothing, and concludes the document does not
+ * mention it.
  *
- * Pages with no usable OCR text are left out rather than sent empty: an empty candidate would
- * claim a page was read when it was not. Sorted ascending because the request guard requires it.
+ * Pages are named while there are few enough to name. Past that the count is the useful fact and a
+ * list is just a long line, which is a different way of saying nothing.
  */
-export function buildOcrCandidates(
-  ocrCandidates: readonly OcrPageText[],
-): NonNullable<SemanticIndexRequest["ocrCandidates"]> {
-  return ocrCandidates
-    .filter((page) => page.text.trim().length > 0)
-    .map((page) => ({ page: page.page, text: page.text }))
-    .sort((a, b) => a.page - b.page);
+export function semanticIndexOutcome(result: {
+  status: string;
+  unresolvedPages?: readonly number[];
+}): SemanticIndexOutcome {
+  const unresolved = result.unresolvedPages ?? [];
+  if (result.status !== "incomplete" || unresolved.length === 0) {
+    return { status: "ready", message: "Semantic index ready" };
+  }
+  const which =
+    unresolved.length === 1
+      ? `page ${unresolved[0]}`
+      : unresolved.length <= NAMEABLE_UNRESOLVED_PAGES
+        ? `pages ${unresolved.join(", ")}`
+        : `${unresolved.length} pages`;
+  return { status: "ready", message: `Semantic index ready, but ${which} could not be read` };
 }

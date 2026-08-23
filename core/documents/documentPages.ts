@@ -3,10 +3,22 @@ import { readDocumentPages, type OcrPageCandidate } from "../extract/readDocumen
 import { findIndexedDocument } from "../index/documentLookup.js";
 import type { MarkdownPage } from "../index/markdownBlocks.js";
 import { MARKDOWN_ENGINE_ID, MARKDOWN_VERSION } from "../models.js";
-import type { SemanticStore, StoredDocument } from "../store/index.js";
+import type { MarkdownCacheRecord, SemanticStore, StoredDocument } from "../store/index.js";
 
 export type DocumentPages =
-  | { status: "found"; document: StoredDocument | null; pages: MarkdownPage[]; fromIndex: boolean }
+  | {
+      status: "found";
+      document: StoredDocument | null;
+      pages: MarkdownPage[];
+      fromIndex: boolean;
+      /**
+       * Pages that are empty because nothing read them, rather than because they are blank.
+       *
+       * Empty is the ordinary case. Anything else is a gap a caller must not present as the page's
+       * contents — and, for a caller that could not open the file, the only honest thing it can say.
+       */
+      unresolvedPages: number[];
+    }
   /** Not in the index, and either not on disk or not permitted to be looked for there. */
   | { status: "not-indexed" }
   /** In the index, but indexed before its text was kept. Re-indexing restores it. */
@@ -18,6 +30,24 @@ export type DocumentPages =
   | { status: "no-recorded-path"; document: StoredDocument }
   | { status: "denied"; path: string }
   | { status: "cancelled" };
+
+/**
+ * Pages a cache holds no text for and cannot account for.
+ *
+ * Two ways a page qualifies, and the second is the migration. A page the cache explicitly records
+ * as `unresolved` is a gap by its own admission. A page that is empty in a cache with **no**
+ * provenance at all is a gap too — those rows were written before anything recorded why a page was
+ * empty, so their silence cannot be read as "blank"; treating it that way would leave every
+ * document indexed before this change permanently short with nothing ever going back for it.
+ *
+ * A page recorded as `empty` is not a gap. Something read it and there was nothing on it.
+ */
+function unresolvedCachedPages(cached: MarkdownCacheRecord): number[] {
+  if (cached.provenance === null) {
+    return cached.pages.filter((page) => page.markdown.trim().length === 0).map((page) => page.page);
+  }
+  return cached.provenance.filter((entry) => entry.status === "unresolved").map((entry) => entry.page);
+}
 
 /**
  * Which access class a caller is operating under.
@@ -83,6 +113,15 @@ export async function resolveDocumentPages(
   };
 
   const allowFilesystem = input.access !== "index-only";
+  /**
+   * What to fall back on when a re-read cannot happen after all.
+   *
+   * A document with a gap is worth re-reading, and re-reading needs the file. But losing a grant
+   * must not turn a partially readable document into no document: the pages already cached are
+   * still the pages, and the caller is told what is missing. Only set once a cache with a gap has
+   * been found, so nothing else can be answered from it by accident.
+   */
+  let cachedFallback: DocumentPages | null = null;
 
   /**
    * The path this request is about, resolved once.
@@ -129,24 +168,33 @@ export async function resolveDocumentPages(
   if (lookup.status === "found") {
     const cached = store.getMarkdown(lookup.document.id, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION);
     if (cached !== null) {
-      return {
+      const gaps = unresolvedCachedPages(cached);
+      const fromCache: DocumentPages = {
         status: "found",
         document: lookup.document,
         // The cache records the text, not how it was read. Heading detection and page identity do
         // not depend on that, and claiming a source the cache never stored would be worse.
-        pages: cached.map((page) => ({ page: page.page, markdown: page.markdown, source: "pdf" })),
+        pages: cached.pages.map((page) => ({ page: page.page, markdown: page.markdown, source: "pdf" })),
         fromIndex: true,
+        unresolvedPages: gaps,
       };
+      // A complete cache is the answer, as it always was. A cache with a gap in it is only the
+      // answer for a caller that cannot go and get the rest — and that caller is told which pages
+      // it is missing rather than handed them as blank.
+      if (gaps.length === 0 || !allowFilesystem) return fromCache;
+      cachedFallback = fromCache;
+    } else if (!allowFilesystem) {
+      return { status: "no-stored-text", document: lookup.document };
     }
-    if (!allowFilesystem) return { status: "no-stored-text", document: lookup.document };
   }
 
-  if (lookup.status === "denied") return { status: "denied", path: lookup.path };
-  if (!allowFilesystem) return { status: "not-indexed" };
+  if (lookup.status === "denied") return cachedFallback ?? { status: "denied", path: lookup.path };
+  if (!allowFilesystem) return cachedFallback ?? { status: "not-indexed" };
   if (target === undefined) {
     // Named by hash, and either unknown or indexed from bytes with no path recorded. The second
     // is worth saying out loud: nothing is wrong with the request, there is simply no file to go
     // back to and no path for a grant to be about.
+    if (cachedFallback !== null) return cachedFallback;
     return knownByHash === null ? { status: "not-indexed" } : { status: "no-recorded-path", document: knownByHash };
   }
 
@@ -156,7 +204,7 @@ export async function resolveDocumentPages(
   try {
     resolved = requireAccess(allowlist, target, "read");
   } catch (error) {
-    if (error instanceof AccessDeniedError) return { status: "denied", path: target };
+    if (error instanceof AccessDeniedError) return cachedFallback ?? { status: "denied", path: target };
     throw error;
   }
 
@@ -176,5 +224,6 @@ export async function resolveDocumentPages(
       source: page.source === "ocr" ? "ocr" : "pdf",
     })),
     fromIndex: false,
+    unresolvedPages: read.unresolvedPages,
   };
 }

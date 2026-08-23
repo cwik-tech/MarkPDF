@@ -270,9 +270,12 @@ test("finds a passage by meaning and navigates to the page that contains it", as
 
     stage = "checking the store as supporting cutover evidence";
     const db = new Database(dbPath, { readonly: true });
-    // Schema 2 can only have been stamped by core's migration; the sql.js writer never set
-    // user_version at all.
-    expect(db.pragma("user_version", { simple: true })).toBe(2);
+    // Any stamped schema can only have come from core's migration; the sql.js writer never set
+    // `user_version` at all, so a legacy file reads 0. The exact number is the current schema
+    // version and moves with it — what this journey is evidence for is the cutover, not which
+    // migration ran last, and `core/store/store.test.ts` is where the versions themselves are
+    // pinned.
+    expect(db.pragma("user_version", { simple: true })).toBeGreaterThanOrEqual(2);
     const stored = db.prepare("SELECT name, text_source FROM documents LIMIT 1").get() as {
       name: string;
       text_source: string;

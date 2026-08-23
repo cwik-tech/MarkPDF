@@ -83,22 +83,28 @@ export interface SemanticIndexRequest {
   source: { kind: "bytes"; bytes: Uint8Array | number[]; path?: string } | { kind: "path"; path: string };
   name: string;
   /**
-   * OCR text for pages the main-process extractor cannot read. Page numbers are 1-based and must
-   * be strictly ascending. Page text otherwise no longer crosses IPC: the main process reads the
-   * document itself.
+   * No page text crosses this boundary in either direction. The main process reads the document
+   * itself, including the pages that have to be recognised, so that every surface indexes the same
+   * words for the same file.
    */
-  ocrCandidates?: Array<{ page: number; text: string }>;
   chunkingProfile: SemanticChunkingProfile;
   force?: boolean;
 }
 
 export interface SemanticIndexedResult {
-  status: "ready" | "reused" | "empty";
+  /**
+   * `incomplete` is a success with a gap in it: the document is stored and searchable, and at least
+   * one page could not be read. Mirrors core's own status so the window cannot quietly treat it as
+   * ready.
+   */
+  status: "ready" | "reused" | "empty" | "incomplete";
   contentHash: string;
   documentId: number;
   pageCount: number;
   chunkCount: number;
   textSource: "pdf" | "ocr" | "mixed" | "none";
+  /** Pages nothing could read, ascending. Empty unless `status` is `incomplete`. */
+  unresolvedPages: number[];
 }
 
 /**

@@ -26,6 +26,7 @@
 - The Command Line section moved from Settings › General to its own Settings › CLI & MCP page, alongside the new MCP Server instructions.
 
 - Settings › General gained a Command Line section that says what the `markpdf` command on your machine is: not installed, installed and current, out of date, pointing at a different copy of MarkPDF, or shadowed by another program of the same name. Installation now puts the user-local directory on the active shell's PATH when needed.
+- The index file records what became of each page of a document, alongside the page's text. It is upgraded in place and nothing is re-indexed; a copy of the index written by this version cannot be opened by an older one, which is refused outright rather than misread.
 - The index file is upgraded in place on first launch, preserving every document and chunk already stored. Passages are then re-split as each document is opened, because how text is divided has changed. Nothing is lost and no action is needed.
 - Reading a document now happens in the main process rather than in the window, using the native extractor. Embedding, chunking and index writes moved there too, and progress is reported back to the window. Long stretches of that work are still measurable, so this reduces interface stalls rather than eliminating them.
 - Foreign key enforcement is now on, so removing a document genuinely removes its chunks and embeddings rather than leaving them behind.
@@ -39,6 +40,10 @@
 - A model is recorded as downloaded only after either a successful load — an explicit download finishing — or indexing that actually embedded document text, and in both cases only once its files are confirmed on disk. If the model cache is cleared or the data directory moves, the application notices and offers the download again instead of claiming the model is ready.
 
 ### Fixed
+
+- A page that is only a picture is no longer skipped when the app indexes a document. MarkPDF decided whether to read a scan by sampling five pages — the first three, the middle and the last — so a scanned table in an otherwise ordinary report was stored as an empty page, and searching for anything on it found nothing. Every page a document's structure cannot be read from is now read, whichever way the document was opened.
+- A page nothing could read is no longer counted as a blank page. MarkPDF now records why each page is empty — because there was nothing on it, or because nothing managed to read it — so a document with a gap is reported as incomplete rather than ready, the tab names the pages that could not be read, and an assistant reading those pages is told they are missing instead of being handed an empty page. Documents indexed before this change repair themselves the next time they are opened.
+- Scanned pages are read the same way in the app as at the command line. The app used to index its own on-screen reading of a scan, which was produced for displaying selectable text and flattened tables into a loose run of numbers; the same file therefore indexed differently depending on which one had opened it. On-screen text selection, in-window search and Markdown conversion are unchanged and still use the app's own reading.
 
 - Command Line status no longer stays on “Checking...” when an interactive zsh plugin requires a real terminal; the PATH probe now uses a bounded pseudo-terminal and cleans up the whole shell process group on timeout.
 - Installing the `markpdf` command now completes user-local PATH setup itself, opens a fresh Terminal when the shell profile changed, turns the status green, removes the obsolete copy-paste instruction, and shows a completion toast.
@@ -218,4 +223,8 @@ Added synthetic Outline generation for PDFs without embedded outline data. MarkP
 ## 2026-08-23 11:29
 
 Created a planning document for open-document-awareness capabilities in the MCP CLI project (`open-document-awareness-plan.md`). The document outlines the implementation strategy and design considerations for enabling document awareness features within the CLI context.
+
+## 2026-08-23 14:54
+
+Implemented Phase 2 document indexing to track extraction provenance and Markdown caching, allowing the system to detect when extracted text changes between runs even when file bytes remain identical. The changes add extraction version tracking (`textExtractionVersion`, `ocrExtractionVersion`) and optional Markdown caching with engine metadata, enabling documents with variable OCR or parsing output to be properly reindexed rather than incorrectly reused. A comprehensive test suite validates the reuse logic, cache backfilling for legacy documents, page-outcome tracking, and cancellation behavior across these scenarios.
 

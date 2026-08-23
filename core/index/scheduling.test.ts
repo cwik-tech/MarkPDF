@@ -14,6 +14,7 @@ function indexed(contentHash: string): IndexDocumentResult {
     pageCount: 1,
     chunkCount: 1,
     textSource: "pdf",
+    unresolvedPages: [],
   };
 }
 

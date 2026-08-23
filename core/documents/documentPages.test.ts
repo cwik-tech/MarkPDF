@@ -75,6 +75,138 @@ afterEach(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
+/** Index a two-page document whose second page nothing could read, exactly as a real run would. */
+async function indexWithUnresolvedPage(bytes: Uint8Array, provenanceRecorded: boolean): Promise<string> {
+  const pages = [
+    { page: 1, markdown: PAGE_ONE },
+    { page: 2, markdown: "" },
+  ];
+  const result = expectIndexed(
+    await indexDocument(store, embedder, {
+      bytes,
+      name: "report.pdf",
+      filePath: INDEXED_PATH,
+      pageCount: 2,
+      chunkingProfile: "balanced",
+      pages: [{ page: 1, text: PAGE_ONE, source: "pdf" }],
+      unresolvedPages: [2],
+      markdownCache: {
+        engineId: MARKDOWN_ENGINE_ID,
+        markdownVersion: MARKDOWN_VERSION,
+        textExtractionVersion: TEXT_EXTRACTION_VERSION,
+        ocrExtractionVersion: OCR_EXTRACTION_VERSION,
+        pages,
+        // Omitted to stand for a cache written by a build that had no provenance to record.
+        ...(provenanceRecorded
+          ? {
+              pageProvenance: [
+                { page: 1, status: "read" as const },
+                { page: 2, status: "unresolved" as const },
+              ],
+            }
+          : {}),
+      },
+    }),
+  );
+  return result.contentHash;
+}
+
+describe("a cached page that nobody managed to read", () => {
+  it("is named rather than served as an empty page", async () => {
+    // The failure this closes: the cache says page 2 is an empty string, a reader takes that as
+    // the page's contents, and the document is quietly one page short for as long as it stays
+    // cached. An index-only caller cannot go back for it — but it can say so.
+    const bytes = new TextEncoder().encode("a document");
+    await indexWithUnresolvedPage(bytes, true);
+    const filesystem = spyFilesystem(bytes);
+
+    const found = await resolveDocumentPages(store, allowNothing, {
+      path: INDEXED_PATH,
+      access: "index-only",
+      ...filesystem,
+    });
+
+    expect(found.status).toBe("found");
+    if (found.status !== "found") return;
+    expect(found.unresolvedPages).toEqual([2]);
+    // Still index-only: naming the gap costs no filesystem permission.
+    expect(filesystem.reads).toEqual([]);
+  });
+
+  it("is read again by a caller that is allowed to open the file", async () => {
+    const bytes = await realPdf();
+    await indexWithUnresolvedPage(bytes, true);
+    const filesystem = spyFilesystem(bytes);
+
+    const found = await resolveDocumentPages(store, { readRoots: ["/"], writeRoots: [] }, {
+      path: INDEXED_PATH,
+      access: "index-first",
+      ...filesystem,
+    });
+
+    expect(found.status).toBe("found");
+    if (found.status !== "found") return;
+    expect(found.fromIndex).toBe(false);
+    expect(filesystem.reads).not.toEqual([]);
+  });
+
+  it("keeps answering from the index when the file may not be opened", async () => {
+    // Withdrawing a grant must not turn a partially readable document into no document at all.
+    // What the caller loses is the chance to repair the gap, not the pages that are already there.
+    const bytes = new TextEncoder().encode("a document");
+    await indexWithUnresolvedPage(bytes, true);
+    const filesystem = spyFilesystem(bytes);
+
+    const found = await resolveDocumentPages(store, allowNothing, {
+      path: INDEXED_PATH,
+      access: "index-first",
+      ...filesystem,
+    });
+
+    expect(found.status).toBe("found");
+    if (found.status !== "found") return;
+    expect(found.fromIndex).toBe(true);
+    expect(found.unresolvedPages).toEqual([2]);
+  });
+
+  it("treats an empty page in a cache from an older build as a gap, not as a blank page", async () => {
+    // The migration case. Those rows were written before anything recorded why a page was empty,
+    // so their silence has to be read as "unknown" — otherwise every document indexed before this
+    // change keeps its missing page for ever, and nothing ever goes back for it.
+    const bytes = await realPdf();
+    await indexWithUnresolvedPage(bytes, false);
+    const filesystem = spyFilesystem(bytes);
+
+    const found = await resolveDocumentPages(store, { readRoots: ["/"], writeRoots: [] }, {
+      path: INDEXED_PATH,
+      access: "index-first",
+      ...filesystem,
+    });
+
+    expect(found.status).toBe("found");
+    if (found.status !== "found") return;
+    expect(found.fromIndex).toBe(false);
+  });
+
+  it("leaves a document whose pages were all read alone", async () => {
+    const bytes = new TextEncoder().encode("a document");
+    await indexWithText(bytes, true);
+    const filesystem = spyFilesystem(bytes);
+
+    const found = await resolveDocumentPages(store, { readRoots: ["/"], writeRoots: [] }, {
+      path: INDEXED_PATH,
+      access: "index-first",
+      ...filesystem,
+    });
+
+    expect(found.status).toBe("found");
+    if (found.status !== "found") return;
+    expect(found.fromIndex).toBe(true);
+    expect(found.unresolvedPages).toEqual([]);
+    expect(filesystem.reads).toEqual([]);
+  });
+});
+
 describe("a document that is already indexed", () => {
   it("comes from the index, with nothing granted and nothing opened", async () => {
     const bytes = new TextEncoder().encode("a document");

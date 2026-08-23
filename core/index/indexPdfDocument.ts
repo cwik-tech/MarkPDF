@@ -19,19 +19,12 @@ export interface IndexPdfDocumentInput {
   filePath: string | null;
   chunkingProfile: SemanticChunkingProfile;
   /**
-   * OCR text a caller has already produced, for pages the extractor reports as unreadable.
+   * Read the pages the structural extractor could not.
    *
-   * The application fills this in from its renderer, which has already scanned those pages for
-   * the visible text layer. Ruling R2 records that trade-off.
-   */
-  ocrCandidates?: readonly OcrPageCandidate[];
-  /**
-   * Read the pages nobody else accounted for.
-   *
-   * The command line supplies this, because it has no renderer to borrow from. Anything it throws
-   * ends the run without writing: a document whose scanned pages could not be recognised is
-   * incomplete, and recording it as merely short would leave an index quietly missing pages that
-   * a later search would never mention.
+   * Every surface supplies this, and it is the only way page text is produced for a scanned page.
+   * Anything it throws ends the run without writing: a document whose scanned pages could not be
+   * recognised is incomplete, and recording it as merely short would leave an index quietly missing
+   * pages that a later search would never mention.
    */
   resolveOcr?: (request: {
     bytes: Uint8Array;
@@ -93,7 +86,6 @@ export async function indexPdfDocument(
 
   const read = await readDocumentPages({
     bytes: input.bytes,
-    ...(input.ocrCandidates === undefined ? {} : { ocrCandidates: input.ocrCandidates }),
     ...(input.resolveOcr === undefined ? {} : { resolveOcr: input.resolveOcr }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
@@ -106,19 +98,17 @@ export async function indexPdfDocument(
   // pages it found, and what became of the ones it could not read.
   const pages = toPageText(read.pages);
   const pageCountLabel = `Read ${read.pageCount} ${read.pageCount === 1 ? "page" : "pages"}`;
-  const recognisedHere = read.recognisedHere === 0 ? "" : `, ${read.recognisedHere} read here by OCR`;
 
-  // Reporting the selection is what keeps an unselected candidate an observable outcome rather
-  // than a silent drop. The extractor decides which pages need OCR, so a candidate for a page it
-  // read successfully is expected non-selection — but the reader is still told it happened.
+  // How many pages had to be recognised is worth saying: it is the slow part of reading a document,
+  // and a reader watching a scan wants to know that is what the time went on.
   input.onProgress?.({
     status: "checking",
     current: read.pageCount,
     total: read.pageCount,
     message:
-      read.candidatesOffered === 0
+      read.recognisedHere === 0
         ? pageCountLabel
-        : `${pageCountLabel}, ${read.candidatesUsed} of ${read.candidatesOffered} OCR candidates used${recognisedHere}`,
+        : `${pageCountLabel}, ${read.recognisedHere} read by OCR`,
   });
 
   // Checked again before anything is written, in case the cancel landed after the reader's own
@@ -137,6 +127,10 @@ export async function indexPdfDocument(
       textExtractionVersion: TEXT_EXTRACTION_VERSION,
       ocrExtractionVersion: OCR_EXTRACTION_VERSION,
       pages: read.pages.map((page) => ({ page: page.page, markdown: page.markdown })),
+      // What became of each page, alongside what it said. Without this an empty page in the cache
+      // is unreadable in the other sense: nothing can tell whether it is blank or a gap, so nothing
+      // ever goes back for it.
+      pageProvenance: read.pages.map((page) => ({ page: page.page, status: page.status })),
     },
     bytes: input.bytes,
     name: input.name,
@@ -144,6 +138,9 @@ export async function indexPdfDocument(
     pages,
     pageCount: read.pageCount,
     chunkingProfile: input.chunkingProfile,
+    // Carried through rather than re-derived. The reader is the only thing that knows which empty
+    // pages are blank and which are gaps.
+    unresolvedPages: read.unresolvedPages,
     ...(input.force === undefined ? {} : { force: input.force }),
     ...(input.onProgress === undefined ? {} : { onProgress: input.onProgress }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),

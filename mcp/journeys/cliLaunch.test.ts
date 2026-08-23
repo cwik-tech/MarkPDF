@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { TOOLS } from "../toolSchemas.js";
 
 /**
  * The configuration the settings screen tells a person to paste: `markpdf mcp`. The server a
@@ -27,7 +28,7 @@ afterEach(() => {
 });
 
 describe("an MCP client connected through the command line", () => {
-  it("reaches the same four tools by launching `markpdf mcp`", async () => {
+  it("reaches the same tools by launching `markpdf mcp`", async () => {
     const client = new Client({ name: "markpdf-cli-launch-journey", version: "0.0.0" });
     await client.connect(
       new StdioClientTransport({
@@ -44,7 +45,11 @@ describe("an MCP client connected through the command line", () => {
     try {
       const listed = await client.listTools();
 
-      expect(listed.tools.map((tool) => tool.name).sort()).toEqual(["outline", "read_pages", "search", "to_markdown"]);
+      // Read from the published table rather than restated here. What this journey is about is the
+      // *route* — that launching the command reaches the same server the direct entry point does —
+      // and a second hand-written list of tool names is a second thing to forget when one is added.
+      // `mcp/journeys/toolSession.test.ts` is where the surface itself is pinned.
+      expect(listed.tools.map((tool) => tool.name).sort()).toEqual(TOOLS.map((tool) => tool.name).sort());
     } finally {
       await client.close();
     }

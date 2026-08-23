@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createCanvas } from "@napi-rs/canvas";
 import { PDFDocument, StandardFonts } from "pdf-lib";
-import { readDocumentPages, type ReadDocument } from "./readDocumentPages.js";
+import { pageNeedsRecognition, readDocumentPages, type ReadDocument } from "./readDocumentPages.js";
 import { outlineFromPages } from "../outline/documentOutline.js";
 
 /**
@@ -14,6 +14,32 @@ import { outlineFromPages } from "../outline/documentOutline.js";
  * The recogniser is replaced here. Whether real OCR reads real pixels is proved end to end, with
  * the network blocked, by `cli/journeys/scannedDocument.test.ts`.
  */
+
+describe("deciding whether a page still needs reading", () => {
+  /**
+   * The rule on its own, away from any extractor.
+   *
+   * It has to be testable without one. The state that matters most here — a page the extractor
+   * says it read, which came back with nothing on it — is a state the installed extractor does not
+   * produce on demand, so driving this through a real document would mean either finding a file
+   * that happens to trigger it or faking the engine. Neither is a test of the rule.
+   */
+  it("asks for the page the extractor flagged", () => {
+    expect(pageNeedsRecognition({ needsOcr: true, markdown: "" })).toBe(true);
+  });
+
+  it("leaves a page the extractor read alone", () => {
+    expect(pageNeedsRecognition({ needsOcr: false, markdown: "Ordinary prose." })).toBe(false);
+  });
+
+  it("asks for a page the extractor claims to have read but returned nothing for", () => {
+    // The claim and the result contradict each other, and believing the claim is what stores a
+    // page as blank when nobody read it. Whitespace counts as nothing: a page carrying a newline
+    // is not a page with words on it.
+    expect(pageNeedsRecognition({ needsOcr: false, markdown: "" })).toBe(true);
+    expect(pageNeedsRecognition({ needsOcr: false, markdown: "   \n  " })).toBe(true);
+  });
+});
 
 const TEXT_PAGE = "Opening page carrying an ordinary and complete text layer of ample length.";
 
@@ -130,22 +156,68 @@ describe("a page read by recognition", () => {
     expect(read.pageCount).toBe(2);
   }, 60_000);
 
-  it("is not asked at all about a page somebody already supplied", async () => {
-    let asked = false;
+  it("asks about every page the extractor could not read, with no way for a caller to answer first", async () => {
+    // A caller used to be able to supply text for a page and have recognition skipped for it. That
+    // is gone: the application supplied it from the reading its window had done for its own
+    // display, so a page the window never looked at was a page nothing looked at, and a page it did
+    // look at entered the index shaped by a different engine from every other surface. Recognition
+    // now has one producer, and this is the shape that keeps it that way.
+    const asked: number[] = [];
     const read = expectRead(
       await readDocumentPages({
         bytes: await buildMixedPdf(),
-        ocrCandidates: [{ page: 2, text: "Supplied by the reader." }],
-        resolveOcr: async () => {
-          asked = true;
-          return [];
+        resolveOcr: async (request) => {
+          asked.push(...request.pages);
+          return request.pages.map((page) => ({ page, text: "Recognised here." }));
         },
       }),
     );
 
-    expect(asked).toBe(false);
-    expect(read.pages[1]?.markdown).toBe("Supplied by the reader.");
-    expect(read.recognisedHere).toBe(0);
+    expect(asked).toEqual([2]);
+    expect(read.pages[1]?.markdown).toBe("Recognised here.");
+    expect(read.pages[1]?.source).toBe("ocr");
+    expect(read.recognisedHere).toBe(1);
+  }, 60_000);
+
+  it("says of every page whether it was read, found empty, or never resolved", async () => {
+    // Three outcomes, and the third is the one that has to be distinguishable. A page nothing read
+    // and a page read and found blank both end up with no text, and storing them the same way is
+    // how a scanned page came to be indistinguishable from an empty one — so nothing could ever
+    // repair the first without re-reading every document that contained the second.
+    const recognised = expectRead(
+      await readDocumentPages({
+        bytes: await buildMixedPdf(),
+        resolveOcr: async (request) => request.pages.map((page) => ({ page, text: "Recognised here." })),
+      }),
+    );
+    expect(recognised.pages.map((page) => page.status)).toEqual(["read", "read"]);
+
+    const foundBlank = expectRead(
+      await readDocumentPages({ bytes: await buildMixedPdf(), resolveOcr: async () => [] }),
+    );
+    // Asked, answered with nothing. The page really is blank, and saying so stops it being read
+    // again on every future open.
+    expect(foundBlank.pages.map((page) => page.status)).toEqual(["read", "empty"]);
+
+    const neverAsked = expectRead(await readDocumentPages({ bytes: await buildMixedPdf() }));
+    expect(neverAsked.pages.map((page) => page.status)).toEqual(["read", "unresolved"]);
+  }, 60_000);
+
+  it("counts a page it could not resolve, so a caller cannot report the document as complete", async () => {
+    const read = expectRead(await readDocumentPages({ bytes: await buildMixedPdf() }));
+
+    expect(read.unresolvedPages).toEqual([2]);
+  }, 60_000);
+
+  it("leaves nothing unresolved once recognition has answered", async () => {
+    const read = expectRead(
+      await readDocumentPages({
+        bytes: await buildMixedPdf(),
+        resolveOcr: async (request) => request.pages.map((page) => ({ page, text: "Recognised here." })),
+      }),
+    );
+
+    expect(read.unresolvedPages).toEqual([]);
   }, 60_000);
 
   it("ends the read when recognition fails, rather than returning a document with a page missing", async () => {
@@ -161,11 +233,6 @@ describe("a page read by recognition", () => {
     ).rejects.toThrow("not installed");
   }, 60_000);
 
-  it("refuses a candidate for a page the document does not have", async () => {
-    await expect(
-      readDocumentPages({ bytes: await buildMixedPdf(), ocrCandidates: [{ page: 9, text: "nowhere" }] }),
-    ).rejects.toThrow(/page 9/);
-  }, 60_000);
 });
 
 describe("cancelling", () => {

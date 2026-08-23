@@ -14,8 +14,9 @@ import { renderPagePreservingMarkdown, parsePagePreservingMarkdown } from "./mar
  * one — and everything downstream of it is cheap. Keeping the result means a reindex after a
  * settings change, and later a `convert` that wants the same text, do not pay for it twice.
  *
- * Schema v2 already created `document_markdown` and the engine/version columns; nothing new is
- * needed here.
+ * Schema v2 created `document_markdown` and the engine/version columns. Schema v3 adds
+ * `page_provenance`, because the text alone cannot say whether an empty page was blank or was one
+ * nothing managed to read.
  */
 
 let dataDir: string;
@@ -48,6 +49,62 @@ beforeEach(() => {
 afterEach(() => {
   store.close();
   rmSync(dataDir, { recursive: true, force: true });
+});
+
+describe("recording why a cached page is empty", () => {
+  /**
+   * Two empty pages, one blank and one nobody read. The cache has to tell them apart.
+   *
+   * Without this the text is identical — an empty string either way — so a later reader has no way
+   * to know that one of them is a gap it should go back for, and the document stays quietly short
+   * for as long as it stays cached.
+   */
+  it("keeps each page's outcome alongside its text", () => {
+    const document = makeDocument("a".repeat(64));
+
+    store.putMarkdown(document.id, {
+      engineId: "pdf-inspector",
+      markdownVersion: 1,
+      pages: PAGES,
+      pageProvenance: [
+        { page: 1, status: "read" },
+        { page: 2, status: "read" },
+        { page: 3, status: "unresolved" },
+      ],
+    });
+
+    const cached = store.getMarkdown(document.id, "pdf-inspector", 1);
+    expect(cached?.pages).toEqual(PAGES);
+    expect(cached?.provenance).toEqual([
+      { page: 1, status: "read" },
+      { page: 2, status: "read" },
+      { page: 3, status: "unresolved" },
+    ]);
+  });
+
+  it("reports no provenance at all for a cache written before it was recorded", () => {
+    // The migration case, and it must be distinguishable from "every page was read". A row from an
+    // older build knows nothing about its empty pages, and treating that silence as a clean bill of
+    // health is what would leave the documents this change exists to repair unrepaired.
+    const document = makeDocument("b".repeat(64));
+
+    store.putMarkdown(document.id, { engineId: "pdf-inspector", markdownVersion: 1, pages: PAGES });
+
+    expect(store.getMarkdown(document.id, "pdf-inspector", 1)?.provenance).toBeNull();
+  });
+
+  it("refuses provenance that does not describe this document, rather than storing it", () => {
+    const document = makeDocument("c".repeat(64));
+
+    expect(() =>
+      store.putMarkdown(document.id, {
+        engineId: "pdf-inspector",
+        markdownVersion: 1,
+        pages: PAGES,
+        pageProvenance: [{ page: 1, status: "read" }],
+      }),
+    ).toThrow(/provenance/i);
+  });
 });
 
 describe("the page-preserving representation", () => {
@@ -115,7 +172,7 @@ describe("storing and reading back a document's Markdown", () => {
   it("returns what was stored, parsed back into pages", () => {
     const doc = makeDocument("h1");
     store.putMarkdown(doc.id, { engineId: "pdf-inspector", markdownVersion: 1, pages: PAGES });
-    expect(store.getMarkdown(doc.id, "pdf-inspector", 1)).toEqual(PAGES);
+    expect(store.getMarkdown(doc.id, "pdf-inspector", 1)?.pages).toEqual(PAGES);
   });
 
   it("does not serve a cache written by a different engine", () => {
@@ -138,7 +195,7 @@ describe("storing and reading back a document's Markdown", () => {
     const revised = [{ page: 1, markdown: "# Report\n\nRevised." }, { page: 2, markdown: "x" }, { page: 3, markdown: "" }];
     store.putMarkdown(doc.id, { engineId: "pdf-inspector", markdownVersion: 1, pages: revised });
 
-    expect(store.getMarkdown(doc.id, "pdf-inspector", 1)).toEqual(revised);
+    expect(store.getMarkdown(doc.id, "pdf-inspector", 1)?.pages).toEqual(revised);
     const db = new Database(semanticIndexPath(dataDir), { readonly: true });
     const rows = db.prepare("SELECT COUNT(*) AS count FROM document_markdown").get() as { count: number };
     db.close();
@@ -262,7 +319,7 @@ describe("storing and reading back a document's Markdown", () => {
       store.putMarkdown(doc.id, { engineId: "other", markdownVersion: 2, pages: [{ page: 1, markdown: "x" }] }),
     ).toThrow();
 
-    expect(store.getMarkdown(doc.id, "pdf-inspector", 1)).toEqual(PAGES);
+    expect(store.getMarkdown(doc.id, "pdf-inspector", 1)?.pages).toEqual(PAGES);
     const db = new Database(semanticIndexPath(dataDir), { readonly: true });
     const row = db.prepare("SELECT markdown_engine, markdown_version FROM documents WHERE id = ?").get(doc.id) as Record<string, unknown>;
     db.close();
@@ -283,7 +340,7 @@ describe("storing and reading back a document's Markdown", () => {
       );
     }
 
-    expect(store.getMarkdown(doc.id, "pdf-inspector", 1)).toEqual(PAGES);
+    expect(store.getMarkdown(doc.id, "pdf-inspector", 1)?.pages).toEqual(PAGES);
     const db = new Database(semanticIndexPath(dataDir), { readonly: true });
     const row = db.prepare("SELECT markdown_engine, markdown_version FROM documents WHERE id = ?").get(doc.id) as Record<string, unknown>;
     db.close();
@@ -301,7 +358,7 @@ describe("storing and reading back a document's Markdown", () => {
       ).toThrow(/version/i);
     }
 
-    expect(store.getMarkdown(doc.id, "pdf-inspector", 1)).toEqual(PAGES);
+    expect(store.getMarkdown(doc.id, "pdf-inspector", 1)?.pages).toEqual(PAGES);
     const db = new Database(semanticIndexPath(dataDir), { readonly: true });
     const row = db.prepare("SELECT markdown_engine, markdown_version FROM documents WHERE id = ?").get(doc.id) as Record<string, unknown>;
     db.close();

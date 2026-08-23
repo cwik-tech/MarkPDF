@@ -92,7 +92,7 @@ import {
 import type { MarkdownExportSettings, SemanticSearchSettings } from "./global";
 import { semanticProgressToUpdate } from "./semanticProgress";
 import { projectOpenDocuments } from "./openDocuments";
-import { buildIndexSource, buildOcrCandidates } from "./semanticSource";
+import { buildIndexSource, semanticIndexOutcome } from "./semanticSource";
 import {
   curatedEmbeddingModels,
   defaultSemanticScoreThreshold,
@@ -789,7 +789,6 @@ export default function App() {
           jobId: tabId,
           source: buildIndexSource(tab),
           name: tab.name,
-          ocrCandidates: buildOcrCandidates(tab.ocrPages),
           chunkingProfile: settings.chunkingProfile,
         });
 
@@ -815,12 +814,15 @@ export default function App() {
         // loaded — the same bytes the page text above came from — so the two always describe one
         // document. Written separately, a render between them would show a searchable tab whose
         // hash is not yet set, and the search would silently return nothing.
+        // A document with a page nothing could read is searchable and incomplete at once, and the
+        // tab has to say both rather than only the first.
+        const outcome = semanticIndexOutcome(result);
         updatePdfTab(tabId, {
           semanticContentHash: result.contentHash,
-          semanticIndexStatus: "ready",
+          semanticIndexStatus: outcome.status,
           semanticIndexProgress: {
             status: "ready",
-            message: "Semantic index ready",
+            message: outcome.message,
           },
           semanticIndexError: undefined,
         });

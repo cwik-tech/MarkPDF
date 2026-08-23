@@ -26,7 +26,15 @@ import { chunkPagesForIndex, type IndexableChunk } from "./structuredChunking.js
 import type { Embedder } from "./embeddings.js";
 import { runExclusive } from "./serialQueue.js";
 
-export type IndexStatus = "ready" | "reused" | "empty" | "cancelled";
+/**
+ * How a run ended.
+ *
+ * `incomplete` is a success that must not be mistaken for `ready`. The document is stored and
+ * searchable, and at least one of its pages could not be read — so a caller that treats it as
+ * finished tells somebody the words are all there when they are not. It is a separate member rather
+ * than a flag on `ready` because the compiler then makes every consumer decide what to do about it.
+ */
+export type IndexStatus = "ready" | "reused" | "empty" | "incomplete" | "cancelled";
 
 function hasExactChunks(store: SemanticStore, scope: ChunkScope, chunks: readonly IndexableChunk[]): boolean {
   const stored = store.listIndexedChunkIds(scope);
@@ -55,6 +63,14 @@ export interface IndexDocumentInput {
   pages: readonly PageText[];
   pageCount: number;
   chunkingProfile: SemanticChunkingProfile;
+  /**
+   * Pages that needed recognising and did not get it.
+   *
+   * Supplied by whoever read the document, because this function is agnostic about where its page
+   * text came from and cannot work it out for itself: a page simply absent from `pages` may be
+   * blank, or may be one nothing could read, and the difference is the whole point.
+   */
+  unresolvedPages?: readonly number[];
   force?: boolean;
   onProgress?: (progress: IndexProgress) => void;
   /**
@@ -87,6 +103,8 @@ export interface IndexedDocumentResult {
   pageCount: number;
   chunkCount: number;
   textSource: TextSource;
+  /** Pages nothing could read, ascending. Empty exactly when `status` is not `incomplete`. */
+  unresolvedPages: number[];
 }
 
 /**
@@ -138,6 +156,22 @@ function requireCompleteCache(cache: ExtractionProvenance, pageCount: number): v
 
 /** Embedded, then written, in groups of this size. Never held open across an await. */
 const EMBED_BATCH = 32;
+
+/**
+ * The status a run actually ended on, and the pages behind it.
+ *
+ * Written once and applied to every success path, because "did every page get read?" is orthogonal
+ * to "was there anything to embed?" — a document can be `empty`, `reused` or `ready` and still be
+ * missing a page. A branch that returned its own status directly would be a branch that could
+ * forget, and the one it would forget is the one that matters.
+ */
+function settle(
+  status: "ready" | "reused" | "empty",
+  unresolvedPages: readonly number[],
+): { status: Exclude<IndexStatus, "cancelled">; unresolvedPages: number[] } {
+  const unresolved = [...unresolvedPages].sort((a, b) => a - b);
+  return { status: unresolved.length > 0 ? "incomplete" : status, unresolvedPages: unresolved };
+}
 
 function textSourceOf(pages: readonly PageText[]): TextSource {
   if (pages.length === 0) return "none";
@@ -192,6 +226,7 @@ async function indexDocumentExclusive(
 
   const model = getCuratedEmbeddingModel(embedder.modelId);
   const textSource = textSourceOf(input.pages);
+  const unresolvedPages = input.unresolvedPages ?? [];
   const cache = input.markdownCache;
   // Validated before the document row is written, so a cache that cannot be stored can never
   // leave a document stamped with an engine that cached nothing for it.
@@ -245,7 +280,7 @@ async function indexDocumentExclusive(
     // engine that cached nothing — exactly the false claim the provenance check exists to stop.
     if (cache !== undefined) store.putMarkdown(stored.id, cache);
     input.onProgress?.({ status: "ready", message: "No text to index" });
-    return { status: "empty", contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: 0, textSource };
+    return { ...settle("empty", unresolvedPages), contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: 0, textSource };
   }
 
   // Completeness is an identity question, not a counting one.
@@ -258,14 +293,26 @@ async function indexDocumentExclusive(
   // that — the identifier carries a fingerprint of the text — and comparing counts does not.
   //
   if (input.force !== true && hasExactChunks(store, scope, chunks)) {
-    // Backfill: a document indexed before caching existed has complete chunks and no cached
-    // text. Writing it here means the cache becomes complete as documents are opened, rather
-    // than only for documents that happen to be rebuilt.
-    if (cache !== undefined && store.getMarkdown(stored.id, cache.engineId, cache.markdownVersion) === null) {
-      store.putMarkdown(stored.id, cache);
+    // Backfill, in two cases, because this path is the only one an unchanged document ever takes.
+    //
+    // A document indexed before caching existed has complete chunks and no cached text at all.
+    //
+    // A document cached before page outcomes were recorded has the text and cannot say why any of
+    // it is empty. That silence is deliberately read as a gap, which is what repairs a scanned page
+    // nothing recognised — but for a page that is genuinely blank it is wrong and self-perpetuating:
+    // the chunks never change, so every run returns here, and every reader re-opens the file to look
+    // at a page with nothing on it. Writing the outcomes we now know is what lets a blank page
+    // settle.
+    //
+    // Only when there is something better to write. A cache that already accounts for its pages is
+    // left alone, so reuse stays the cheap path it is meant to be.
+    if (cache !== undefined) {
+      const existing = store.getMarkdown(stored.id, cache.engineId, cache.markdownVersion);
+      const unaccountedFor = existing !== null && existing.provenance === null && cache.pageProvenance !== undefined;
+      if (existing === null || unaccountedFor) store.putMarkdown(stored.id, cache);
     }
     input.onProgress?.({ status: "ready", current: chunks.length, total: chunks.length, message: "Semantic index ready" });
-    return { status: "reused", contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: chunks.length, textSource };
+    return { ...settle("reused", unresolvedPages), contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: chunks.length, textSource };
   }
 
   // Check before anything destructive. A job cancelled while queued behind another job for the
@@ -339,5 +386,5 @@ async function indexDocumentExclusive(
   }
 
   input.onProgress?.({ status: "ready", current: chunks.length, total: chunks.length, message: "Semantic index ready" });
-  return { status: "ready", contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: chunks.length, textSource };
+  return { ...settle("ready", unresolvedPages), contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: chunks.length, textSource };
 }

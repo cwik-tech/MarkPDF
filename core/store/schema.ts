@@ -3,7 +3,7 @@ import { LEGACY_V1_DDL } from "./legacySchema.js";
 import { SchemaTooNewError } from "./errors.js";
 import { pragmaInteger } from "./rows.js";
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 export interface MigrationReport {
   from: number;
@@ -30,6 +30,17 @@ const V2_DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_chunks_scope
     ON document_chunks(document_id, chunking_profile, chunking_version);
+`;
+
+/**
+ * v3 records what became of each cached page, not only what its text was.
+ *
+ * Additive and nullable on purpose. `NULL` is the honest answer for every row written before this
+ * column existed: those rows genuinely do not know whether an empty page was blank or unread, and a
+ * default that claimed either would be a fact nobody established.
+ */
+const V3_DDL = `
+  ALTER TABLE document_markdown ADD COLUMN page_provenance TEXT;
 `;
 
 function hasDocumentsTable(db: Db): boolean {
@@ -71,6 +82,8 @@ export function migrate(db: Db): MigrationReport {
         .prepare("DELETE FROM document_chunks WHERE document_id NOT IN (SELECT id FROM documents)")
         .run().changes;
     }
+
+    if (from < 3) db.exec(V3_DDL);
 
     db.pragma(`user_version = ${CURRENT_SCHEMA_VERSION}`);
   });

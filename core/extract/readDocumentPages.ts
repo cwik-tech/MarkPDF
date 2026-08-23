@@ -10,6 +10,17 @@ export interface OcrPageCandidate {
 /** Where a page's text came from. `none` means nothing could read it. */
 export type PageSource = "pdf" | "ocr" | "none";
 
+/**
+ * What became of a page, which is not the same question as where its text came from.
+ *
+ * - `read` — it has text.
+ * - `empty` — something read it and there was nothing on it. A genuinely blank page.
+ * - `unresolved` — it needed recognising and nothing recognised it. **Its emptiness is a gap, not
+ *   a fact about the document**, and anything that stores or serves it has to say so; otherwise the
+ *   next reader cannot tell it apart from `empty` and will never go back for it.
+ */
+export type PageStatus = "read" | "empty" | "unresolved";
+
 export interface ReadPage {
   page: number;
   /** The text to use for this page. Empty exactly when `source` is `none`. */
@@ -17,18 +28,36 @@ export interface ReadPage {
   source: PageSource;
   /** True when the structural extractor could not read the page, whatever happened afterwards. */
   needsOcr: boolean;
+  status: PageStatus;
+}
+
+/** What the rule below needs to know about a page. A structural subset of the extractor's output. */
+export interface RecognisablePage {
+  needsOcr: boolean;
+  markdown: string;
+}
+
+/**
+ * Whether this page still has to be read by recognising it.
+ *
+ * Two ways in, and the second is the defensive one. The extractor's own flag decides the ordinary
+ * case. But a page it says it read and returned nothing for has contradicted itself, and believing
+ * the flag over the result is how a page with words on it gets stored as blank — the one failure
+ * that looks exactly like a correct answer. Measured against `@firecrawl/pdf-inspector` 1.17.0 this
+ * second case does not arise, which is precisely why it is worth guarding rather than trusting: it
+ * is a claim about a dependency's behaviour, not about ours.
+ *
+ * Whitespace is nothing. A page whose text layer is a single newline has no words on it.
+ *
+ * It cannot cascade. An empty page is empty however the flag reads, and `ocrOnlyPages` still bounds
+ * which pages a caller is willing to pay to recognise.
+ */
+export function pageNeedsRecognition(page: RecognisablePage): boolean {
+  return page.needsOcr || page.markdown.trim().length === 0;
 }
 
 export interface ReadDocumentInput {
   bytes: Uint8Array;
-  /**
-   * Text a caller has already produced for unreadable pages.
-   *
-   * The application fills this in: its renderer has rasterised and scanned those pages for the
-   * visible text layer, so recognising them again would cost a second full pass to arrive
-   * somewhere no better.
-   */
-  ocrCandidates?: readonly OcrPageCandidate[];
   /**
    * Which pages the caller is actually going to use, when it already knows.
    *
@@ -61,12 +90,15 @@ export interface ReadDocument {
   pageCount: number;
   /** Every page of the document, in order, including the ones nothing could read. */
   pages: ReadPage[];
-  /** How many candidates the caller supplied. */
-  candidatesOffered: number;
-  /** How many were actually used, which is fewer when one names a page that read fine. */
-  candidatesUsed: number;
-  /** How many pages were recognised during this read rather than supplied. */
+  /** How many pages this read had to recognise, because the extractor could not read them. */
   recognisedHere: number;
+  /**
+   * Pages that needed recognising and did not get it, ascending.
+   *
+   * Empty is the ordinary case. Anything else means this document is incomplete, and a caller that
+   * reports it as read has told somebody the words are all there when they are not.
+   */
+  unresolvedPages: number[];
 }
 
 export type ReadDocumentResult = ReadDocument | { status: "cancelled" };
@@ -94,24 +126,15 @@ export async function readDocumentPages(input: ReadDocumentInput): Promise<ReadD
   if (extraction.status === "cancelled") return { status: "cancelled" };
   const extracted = extraction.document;
 
-  const supplied = input.ocrCandidates ?? [];
-  for (const candidate of supplied) {
-    // The request guard validates each candidate's shape but runs before anything knows how many
-    // pages the document has. Checking here, where the count is known, stops a candidate for a
-    // page that does not exist from being silently dropped.
-    if (candidate.page > extracted.pages.length) {
-      throw new Error(`OCR candidate names page ${candidate.page}, but the document has ${extracted.pages.length} pages.`);
-    }
-  }
-
-  const accountedFor = new Set(supplied.map((candidate) => candidate.page));
   const wanted = input.ocrOnlyPages === undefined ? null : new Set(input.ocrOnlyPages);
   const unread = extracted.pages
-    .filter((page) => page.needsOcr && !accountedFor.has(page.page) && (wanted === null || wanted.has(page.page)))
+    .filter((page) => pageNeedsRecognition(page) && (wanted === null || wanted.has(page.page)))
     .map((page) => page.page);
 
   let recovered: readonly OcrPageCandidate[] = [];
+  let askedAbout: readonly number[] = [];
   if (unread.length > 0 && input.resolveOcr !== undefined) {
+    askedAbout = unread;
     if (cancelled()) return { status: "cancelled" };
     recovered = await input.resolveOcr({
       bytes: input.bytes,
@@ -122,31 +145,35 @@ export async function readDocumentPages(input: ReadDocumentInput): Promise<ReadD
     if (cancelled()) return { status: "cancelled" };
   }
 
-  const textByPage = new Map([...supplied, ...recovered].map((candidate) => [candidate.page, candidate.text]));
-  let candidatesUsed = 0;
+  const textByPage = new Map(recovered.map((candidate) => [candidate.page, candidate.text]));
+  // Which pages recognition was actually put to. A page outside this set was never asked about —
+  // because nothing was supplied to ask, or because `ocrOnlyPages` narrowed it away — and its
+  // emptiness therefore says nothing about the page.
+  const asked = new Set(askedAbout);
 
   const pages: ReadPage[] = extracted.pages.map((page) => {
-    if (page.needsOcr) {
+    if (pageNeedsRecognition(page)) {
       const text = textByPage.get(page.page)?.trim() ?? "";
-      if (text.length === 0) return { page: page.page, markdown: "", source: "none", needsOcr: true };
-      candidatesUsed += 1;
-      return { page: page.page, markdown: text, source: "ocr", needsOcr: true };
+      if (text.length > 0) {
+        return { page: page.page, markdown: text, source: "ocr", needsOcr: page.needsOcr, status: "read" };
+      }
+      return {
+        page: page.page,
+        markdown: "",
+        source: "none",
+        needsOcr: page.needsOcr,
+        status: asked.has(page.page) ? "empty" : "unresolved",
+      };
     }
     const text = page.markdown.trim();
-    return {
-      page: page.page,
-      markdown: text,
-      source: text.length === 0 ? "none" : "pdf",
-      needsOcr: false,
-    };
+    return { page: page.page, markdown: text, source: "pdf", needsOcr: false, status: "read" };
   });
 
   return {
     status: "read",
     pageCount: extracted.pageCount,
     pages,
-    candidatesOffered: supplied.length + recovered.length,
-    candidatesUsed,
     recognisedHere: recovered.length,
+    unresolvedPages: pages.filter((page) => page.status === "unresolved").map((page) => page.page),
   };
 }

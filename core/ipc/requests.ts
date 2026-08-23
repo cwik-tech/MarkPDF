@@ -1,5 +1,4 @@
 import { curatedEmbeddingModels, type SemanticChunkingProfile } from "../models.js";
-import type { OcrPageCandidate } from "../extract/readDocumentPages.js";
 
 /**
  * Validation for everything arriving from the renderer.
@@ -70,52 +69,11 @@ function requireBytes(value: unknown, what: string): Uint8Array {
   return Uint8Array.from(value);
 }
 
-/**
- * OCR text the renderer contributes for pages the extractor reports as unreadable.
- *
- * This is all the renderer sends now: PDF Inspector is authoritative for page count and for
- * native Markdown, so page text no longer crosses IPC. OCR stays in the renderer as a scope
- * decision for Phase 2, not because the main process lacks the means — `@napi-rs/canvas` is a
- * direct dependency and the native stack runs there. It stays because the renderer has already
- * rasterised and scanned those pages for the visible text layer, and doing that work twice
- * would cost a second full pass for the same result.
- *
- * Strictly ascending rejects duplicates and disorder in one rule, and blank text is refused
- * outright: a candidate that carries nothing would mark a page as read when it was not.
- */
-function requireOcrCandidates(value: unknown): OcrPageCandidate[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) throw new SemanticRequestError("ocrCandidates must be an array when present.");
-
-  const candidates: OcrPageCandidate[] = [];
-  let previous = 0;
-  for (const [position, entry] of value.entries()) {
-    const row = requireObject(entry, `ocrCandidates[${position}]`);
-    const page = row.page;
-    if (typeof page !== "number" || !Number.isInteger(page) || page < 1) {
-      throw new SemanticRequestError(`ocrCandidates[${position}].page must be a whole number of at least 1.`);
-    }
-    if (page <= previous) {
-      throw new SemanticRequestError(
-        `ocrCandidates must be in strictly ascending order; ocrCandidates[${position}].page is ${page} after ${previous}.`,
-      );
-    }
-    const text = row.text;
-    if (typeof text !== "string" || text.trim().length === 0) {
-      throw new SemanticRequestError(`ocrCandidates[${position}].text must be a non-empty string.`);
-    }
-    previous = page;
-    candidates.push({ page, text });
-  }
-  return candidates;
-}
-
 export interface ParsedIndexRequest {
   jobId: string;
   bytes: Uint8Array | null;
   filePath: string | null;
   name: string;
-  ocrCandidates: OcrPageCandidate[];
   chunkingProfile: SemanticChunkingProfile;
   force: boolean;
 }
@@ -144,7 +102,6 @@ export function parseIndexRequest(raw: unknown): ParsedIndexRequest {
     bytes,
     filePath,
     name: requireText(request.name, "name"),
-    ocrCandidates: requireOcrCandidates(request.ocrCandidates),
     chunkingProfile: requireChunkingProfile(request.chunkingProfile),
     force: requireOptionalBoolean(request.force, "force", false),
   };

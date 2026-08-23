@@ -148,6 +148,39 @@ describe("tools that read the index only", () => {
     if (!outcome.ok) return;
     expect((outcome.payload.pages as Array<{ page: number }>).map((page) => page.page)).toEqual([2]);
     expect(context.reads).toEqual([]);
+    // Nothing was missing from this document, and the reply says so rather than staying silent —
+    // an agent that cannot tell "no gaps" from "gaps not reported" has to assume the worse one.
+    expect(outcome.payload.unresolvedPages).toEqual([]);
+  }, 60_000);
+
+  it("names the pages of an indexed document that nothing managed to read", async () => {
+    // This tool never opens a file, so it cannot repair a gap. What it can do is refuse to present
+    // one as a blank page — otherwise an agent reads an empty string and reports the page as empty.
+    const hash = await indexTheFixture();
+    const document = store.getDocument(hash);
+    expect(document).not.toBeNull();
+    if (document === null) return;
+    // Rewrite the cache as a build that could not read page 2 would have left it.
+    const cached = store.getMarkdown(document.id, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION);
+    expect(cached).not.toBeNull();
+    if (cached === null) return;
+    store.putMarkdown(document.id, {
+      engineId: MARKDOWN_ENGINE_ID,
+      markdownVersion: MARKDOWN_VERSION,
+      pages: cached.pages.map((page) => (page.page === 2 ? { page: 2, markdown: "" } : page)),
+      pageProvenance: cached.pages.map((page) => ({
+        page: page.page,
+        status: page.page === 2 ? ("unresolved" as const) : ("read" as const),
+      })),
+    });
+
+    const context = contextWith();
+    const outcome = await runReadPages(context, { path: fixture, pages: "2" });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.payload.unresolvedPages).toEqual([2]);
+    expect(context.reads).toEqual([]);
   }, 60_000);
 
   it("searches an indexed document with nothing granted and nothing opened", async () => {

@@ -225,7 +225,7 @@ describe("indexing a PDF straight from its bytes", () => {
     expect(pagesHolding(chunks, PAGE_AFTER_SCAN)).toEqual([3]);
   }, 120_000);
 
-  it("stores a scanned page from the OCR text the renderer supplies for it", async () => {
+  it("stores a scanned page from the text recognition produces for it", async () => {
     const ocrText = "The escape velocity of Deimos is five point six metres per second measured from its surface.";
     const result = expectIndexed(
       await indexPdfDocument(store, embedder, {
@@ -233,7 +233,7 @@ describe("indexing a PDF straight from its bytes", () => {
         name: "scan.pdf",
         filePath: null,
         chunkingProfile: "balanced",
-        ocrCandidates: [{ page: 2, text: ocrText }],
+        resolveOcr: async (request) => request.pages.map((page) => ({ page, text: ocrText })),
       }),
     );
 
@@ -300,7 +300,7 @@ describe("indexing a PDF straight from its bytes", () => {
         name: "stamped-scan.pdf",
         filePath: null,
         chunkingProfile: "balanced",
-        ocrCandidates: [{ page: 2, text: ocrText }],
+        resolveOcr: async (request) => request.pages.map((page) => ({ page, text: ocrText })),
       }),
     );
 
@@ -312,61 +312,84 @@ describe("indexing a PDF straight from its bytes", () => {
     expect(pagesHolding(chunks, STAMP_TEXT)).toEqual([]);
   }, 120_000);
 
-  it("selects candidates by the extractor's judgement, not by how much native text a page has", async () => {
-    // The renderer's shape, faithfully: `detectOcrNeed` is a document-level verdict and
-    // `runDocumentOcr` then scans *every* page, so a candidate arrives for readable pages too.
+  it("recognises the pages the extractor flagged and no others, however thin their text", async () => {
+    // Which pages are recognised is the extractor's judgement, not a character count.
     //
     // Page 1 is ordinary prose. Page 2 is a scan carrying a 60-character stamp — under the old
-    // renderer rule's 100-character bar, so that rule would have replaced it. Page 3 is a
-    // readable page whose text layer is also under that bar. PDF Inspector flags only page 2,
-    // and its judgement is what decides.
+    // renderer rule's 100-character bar, so that rule would have replaced it. Page 3 is a readable
+    // page whose text layer is also under that bar. PDF Inspector flags only page 2, so page 2 is
+    // the only page recognition is asked about, and the other two keep their native Markdown.
+    const asked: number[] = [];
     const result = expectIndexed(
       await indexPdfDocument(store, embedder, {
         bytes: await buildMixedDensityPdf(),
         name: "mixed.pdf",
         filePath: null,
         chunkingProfile: "balanced",
-        ocrCandidates: [
-          { page: 1, text: "Candidate scan of the first page which is perfectly readable already." },
-          { page: 2, text: SCAN_BODY_OCR },
-          { page: 3, text: "Candidate scan of the sparse third page produced by the renderer." },
-        ],
+        resolveOcr: async (request) => {
+          asked.push(...request.pages);
+          return [{ page: 2, text: SCAN_BODY_OCR }];
+        },
       }),
     );
 
+    expect(asked).toEqual([2]);
     expect(result.textSource).toBe("mixed");
     const chunks = storedChunks();
 
-    // Page 2 is a genuine scan: its candidate is selected.
     expect(pagesHolding(chunks, SCAN_BODY_OCR)).toEqual([2]);
-    // Page 1 is readable: the canonical native Markdown wins and the candidate is not selected.
-    expect(pagesHolding(chunks, "perfectly readable already")).toEqual([]);
     expect(pagesHolding(chunks, MIXED_PAGE_ONE)).toEqual([1]);
-    // Page 3 is sparse but readable: same rule, and its anchor is still 3.
-    expect(pagesHolding(chunks, "sparse third page produced by the renderer")).toEqual([]);
     expect(pagesHolding(chunks, SPARSE_PAGE_THREE)).toEqual([3]);
   }, 120_000);
 
-  it("says how many pages it read and how many candidates it selected", async () => {
+  it("reports a document with a page nothing read as incomplete, not as ready", async () => {
+    // The failure this exists to stop is a silent success. A scan indexed with no way to recognise
+    // it produces a document that is searchable, citable, and missing a page — and every surface
+    // that asked was told it was ready. Naming the pages is what lets a caller say which.
+    const result = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes: await buildScannedPdf(),
+        name: "scan.pdf",
+        filePath: null,
+        chunkingProfile: "balanced",
+      }),
+    );
+
+    expect(result.status).toBe("incomplete");
+    expect(result.unresolvedPages).toEqual([2]);
+  }, 120_000);
+
+  it("reports the same document as ready once recognition has answered for it", async () => {
+    const result = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes: await buildScannedPdf(),
+        name: "scan.pdf",
+        filePath: null,
+        chunkingProfile: "balanced",
+        resolveOcr: async (request) => request.pages.map((page) => ({ page, text: SCAN_BODY_OCR })),
+      }),
+    );
+
+    expect(result.status).toBe("ready");
+    expect(result.unresolvedPages).toEqual([]);
+  }, 120_000);
+
+  it("says how many pages it read and how many of them it had to recognise", async () => {
     const messages: string[] = [];
     await indexPdfDocument(store, embedder, {
       bytes: await buildMixedDensityPdf(),
       name: "mixed.pdf",
       filePath: null,
       chunkingProfile: "balanced",
-      ocrCandidates: [
-        { page: 1, text: "unused candidate" },
-        { page: 2, text: SCAN_BODY_OCR },
-        { page: 3, text: "unused candidate" },
-      ],
+      resolveOcr: async (request) => request.pages.map((page) => ({ page, text: SCAN_BODY_OCR })),
       onProgress: (progress) => {
         if (progress.message !== undefined) messages.push(progress.message);
       },
     });
 
-    // Three candidates offered, one selected. Reporting the selection is what makes an
-    // unselected candidate an observable outcome rather than a silent drop.
-    expect(messages).toContain("Read 3 pages, 1 of 3 OCR candidates used");
+    // Recognition is the slow part of reading a document, so a reader watching a scan is told that
+    // is where the time went.
+    expect(messages).toContain("Read 3 pages, 1 read by OCR");
   }, 120_000);
 
   it("says only the page count when no candidates were offered", async () => {
@@ -398,10 +421,17 @@ describe("indexing a PDF straight from its bytes", () => {
     );
 
     const cached = store.getMarkdown(result.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION);
-    expect(cached?.map((page) => page.page)).toEqual([1, 2, 3]);
-    expect(cached?.[1]?.markdown).toBe("");
-    expect(cached?.[0]?.markdown.length).toBeGreaterThan(0);
-    expect(cached?.[2]?.markdown).toContain(PAGE_AFTER_SCAN);
+    expect(cached?.pages.map((page) => page.page)).toEqual([1, 2, 3]);
+    expect(cached?.pages[1]?.markdown).toBe("");
+    expect(cached?.pages[0]?.markdown.length).toBeGreaterThan(0);
+    expect(cached?.pages[2]?.markdown).toContain(PAGE_AFTER_SCAN);
+    // And why each one is what it is. Page 2 is empty because nothing read it, which is a different
+    // fact from a page that was read and found blank — and the only one worth going back for.
+    expect(cached?.provenance).toEqual([
+      { page: 1, status: "read" },
+      { page: 2, status: "unresolved" },
+      { page: 3, status: "read" },
+    ]);
 
     const db = new Database(semanticIndexPath(dataDir), { readonly: true });
     const row = db
@@ -446,20 +476,6 @@ describe("indexing a PDF straight from its bytes", () => {
 
     expect(result).toEqual({ status: "cancelled" });
     expect(store.info().documentCount).toBe(0);
-  }, 120_000);
-
-  it("refuses an OCR candidate for a page the document does not have", async () => {
-    // The request guard cannot check this: it validates before anything knows the page count.
-    // Ignoring the candidate here would silently drop text the renderer worked to produce.
-    await expect(
-      indexPdfDocument(store, embedder, {
-        bytes: await buildScannedPdf(),
-        name: "scan.pdf",
-        filePath: null,
-        chunkingProfile: "balanced",
-        ocrCandidates: [{ page: 9, text: "text for a page that is not there" }],
-      }),
-    ).rejects.toThrow(/9/);
   }, 120_000);
 
   it("writes nothing when the caller cancels before extraction begins", async () => {

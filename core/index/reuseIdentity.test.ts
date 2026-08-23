@@ -130,7 +130,7 @@ describe("what a Phase 2 document records about itself", () => {
 
   it("caches the Markdown when the caller says which engine produced it", async () => {
     const indexed = expectIndexed(await indexWith(FIRST_TEXT, withProvenance));
-    expect(store.getMarkdown(indexed.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)).toEqual([
+    expect(store.getMarkdown(indexed.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)?.pages).toEqual([
       { page: 1, markdown: FIRST_TEXT },
     ]);
   }, 60_000);
@@ -138,7 +138,7 @@ describe("what a Phase 2 document records about itself", () => {
   it("replaces the cached Markdown when the extraction changes", async () => {
     const first = expectIndexed(await indexWith(FIRST_TEXT, withProvenance));
     await indexWith(REVISED_TEXT, withProvenance);
-    expect(store.getMarkdown(first.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)).toEqual([
+    expect(store.getMarkdown(first.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)?.pages).toEqual([
       { page: 1, markdown: REVISED_TEXT },
     ]);
   }, 60_000);
@@ -152,8 +152,74 @@ describe("what a Phase 2 document records about itself", () => {
 
     const again = expectIndexed(await indexWith(FIRST_TEXT, withProvenance));
     expect(again.status).toBe("reused");
-    expect(store.getMarkdown(first.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)).toEqual([
+    expect(store.getMarkdown(first.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)?.pages).toEqual([
       { page: 1, markdown: FIRST_TEXT },
+    ]);
+  }, 60_000);
+
+  it("backfills the page outcomes onto a cache that has the text but does not know why a page is empty", async () => {
+    // The case a cache written before v3 leaves behind, and the one the earlier backfill misses:
+    // the text is already there, so `getMarkdown` does not return null and nothing is rewritten.
+    //
+    // It matters because a page that is empty in a provenance-free cache is read as a gap — that is
+    // what repairs the documents whose scanned page was never recognised. For a page that is
+    // genuinely blank the same reading is wrong and permanent: the chunks never change, so every
+    // run takes the reuse path, and every reader re-opens the file to look at a page that has
+    // nothing on it. Backfilling here is what lets a blank page settle down as blank.
+    const blankPage = (text: string): ExtractionProvenance => ({
+      ...withProvenance(text),
+      pages: [{ page: 1, markdown: text }, { page: 2, markdown: "" }],
+      pageProvenance: [
+        { page: 1, status: "read" },
+        { page: 2, status: "empty" },
+      ],
+    });
+    const indexTwoPages = (provenance: (text: string) => ExtractionProvenance) =>
+      indexDocument(store, embedder, {
+        bytes: BYTES,
+        name: "moons.pdf",
+        filePath: null,
+        pageCount: 2,
+        chunkingProfile: "balanced",
+        pages: [{ page: 1, text: FIRST_TEXT, source: "pdf" as const }],
+        markdownCache: provenance(FIRST_TEXT),
+      });
+
+    // Arrange: a cache exactly as an older build left it — complete text, no page outcomes.
+    const legacy = (text: string): ExtractionProvenance => {
+      const { pageProvenance: _dropped, ...withoutProvenance } = blankPage(text);
+      return withoutProvenance;
+    };
+    const first = expectIndexed(await indexTwoPages(legacy));
+    expect(store.getMarkdown(first.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)?.provenance).toBeNull();
+
+    // Act: the document has not changed, so this run reuses the chunks it already has.
+    const again = expectIndexed(await indexTwoPages(blankPage));
+
+    expect(again.status).toBe("reused");
+    expect(store.getMarkdown(first.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)?.provenance).toEqual([
+      { page: 1, status: "read" },
+      { page: 2, status: "empty" },
+    ]);
+  }, 60_000);
+
+  it("leaves a cache that already knows its page outcomes alone", async () => {
+    // The backfill is for a record that cannot answer, not a licence to rewrite one that can. A
+    // reuse that rewrote every cache would turn the cheapest path in the pipeline into a write.
+    const withPages = (text: string): ExtractionProvenance => ({
+      ...withProvenance(text),
+      pageProvenance: [{ page: 1, status: "read" }],
+    });
+
+    const first = expectIndexed(await indexWith(FIRST_TEXT, withPages));
+    const before = store.getMarkdown(first.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION);
+    expect(before?.provenance).toEqual([{ page: 1, status: "read" }]);
+
+    const again = expectIndexed(await indexWith(FIRST_TEXT, withPages));
+
+    expect(again.status).toBe("reused");
+    expect(store.getMarkdown(first.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)?.provenance).toEqual([
+      { page: 1, status: "read" },
     ]);
   }, 60_000);
 });
@@ -250,7 +316,7 @@ describe("a document with no text at all", () => {
     const stored = store.getDocument(await import("../hash.js").then((m) => m.contentHash(BYTES)));
     expect(stored).not.toBeNull();
     if (stored === null) return;
-    expect(store.getMarkdown(stored.id, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)).toEqual([{ page: 1, markdown: "" }]);
+    expect(store.getMarkdown(stored.id, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)?.pages).toEqual([{ page: 1, markdown: "" }]);
 
     const db = new Database(semanticIndexPath(dataDir), { readonly: true });
     const row = db

@@ -4,6 +4,7 @@ import { openSemanticStore, type SemanticStore } from "../dist-core/store/index.
 import { resolveDataDir } from "../dist-core/paths.js";
 import type { IndexProgress, IndexDocumentResult } from "../dist-core/index/indexDocument.js";
 import { indexPdfDocument } from "../dist-core/index/indexPdfDocument.js";
+import { ocrPages } from "../dist-core/ocr/ocrPages.js";
 import { searchDocument, type SemanticSearchResult } from "../dist-core/index/search.js";
 import { createTransformersEmbedder, type Embedder } from "../dist-core/index/embeddings.js";
 import { createDeterministicEmbedder } from "../dist-core/index/deterministicEmbedder.js";
@@ -189,7 +190,13 @@ export async function runIndexJob(
         bytes,
         name: request.name,
         filePath: request.filePath,
-        ocrCandidates: request.ocrCandidates,
+        // The same reading the command line and the MCP server do, and for the same reason: a page
+        // with no text layer reaches the index only if something here reads it. The window used to
+        // supply this instead, from the recognition it had done for its own display — but it only
+        // recognises a document its five-page density sample says is a scan, so a scanned page in
+        // an otherwise ordinary report was stored as nothing at all. Passed as a function so a
+        // document with a text layer on every page never loads a rasteriser or an engine.
+        resolveOcr: (ocrRequest) => ocrPages(ocrRequest, {}),
         chunkingProfile: request.chunkingProfile,
         force: request.force,
         onProgress,

@@ -143,6 +143,58 @@ describe("migrating a database left behind by the sql.js build", () => {
     expect(store.info().chunkCount).toBe(1);
   });
 
+  it("keeps a Markdown cache written before pages recorded their outcome, and admits it knows nothing about them", () => {
+    // A v2 database, written out here rather than imported, so this is an independent statement of
+    // the shape being migrated from. Importing production's own DDL would make the test agree with
+    // the migration by construction.
+    const db = connectDirectly();
+    db.exec(LEGACY_V1_DDL);
+    db.exec(`
+      ALTER TABLE documents ADD COLUMN markdown_engine TEXT;
+      ALTER TABLE documents ADD COLUMN markdown_version INTEGER;
+      ALTER TABLE document_chunks ADD COLUMN heading_path TEXT;
+      CREATE TABLE document_markdown (
+        document_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+        engine_id TEXT NOT NULL,
+        markdown_version INTEGER NOT NULL,
+        markdown TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+    db.prepare(
+      `INSERT INTO documents (content_hash,name,file_path,file_size,page_count,text_source,
+         text_extraction_version,ocr_extraction_version,created_at,last_opened_at,
+         markdown_engine,markdown_version)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run("v2hash", "older.pdf", "/tmp/older.pdf", 10, 2, "pdf", 2, 1, "2026-01-01", "2026-01-01", "pdf-inspector", 1);
+    const document = db.prepare("SELECT id FROM documents WHERE content_hash = ?").get("v2hash") as { id: number };
+    db.prepare(
+      `INSERT INTO document_markdown (document_id,engine_id,markdown_version,markdown,created_at)
+       VALUES (?,?,?,?,?)`,
+    ).run(
+      document.id,
+      "pdf-inspector",
+      1,
+      "<!-- markpdf:page 1 len 5 -->\nfirst<!-- markpdf:page 2 len 0 -->\n",
+      "2026-01-01",
+    );
+    db.pragma("user_version = 2");
+    db.close();
+
+    const store = open();
+
+    expect(store.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    const cached = store.getMarkdown(document.id, "pdf-inspector", 1);
+    // The text survives the upgrade untouched — nothing is re-extracted and nothing is discarded.
+    expect(cached?.pages).toEqual([
+      { page: 1, markdown: "first" },
+      { page: 2, markdown: "" },
+    ]);
+    // And the row says it does not know why page 2 is empty, rather than claiming it was read. That
+    // silence is what sends a later reader back for the page instead of serving it as blank.
+    expect(cached?.provenance).toBeNull();
+  });
+
   it("sweeps embedding rows orphaned while foreign keys were never enforced", () => {
     seedLegacyDatabase({ orphanEmbeddings: 3 });
     const store = open();

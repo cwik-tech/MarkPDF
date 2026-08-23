@@ -113,6 +113,23 @@ describe("the core boundary", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("keeps the window out of deciding what a page says", () => {
+    // The window contributes a document to index. It does not contribute the document's text.
+    //
+    // It used to offer OCR it had produced for its own display, and reading preferred that over
+    // doing the work itself — so a page the window skipped was a page nothing read, and a page it
+    // did read entered the index in whatever shape its own engine produced. One document then read
+    // differently depending on which surface indexed it.
+    //
+    // The field is gone from the request, which the compiler enforces. This is the second net: it
+    // catches the shortcut being reintroduced under any name that still spells it out, including in
+    // a type declaration the compiler would happily accept.
+    const offenders = sourceFiles("src").filter((f) =>
+      withoutComments(readFileSync(f, "utf8")).includes("ocrCandidates"),
+    );
+    expect(offenders).toEqual([]);
+  });
+
   it("still recognises a browser global when it sees one", () => {
     // The rule above only means anything if it can fail, and its two exclusions — comments and
     // member access — are each one character away from excluding everything. These are the cases

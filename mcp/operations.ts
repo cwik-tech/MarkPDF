@@ -278,9 +278,16 @@ export async function runReadPages(
   if (!chosen.ok) return { ok: false, message: chosen.message };
 
   const bounded = boundPages(chosen.pages, context.budget);
+  // Only the gaps inside what was asked for. A document's other unread pages are not this reply's
+  // business, and listing them would make a two-page request answer about the whole document.
+  const selected = new Set(chosen.pages.map((page) => page.page));
+  const unresolvedPages = resolved.unresolvedPages.filter((page) => selected.has(page));
   const fitted = fitReply(bounded.pages.length, context.replyBudget, (keep) => ({
     contentHash: resolved.document?.contentHash ?? null,
     pages: bounded.pages.slice(0, keep),
+    // Always present, never omitted when empty. An agent that cannot tell "no gaps" from "gaps not
+    // reported" has to assume the second, and would distrust every page it is given.
+    unresolvedPages,
     truncated: bounded.truncated || keep < bounded.pages.length,
     omittedBytes: bounded.omittedBytes + bytesOfText(bounded.pages.slice(keep), (page) => page.markdown),
     totalBytes: bounded.totalBytes,
