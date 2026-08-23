@@ -1144,6 +1144,13 @@ select {
   color: #1f2937;
 }
 
+.markdown-preview mark.active {
+  background: rgba(255, 168, 0, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(141, 80, 0, 0.95),
+    0 0 0 4px rgba(255, 180, 0, 0.34);
+}
+
 .page-wrap {
   display: grid;
   grid-template-columns: 72px minmax(0, max-content);
