@@ -1,4 +1,4 @@
-import { extractPagesFromPdf } from "../extract/pdfInspector.js";
+import { readDocumentPages, type OcrPageCandidate, type ReadPage } from "../extract/readDocumentPages.js";
 import type { SemanticChunkingProfile } from "../models.js";
 import type { SemanticStore } from "../store/index.js";
 import type { PageText } from "./chunking.js";
@@ -11,12 +11,7 @@ import {
   TEXT_EXTRACTION_VERSION,
 } from "../models.js";
 
-/** Page text the renderer already produced by OCR, for pages the extractor cannot read. */
-export interface OcrPageCandidate {
-  /** 1-based, matching the page numbers the adapter reports. */
-  page: number;
-  text: string;
-}
+export type { OcrPageCandidate };
 
 export interface IndexPdfDocumentInput {
   bytes: Uint8Array;
@@ -24,17 +19,25 @@ export interface IndexPdfDocumentInput {
   filePath: string | null;
   chunkingProfile: SemanticChunkingProfile;
   /**
-   * OCR text for pages the extractor reports as unreadable.
+   * OCR text a caller has already produced, for pages the extractor reports as unreadable.
    *
-   * **Phase 2 does not OCR here.** That is a scope decision, not a capability limit:
-   * `@napi-rs/canvas` is a direct dependency and the native stack runs in this process. It is
-   * deferred because the application's renderer has already rasterised and scanned those pages
-   * for the visible text layer, so redoing the work would cost a second full pass for the same
-   * result. A page reported as needing OCR with no candidate is left out of the index entirely —
-   * see `toPageText`. Ruling R2 records the trade-off; Phase 3 revisits it for the CLI, which
-   * has no renderer to borrow from.
+   * The application fills this in from its renderer, which has already scanned those pages for
+   * the visible text layer. Ruling R2 records that trade-off.
    */
   ocrCandidates?: readonly OcrPageCandidate[];
+  /**
+   * Read the pages nobody else accounted for.
+   *
+   * The command line supplies this, because it has no renderer to borrow from. Anything it throws
+   * ends the run without writing: a document whose scanned pages could not be recognised is
+   * incomplete, and recording it as merely short would leave an index quietly missing pages that
+   * a later search would never mention.
+   */
+  resolveOcr?: (request: {
+    bytes: Uint8Array;
+    pages: readonly number[];
+    signal?: AbortSignal;
+  }) => Promise<readonly OcrPageCandidate[]>;
   force?: boolean;
   onProgress?: (progress: IndexProgress) => void;
   signal?: AbortSignal;
@@ -42,50 +45,28 @@ export interface IndexPdfDocumentInput {
 }
 
 /**
- * Which pages are safe to index, and where their text comes from.
+ * Which pages carry text worth indexing.
  *
- * A page the extractor flags as unreadable is *skipped* unless the caller supplied OCR text for
- * it. Indexing it from whatever fragments the native layer scraped off a scan would produce
- * chunks that look like ordinary text and cite a page nobody actually read — the same class of
- * confident wrongness as a bad page number, and harder to notice.
- *
- * An empty page contributes nothing rather than an empty chunk.
+ * A page nothing could read contributes nothing rather than an empty chunk. `readDocumentPages`
+ * has already decided which those are, and already refused to index a scan from the fragments the
+ * native layer scraped off it.
  */
-function toPageText(
-  pages: ReadonlyArray<{ page: number; markdown: string; needsOcr: boolean }>,
-  ocrCandidates: readonly OcrPageCandidate[],
-): PageText[] {
-  const candidateTextByPage = new Map(ocrCandidates.map((entry) => [entry.page, entry.text]));
-  // The request guard validates each candidate's shape but runs before anything knows how many
-  // pages the document has. Checking here, where the count is known, stops a candidate for a
-  // page that does not exist from being silently dropped.
-  for (const entry of ocrCandidates) {
-    if (entry.page > pages.length) {
-      throw new Error(`OCR candidate names page ${entry.page}, but the document has ${pages.length} pages.`);
-    }
-  }
+function toPageText(pages: readonly ReadPage[]): PageText[] {
   const result: PageText[] = [];
-
   for (const page of pages) {
-    if (page.needsOcr) {
-      const ocrText = candidateTextByPage.get(page.page)?.trim() ?? "";
-      if (ocrText.length > 0) result.push({ page: page.page, text: ocrText, source: "ocr" });
-      continue;
-    }
-    const text = page.markdown.trim();
-    if (text.length > 0) result.push({ page: page.page, text, source: "pdf" });
+    if (page.source === "none" || page.markdown.length === 0) continue;
+    result.push({ page: page.page, text: page.markdown, source: page.source });
   }
-
   return result;
 }
 
 /**
- * Index a PDF from its bytes: extract, anchor, then store.
+ * Index a PDF from its bytes: read, anchor, then store.
  *
  * This is the composition `indexDocument` deliberately does not perform. That function takes the
- * page text it is given and is agnostic about where it came from; folding extraction into it
- * would tie a proven lower-level contract to one particular source. Keeping the wrapper separate
- * is what lets a caller with text already in hand — a test, a future importer — use the same
+ * page text it is given and is agnostic about where it came from; folding reading into it would
+ * tie a proven lower-level contract to one particular source. Keeping the wrapper separate is
+ * what lets a caller with text already in hand — a test, a future importer — use the same
  * indexing path as this one.
  *
  * **Cancellation, and its honest limit.** `@firecrawl/pdf-inspector` exposes no `AbortSignal`
@@ -109,46 +90,45 @@ export async function indexPdfDocument(
   // The callback can abort synchronously, so the signal is re-read before the native parse
   // starts rather than only before it is used.
   if (cancelled()) return { status: "cancelled" };
-  // The adapter owns the checks between its own native calls, because only it knows where they
-  // are. It reports cancellation as an outcome, which passes straight through here.
-  const extraction = await extractPagesFromPdf(input.bytes, {
+
+  const read = await readDocumentPages({
+    bytes: input.bytes,
+    ...(input.ocrCandidates === undefined ? {} : { ocrCandidates: input.ocrCandidates }),
+    ...(input.resolveOcr === undefined ? {} : { resolveOcr: input.resolveOcr }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
-  if (extraction.status === "cancelled") return { status: "cancelled" };
-  const extracted = extraction.document;
+  if (read.status === "cancelled") return { status: "cancelled" };
 
   // The best progress this stage can honestly offer. `@firecrawl/pdf-inspector` exposes no
   // progress callback, so nothing can report "page 3 of 12" while the parse runs — the per-page
   // granularity the renderer loop used to emit is gone and cannot be recovered without a
-  // callback the package does not have. What is knowable is that the parse finished and how
-  // many pages it found, so the interface gets a real total to move on to.
-  const pages = toPageText(extracted.pages, input.ocrCandidates ?? []);
-  const candidatesOffered = input.ocrCandidates?.length ?? 0;
-  const candidatesUsed = pages.filter((page) => page.source === "ocr").length;
-  const pageCountLabel = `Read ${extracted.pageCount} ${extracted.pageCount === 1 ? "page" : "pages"}`;
+  // callback the package does not have. What is knowable is that the parse finished, how many
+  // pages it found, and what became of the ones it could not read.
+  const pages = toPageText(read.pages);
+  const pageCountLabel = `Read ${read.pageCount} ${read.pageCount === 1 ? "page" : "pages"}`;
+  const recognisedHere = read.recognisedHere === 0 ? "" : `, ${read.recognisedHere} read here by OCR`;
 
   // Reporting the selection is what keeps an unselected candidate an observable outcome rather
   // than a silent drop. The extractor decides which pages need OCR, so a candidate for a page it
   // read successfully is expected non-selection — but the reader is still told it happened.
   input.onProgress?.({
     status: "checking",
-    current: extracted.pageCount,
-    total: extracted.pageCount,
+    current: read.pageCount,
+    total: read.pageCount,
     message:
-      candidatesOffered === 0
+      read.candidatesOffered === 0
         ? pageCountLabel
-        : `${pageCountLabel}, ${candidatesUsed} of ${candidatesOffered} OCR candidates used`,
+        : `${pageCountLabel}, ${read.candidatesUsed} of ${read.candidatesOffered} OCR candidates used${recognisedHere}`,
   });
 
-  // Checked again before anything is written, in case the cancel landed after the adapter's own
+  // Checked again before anything is written, in case the cancel landed after the reader's own
   // last look.
   if (cancelled()) return { status: "cancelled" };
 
   return indexDocument(store, embedder, {
-    // Every page, including the ones that contribute no chunks. `toPageText` drops a blank page
-    // and an unread scan, which is right for indexing and wrong for the cache: the cache is
-    // keyed to the whole document, so a gap would make it describe a shorter one. Unread and
-    // blank pages are carried as empty strings so page identity stays complete.
+    // Every page, including the ones that contribute no chunks. A page that is blank or could not
+    // be read is carried as an empty string: the cache is keyed to the whole document, so a gap
+    // would make it describe a shorter one.
     markdownCache: {
       engineId: MARKDOWN_ENGINE_ID,
       markdownVersion: MARKDOWN_VERSION,
@@ -156,16 +136,13 @@ export async function indexPdfDocument(
       // one place entitled to record it.
       textExtractionVersion: TEXT_EXTRACTION_VERSION,
       ocrExtractionVersion: OCR_EXTRACTION_VERSION,
-      pages: extracted.pages.map((page) => ({
-        page: page.page,
-        markdown: pages.find((entry) => entry.page === page.page)?.text ?? "",
-      })),
+      pages: read.pages.map((page) => ({ page: page.page, markdown: page.markdown })),
     },
     bytes: input.bytes,
     name: input.name,
     filePath: input.filePath,
     pages,
-    pageCount: extracted.pageCount,
+    pageCount: read.pageCount,
     chunkingProfile: input.chunkingProfile,
     ...(input.force === undefined ? {} : { force: input.force }),
     ...(input.onProgress === undefined ? {} : { onProgress: input.onProgress }),

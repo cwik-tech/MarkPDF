@@ -23,6 +23,8 @@ jobs:
         run: npm run typecheck
       - name: Core TypeScript
         run: npm run typecheck:core
+      - name: Command line TypeScript
+        run: npm run typecheck:cli
       - name: Test-source TypeScript
         run: npm run typecheck:tests
       - name: Electron main and preload TypeScript

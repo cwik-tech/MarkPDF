@@ -68,7 +68,7 @@ so a document indexed by the app and by the CLI produces identical chunks. `yiel
 
 ### Why D7, given the strategy document proposes workspaces
 
-`AGENTS.md:27-29` states the repository has no separate packages, and `:5-18` defines three
+`AGENTS.md`'s *Repository architecture* states the repository has no separate packages, and defines three
 runtime boundaries. Workspaces would contradict both.
 
 They are *technically* viable — `app-builder-lib/out/node-module-collector/nodeModulesCollector.js:256`
@@ -409,6 +409,12 @@ way: **Phase 1 builds only what Phase 1 needs.**
 
 ### R1 — `core/` depends on neither `pdfjs-dist` nor `pdf-lib`
 
+> **Superseded in Phase 3, in part.** Phase 3 brought `pdfjs-dist` into `core/` after all, to
+> rasterise scanned pages for OCR (`core/ocr/rasterisePages.ts`). `pdf-lib` is still out. The
+> ruling below stands as the Phase 1 decision and as the reason `outline` was deferred to Phase 3;
+> it is no longer a live constraint on `outline`, and the paragraph at the end of this section is
+> corrected there.
+
 With PDF Inspector doing extraction, the only remaining reason for pdf.js in `core/` was
 outline extraction (`src/pdf/document.ts:105-175`), which is entangled with the module-scope
 Vite import at `src/pdf/document.ts:2`. Phase 1 does not ship an `outline` command, so `core/`
@@ -422,6 +428,12 @@ without edits.
 The Phase 3 `outline` command then has a real choice to make on its own merits: derive the
 heading tree from the cached page-preserving Markdown (loses native PDF bookmarks), or bring
 pdf.js into `core/` at that point. Deferred deliberately rather than settled by inertia.
+
+**Settled in Phase 3, and not by this ruling.** `pdfjs-dist` did come into `core/` — for
+rasterising, not for outlines — so by the time `outline` was written the library was there and
+the ruling no longer decided anything. `outline` still derives from the extracted Markdown, on
+the merits: the heading tree is the case that needs serving, a document with no bookmarks still
+has headings, and reading both sources would give one question two answers.
 
 ### R2 — OCR stays in the renderer for Phase 1
 
@@ -858,11 +870,27 @@ number is worse than no result.
 ## Phase 3 — The CLI
 
 ```
-markpdf index   <path...>  [--recursive] [--force] [--json]
-markpdf search  <query>    (--path <pdf> | --id <hash>) [--top-k 12] [--min-score 0.3] [--json]
-markpdf outline <path>     [--depth 3] [--json]
-markpdf convert <path...>  [--pages 3-7] [--mode page-preserving|clean] [--out file.md] [--json]
+markpdf index   <path...>  [--recursive] [--force]
+markpdf search  <query>    (--path <pdf> | --id <hash>) [--top-k 12] [--min-score 0.3]
+markpdf outline <path>     [--depth 3]
+markpdf convert <path...>  [--pages 3-7] [--mode page-preserving|clean] [--out file.md]
+
+global: [--json] [--help] [--version] [--data-dir <dir>] [--no-input]
+        [--allow-read <dir>] [--allow-write <dir>] [--revoke-read <dir>] [--revoke-write <dir>]
 ```
+
+**Four global options were added to the shape above, and one moved.** `--json` is global rather
+than repeated per command, so `ParsedOptions.declared` can tell a command's own options from the
+global ones — asking for an option a command never declared is then a programming error the table
+catches rather than a plausible `undefined`. `--data-dir` and `--no-input` are the two knobs a
+non-interactive caller needs. The four grant options are global because a refusal prints its remedy
+as something pastable in front of the command that was refused, and the same options have to work
+on their own.
+
+**`--revoke-read` and `--revoke-write` are an addition to the plan, not a restatement of it.**
+"Deletion is withdrawal of consent" is below; consent that can be given and not taken back is not
+consent, and V8's own scenario — a folder no longer granted — needs a way to reach that state
+through the product rather than by editing a file.
 
 Arguments via `node:util.parseArgs` plus a hand-written command and option table. The deciding
 reason is not bundle size: the table is a data structure that generates `--help`, validates
@@ -894,7 +922,45 @@ appears inside the command a human approves in their agent's permission prompt.
 **Deletion is withdrawal of consent and must be real.** `secure_delete = ON`, explicit
 deepest-first deletes, `wal_checkpoint(TRUNCATE)` then `VACUUM`. The test indexes a fixture
 containing a distinctive phrase, forgets it, then reads the database file as bytes and asserts
-the phrase is absent.
+the phrase is absent. **Delivered**, and reached from the user-facing paths: `forgetDocument` is
+what the application's delete calls, and `clear` runs the same sequence. `deleteDocument` remains
+for testing the cascade and is documented as not a consent-withdrawal API.
+
+**Correction to the consent model, found during Phase 3.** Storing roots resolved is only half the
+guarantee. The checks originally resolved the *stored* root again on every call, so deleting a
+granted directory and putting a symbolic link to somewhere else at the same name silently moved the
+grant with it. Roots are now treated as canonical boundaries and only the request is resolved;
+withdrawal compares the same way, or a replaced directory escapes it. Both have regression tests
+and both mutations bite.
+
+**`--pages` bounds the recognition, not just the output.** Reading the whole document and filtering
+afterwards would rasterise and recognise every scanned page of a 400-page book to return one. The
+selection is passed into the read, and every page is still returned so that a selection naming a
+page the document does not have is still detectable.
+
+**Correction to the OCR plan.** `createWorker([{ code: "eng", data }])` does not work in the
+installed `tesseract.js` 7.0.0: `src/worker-script/index.js:101` reads `_lang.code` when loading
+the file but `:238` reads `_lang.data` when naming the language to initialise, so the engine is
+asked to open a data file named after the entire byte array. The working configuration is the
+string form with a local `langPath` and `cacheMethod: "none"` — the second of which is still
+required, because `:181` otherwise writes `eng.traineddata` into the current working directory.
+Recorded in the CLI packaging ADR.
+
+**`outline` derives headings from the extracted Markdown — on the merits, not on ruling R1.** That
+ruling's premise is spent: `core/ocr/rasterisePages.ts` imports `pdfjs-dist` to rasterise scanned
+pages, so a PDF library *is* available in `core/`. `pdf-lib` is still not. Nothing about outlines
+needs either. Native PDF bookmarks are not read, and heading *level* is the
+extractor's judgement from font statistics — measured against the test fixture, it reports a 20pt
+title and a 16pt section heading both as level 1. Stated in the ADR rather than left to be
+discovered.
+
+**Ruling R2 resolved: OCR runs in `core/` for the command line.** `pdfjs-dist` and
+`@napi-rs/canvas` rasterise, `tesseract.js` recognises, and the language data is bundled. PDF
+Inspector's own `processPdfWithOcr` was rejected: its README states the native package embeds no
+OCR models, PDFium or ONNX Runtime, so routed OCR needs those shared libraries on the platform
+search path plus a downloaded model set — a new native artifact on the notarised release path,
+outside the approved dependency set. The application's renderer path is unchanged: a caller that
+supplies OCR text still wins, and only pages nobody accounted for are recognised here.
 
 **Runtime: `ELECTRON_RUN_AS_NODE=1` against the bundled Electron binary**, installed as a shim
 script that bakes in the app path and the data directory. This avoids a second Node binary —
@@ -902,6 +968,26 @@ one more signing target and roughly 55 MB — and avoids depending on whichever 
 asdf, or mise wins on the user's PATH. The shim carries a version marker so status can
 distinguish not-installed, current, stale, pointing-elsewhere, foreign-binary conflict, and
 shadowed-on-PATH.
+
+**Two states were added and one comparison widened.** *Not on PATH* and *PATH unknown* exist
+because the install destination is often not on `PATH` and because an application launched from
+Finder inherits `launchd`'s minimal environment rather than the login shell's — so
+`process.env.PATH` cannot substantiate a claim about which `markpdf` runs. The login shell is asked
+instead, with a fixed argument list and a three-second timeout, and when that fails the status says
+so rather than guessing. Staleness compares **every** field of the marker, not only the version: a
+shim at today's version with yesterday's entry point runs yesterday's code, and one with a
+different data directory writes to a second index.
+
+**Elevation is not implemented, and the destination differs from what this plan implied.** Measured
+on macOS 25.5: `/usr/local/bin` is the first line of `/etc/paths` and is therefore on the default
+`PATH`, but it is `root:wheel` mode 755 and not writable without elevation; `~/.local/bin` is
+writable and is *not* on this account's login `PATH`. The install action therefore uses
+`/usr/local/bin` when this user can already write there and `~/.local/bin` otherwise, and tells the
+person plainly when the directory is not on their `PATH`. Writing to a root-owned directory from a
+document reader means an administrator prompt and a privileged shell command, which deserves its
+own design rather than being added at the end of a phase. Recorded with this evidence in
+`docs/adr/2026-08-23-CLI-Packaging-And-Install.md`; it is the paragraph to revisit if elevation is
+wanted.
 
 `electron/defaultApp.ts` is the precedent for the **module and IPC shape only** — a status
 type, a getter, a setter, one settings section. It manipulates LaunchServices and writes
@@ -949,20 +1035,37 @@ libvips 8.17.3 and a usable `InferenceSession`. That is what makes the Phase 1 `
 evidence-backed rather than hopeful, and it is recorded in
 `docs/adr/2026-08-22-Native-Semantic-Index-Store.md`.
 
-Not verified, and Phase 3 work: indexing and searching end to end inside a fully packaged app;
-signing and notarization of a distributable. `codesign --verify --strict` on a `--dir` build
-reports "code has no resources", which is expected for an unpacked build and proves nothing
-about a real release. The Phase 3 `asarUnpack` additions are unverified in every sense, because
-the code that needs them does not exist yet.
+**Verified in Phase 3, against a signed, unpacked arm64 `--dir` build on 2026-08-23.** The command
+line runs from inside `app.asar` under `ELECTRON_RUN_AS_NODE=1` through an installed shim, with the
+network blocked in the process and in its worker threads: it starts, writes its consent record to
+the baked data directory, opens `better-sqlite3` and `@firecrawl/pdf-inspector` for `outline`,
+rasterises a scan with pdf.js and `@napi-rs/canvas` and recognises it with `tesseract.js` for
+`convert`, and writes nothing into the working directory. `codesign --verify --deep --strict`
+reports the bundle valid and satisfying its designated requirement, with the hardened runtime on
+(`flags=0x10000`), and the unpacked native modules verify individually. That retires the
+hardened-runtime question for a `--dir` build.
 
-Net size: roughly +6 MB installed, and −13 MB of first-use network fetches. Semantic search and
-CLI OCR become genuinely offline-capable for the first time.
+**Still not verified.** `index` and `search` inside the packaged application: a packaged build
+refuses the offline test embedder by design, so proving them there needs a 133 MB model download.
+Notarizing a distributable is also unverified — credentials are not set in this worktree, and
+notarization is currently failing on Apple's side for this account.
+
+Net size: Phase 3 adds roughly 2.9 MB installed — the `4.0.0_best_int` language data at 2.8 MB plus
+`dist-cli`. `tesseract.js-core` already shipped for the reader's own OCR and moves out of the
+archive rather than being added, and the 10 MB `4.0.0` language variant is excluded from the
+package. Semantic search and command-line OCR are now genuinely offline-capable, which V10 checks
+by blocking the network rather than by asserting configuration.
+
+**An unrelated observation, recorded rather than acted on.** The `--dir` build's `app.asar` is
+705 MB, dominated by pre-existing content: `dist/` at 338 MB, `onnxruntime-web` at 131 MB (unused
+in the main process), `mermaid` at 83 MB and `lucide-react` at 25 MB. None of it is Phase 3's, and
+none of it is in Phase 3's scope, but the number is worth someone's attention before a release.
 
 ---
 
 ## How the work is sequenced
 
-Vertical capabilities per `AGENTS.md:85-114` — each independently useful with its own outer
+Vertical capabilities per `AGENTS.md`'s *Double-loop TDD for cross-layer features* — each independently useful with its own outer
 acceptance test, rather than one long-running failing test around the whole feature.
 
 | # | Phase | Observable outcome |
@@ -976,6 +1079,8 @@ acceptance test, rather than one long-running failing test around the whole feat
 | V6 | 2 | Searching a table-heavy PDF returns an intact table row with the right page and heading path |
 | V7 | 3 | `markpdf index <path outside allowlist>` exits 5, prints a runnable remedy, and writes nothing |
 | V8 | 3 | With the fixture directory removed from the allowlist, `markpdf search --path <fixture>` still returns the hit and exits 0 |
+| V10 | 3 | `markpdf index <scanned fixture>` reads text that exists only as pixels, with the network blocked in the process and its worker threads, and a later search returns it |
+| V11 | 3 | The command line runs from inside a signed, packaged `--dir` build: it starts from `app.asar`, opens SQLite and the extractor, and recognises a scan offline |
 
 **V9 is the Phase 1 Electron exit criterion.** The table-aware journey that earlier drafts
 listed here belongs to Phase 2, because it depends on structure-aware chunking that Phase 1
@@ -983,7 +1088,16 @@ does not deliver.
 
 V7 and V8 are the negative checks the strategy document requires, and both belong to Phase 3.
 **V8 proves the consent model is implemented rather than asserted**, and gets mutation proof:
-make path resolution hash the file unconditionally and confirm V8 turns red.
+make path resolution hash the file unconditionally and confirm V8 turns red. **Delivered, and the
+mutation was run: it turns V8 red.** V7 goes further than the row above describes — it extracts the
+remedy from stderr and runs it through a real shell, against a library directory whose name
+contains a space, so the shell quoting is under test rather than the wording.
+
+**V10 and V11 were added during Phase 3** and are recorded here rather than left out of the table.
+V10 is the check that the offline claim is a claim about behaviour: the network is blocked with a
+`NODE_OPTIONS` preload, which propagates into `worker_threads` — verified — and the recognition
+engine runs in one. V11 is the packaged-application check the Packaging section previously listed
+as unverified. Its limit is stated there.
 
 Dependency order: spikes → tsconfigs and test discovery → core types and paths → store →
 index and search → **IPC cutover** (all Phase 1, and the cutover ships with the store) →
@@ -1004,7 +1118,7 @@ against `vitest.live.config.ts` with a timeout sized for a cold model download.
 PNG, and embeds it — a genuine OCR fixture with no text layer and no binary in git.
 
 **Expected values are written down before the extractor exists and reviewed against a rendered
-page image**, never pasted from extractor output (`AGENTS.md:138-142`). An assertion generated
+page image**, never pasted from extractor output (`AGENTS.md`'s *Test design rules*). An assertion generated
 by the implementation proves only that the implementation is deterministic.
 
 The table fixture puts a decoy on page 3 reading "Enterprise revenue is discussed on page 2",
@@ -1020,7 +1134,7 @@ breadcrumb-prefixed chunks; and that `--offline` refuses against a genuinely col
 opt-in live check covers those, run on demand rather than per PR.
 
 **Mutation proof** is required for the store, the derived cache, WAL concurrency, the
-allowlist, the consent path, and the page-index boundary — all named in `AGENTS.md:170-177`.
+allowlist, the consent path, and the page-index boundary — all named in `AGENTS.md`'s *Verify that the test protects the behavior*.
 Concretely, each named against the vertical it protects and the phase that owns it: set
 `PRAGMA foreign_keys = OFF` and V1's enforcement assertion must fail (Phase 1); make the reuse
 check compare chunk counts instead of chunk identifiers and V3 must fail (Phase 1); apply the
@@ -1040,6 +1154,14 @@ The residual limit is stated rather than papered over: replacing the read-back w
 `true` does **not** fail any test, because no environment this suite can create has foreign keys
 off. The pragma line and its read-back exist so the guarantee survives a driver whose default
 differs; only the `OFF` mutation can demonstrate that today.
+
+**Phase 3 found the same shape twice more, and both are reported rather than smoothed over.**
+`secure_delete` and the reclaim step are individually sufficient for the byte-level forget test —
+removing either alone leaves it green, removing both fails it — so both are kept for the different
+ways they fail, and the `secure_delete` guarantee is asserted through
+`diagnostics.secureDeleteEnabled`, which the `OFF` mutation does bite. And the atomic write of the
+consent record survives every mutation this suite can express, because no in-process test can
+interrupt a write; it is a design property, not a proven one.
 
 **A before/after benchmark**, opt-in, belongs to Phase 2. Phase 1 changes where the pipeline
 runs, not what it produces, so there is nothing yet to compare — `semanticChunkingVersion` stays
@@ -1103,7 +1225,7 @@ recorded above as the affected set.
 request: renderer, core and Electron typechecks, the unit suites, and a build, plus a second job
 running the Electron journeys. `release-macos.yml` previously ran no tests at all. Both jobs use
 `macos-15` because arm64 is the only supported target and the native modules that ship only load
-there. **No lint step** — `AGENTS.md:256-258` requires reporting it unavailable rather than
+there. **No lint step** — `AGENTS.md`'s *Verification commands* requires reporting it unavailable rather than
 claiming it passed.
 
 Stale-build protection is by npm pre-hooks. `pretest`, `pretest:e2e` and `pretypecheck:core`
@@ -1113,8 +1235,8 @@ No gate can therefore pass against yesterday's `dist-core/`, which matters becau
 outside `core/` imports the compiled output rather than the sources.
 
 Commands, per `AGENTS.md`'s verification table: `npm test`, `npm run typecheck`,
-`npm run typecheck:core`, `npx tsc -p tsconfig.electron.json --noEmit`, `npm run build`, and
-`npm run test:e2e`.
+`npm run typecheck:core`, `npm run typecheck:cli`, `npm run typecheck:tests`,
+`npx tsc -p tsconfig.electron.json --noEmit`, `npm run build`, and `npm run test:e2e`.
 
 **The journeys job installs no browser.** All three specs launch through `_electron.launch`
 with `executablePath` set to the `electron` package's own binary, so they drive Electron's
@@ -1143,7 +1265,7 @@ bundled Chromium and never open a Playwright-managed browser. Verified rather th
 
 Following `docs/adr/2026-08-22-Mermaid-Markdown-Rendering.md`'s Status / Context / Decision /
 Consequences / Alternatives considered format, each naming its verifying verticals per
-`AGENTS.md:224-225`:
+`AGENTS.md`'s *Documentation policy*:
 
 1. **Node core layer** — the `core/` and `cli/` boundaries and the `AGENTS.md` amendment.
    Alternatives: npm workspaces, with the full cost comparison; leaving the logic in the renderer.
@@ -1170,8 +1292,18 @@ Consequences / Alternatives considered format, each naming its verifying vertica
    rejected because it cannot be safe at the boundary.
 7. **CLI packaging and install** — `ELECTRON_RUN_AS_NODE`, the shim, elevation, and the rejected
    alternatives (bundled Node, symlink, npm publication).
+   Delivered as `docs/adr/2026-08-23-CLI-Packaging-And-Install.md`. It records elevation as a
+   **departure**: it is not implemented, the destination is chosen by writability instead, and the
+   measured `PATH` and permission evidence for that choice is in the ADR rather than in a comment.
+8. **The command line's contracts** — added during Phase 3, because the consent model is a
+   substantial architectural decision that none of the six above covers. Records why the allowlist
+   lives in `core/`, why stored roots are canonical and only requests are resolved, the read/write
+   asymmetry, the database-first lookup that makes `search --path` need no permission, secure
+   forgetting, the stream split, and the exit-code table including why `parseFailed` is claimed
+   only for errors from the parse boundary. Delivered as
+   `docs/adr/2026-08-23-Command-Line-Consent-And-Contracts.md`.
 
-`CHANGELOG.md` gets an entry per completed task, per `AGENTS.md:226`.
+`CHANGELOG.md` gets an entry per completed task, per `AGENTS.md`'s *Documentation policy*.
 
 ---
 

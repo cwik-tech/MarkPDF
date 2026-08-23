@@ -112,6 +112,14 @@ export interface StoreDiagnostics {
    * that make document deletion complete depend on this being true.
    */
   foreignKeysEnforced: boolean;
+  /**
+   * Read back rather than assumed, for the same reason as foreign keys.
+   *
+   * With it on, SQLite overwrites freed content instead of leaving it in place. The byte-level
+   * forget test cannot prove this pragma by itself — reclaiming space rewrites the whole file and
+   * would remove the text either way — so the configured guarantee is asserted directly.
+   */
+  secureDeleteEnabled: boolean;
   migration: MigrationReport;
 }
 
@@ -127,6 +135,20 @@ export interface SemanticStore {
   readonly schemaVersion: number;
   readonly diagnostics: StoreDiagnostics;
   getDocument(contentHash: string): StoredDocument | null;
+  /**
+   * The document recorded at this exact path, if there is one.
+   *
+   * An exact match on the stored spelling, deliberately: normalising the argument would mean
+   * touching the filesystem, and answering a search about an already-indexed document without
+   * doing that is the whole point of this lookup.
+   *
+   * `file_path` is not unique — the upsert conflicts on `content_hash` — so re-indexing a file
+   * whose bytes changed leaves more than one row at one path. The most recently opened wins,
+   * with the row id breaking a tie. This returns the **latest indexed version** of that path and
+   * makes no claim that the file on disk still matches it; verifying that would mean reading the
+   * file, which this lookup exists to avoid.
+   */
+  getDocumentByPath(filePath: string): StoredDocument | null;
   upsertDocument(input: UpsertDocumentInput): StoredDocument;
   /**
    * Clear this document's chunks for the current scope and every superseded version.
@@ -159,7 +181,23 @@ export interface SemanticStore {
   putMarkdown(documentId: number, input: MarkdownCacheInput): void;
   /** The cached Markdown, if this engine wrote it at this version and it still parses. */
   getMarkdown(documentId: number, engineId: string, markdownVersion: number): MarkdownPageRecord[] | null;
+  /**
+   * Remove a document's rows.
+   *
+   * **Not a consent-withdrawal API.** It leaves freed content recoverable from the file until
+   * something reclaims the space, so no user-facing surface calls it — `forgetDocument` and
+   * `clear` are the two that do. It stays because the cascade behaviour is worth testing on its
+   * own.
+   */
   deleteDocument(contentHash: string): boolean;
+  /**
+   * Remove a document and reclaim the space its text occupied.
+   *
+   * `deleteDocument` removes the rows; this also makes the bytes unreadable. Deletion here is
+   * withdrawal of consent, and a row removed from a B-tree whose contents are still sitting in a
+   * freed page has not been withdrawn from anyone holding the file.
+   */
+  forgetDocument(contentHash: string): boolean;
   listDocuments(limit?: number): StoredDocument[];
   info(): StoreInfo;
   clear(): void;
@@ -223,6 +261,7 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
   db.pragma("foreign_keys = ON");
   const foreignKeysEnforced = pragmaInteger(db.pragma("foreign_keys", { simple: true }), "foreign_keys") === 1;
   db.pragma("secure_delete = ON");
+  const secureDeleteEnabled = pragmaInteger(db.pragma("secure_delete", { simple: true }), "secure_delete") === 1;
   db.pragma("temp_store = MEMORY");
 
   const migration = migrate(db);
@@ -231,6 +270,7 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
     journalMode,
     concurrencyDegraded: journalMode !== "wal",
     foreignKeysEnforced,
+    secureDeleteEnabled,
     migration,
   };
 
@@ -325,6 +365,87 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
     db.prepare("DELETE FROM documents WHERE id = ?").run(id);
     return true;
   });
+
+  /**
+   * Did the checkpoint actually run, or did it give up?
+   *
+   * `PRAGMA wal_checkpoint` **reports** a busy log rather than raising: with another connection
+   * attached it returns `{ busy: 1 }` and carries on. Measured against better-sqlite3 13.0.3 with
+   * a second connection holding a read transaction, both checkpoints returned `busy: 1`, `VACUUM`
+   * succeeded anyway, and the deleted text was still in the 24 KB log afterwards. An unchecked
+   * call is therefore a silent no-op exactly when it matters most.
+   */
+  function requireCheckpoint(when: string): void {
+    const rows = db.pragma("wal_checkpoint(TRUNCATE)");
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    const busy = asRow(row, "wal_checkpoint result").busy;
+    if (busy !== 0) {
+      throw new StoreDataError(
+        `The write-ahead log could not be truncated ${when}: the index is in use by another connection.`,
+      );
+    }
+  }
+
+  /**
+   * Make deleted content unrecoverable from the file.
+   *
+   * Checkpointing first folds the write-ahead log into the database and truncates it, because the
+   * deleted text is sitting in that log as well as in the database. `VACUUM` then rewrites the
+   * file without the freed pages, so nothing survives in the slack. The final checkpoint clears
+   * the log that `VACUUM` itself wrote. Both checkpoints are checked, not fired and forgotten.
+   */
+  function reclaimSpace(): void {
+    requireCheckpoint("before compacting");
+    db.exec("VACUUM");
+    requireCheckpoint("after compacting");
+  }
+
+  /**
+   * Run something with this connection as the only one attached to the database.
+   *
+   * Reclaiming space is not merely slower with a second connection attached — it does not happen.
+   * So exclusivity is established **before** anything is deleted: `BEGIN IMMEDIATE` under
+   * `locking_mode = EXCLUSIVE` either succeeds, in which case nothing else can attach until it is
+   * released, or raises `SQLITE_BUSY` having changed nothing at all. That ordering is what makes
+   * the refusal safe: somebody who is told their document could not be forgotten still has it,
+   * and can try again, rather than being left with a withdrawal that half happened and was
+   * reported as done.
+   *
+   * `busy_timeout` still applies, so this waits for a passing writer rather than failing on one.
+   */
+  function withExclusiveAccess<T>(body: () => T): T {
+    db.pragma("locking_mode = EXCLUSIVE");
+
+    // A discriminated outcome rather than a nullable result, so the success value never has to be
+    // asserted back into existence after the release step below.
+    type Outcome = { ok: true; value: T } | { ok: false; error: unknown };
+    let outcome: Outcome;
+    try {
+      // Forces the transition; the lock is not taken until a transaction actually starts.
+      db.exec("BEGIN IMMEDIATE; COMMIT;");
+      outcome = { ok: true, value: body() };
+    } catch (error) {
+      outcome = { ok: false, error };
+    }
+
+    try {
+      db.pragma("locking_mode = NORMAL");
+      // And released: the mode change only takes effect at the next transaction.
+      db.exec("BEGIN IMMEDIATE; COMMIT;");
+    } catch (releaseError) {
+      // Not swallowed. A connection left in exclusive mode locks every other process out of the
+      // index for the rest of its life, which is a worse outcome than the operation failing — so
+      // when nothing else went wrong, this is the failure to report. When something else did, that
+      // one is the more useful of the two and this would only hide it.
+      if (outcome.ok) {
+        const reason = releaseError instanceof Error ? releaseError.message : String(releaseError);
+        throw new StoreDataError(`The index could not be returned to shared access: ${reason}`);
+      }
+    }
+
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
+  }
 
   const wipe = db.transaction(() => {
     db.exec("DELETE FROM chunk_embeddings; DELETE FROM document_chunks; DELETE FROM document_markdown; DELETE FROM documents;");
@@ -481,6 +602,22 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
       return removeDocument.immediate(contentHash);
     },
 
+    forgetDocument(contentHash) {
+      // Exclusivity first, so a refusal leaves the document exactly where it was.
+      return withExclusiveAccess(() => {
+        if (!removeDocument.immediate(contentHash)) return false;
+        reclaimSpace();
+        return true;
+      });
+    },
+
+    getDocumentByPath(filePath) {
+      const row = db
+        .prepare("SELECT * FROM documents WHERE file_path = ? ORDER BY last_opened_at DESC, id DESC LIMIT 1")
+        .get(filePath);
+      return row === undefined ? null : toStoredDocument(row);
+    },
+
     listDocuments(limit = 100) {
       return db
         .prepare("SELECT * FROM documents ORDER BY last_opened_at DESC LIMIT ?")
@@ -501,8 +638,12 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
     },
 
     clear() {
-      wipe.immediate();
-      db.exec("VACUUM");
+      // The same sequence as forgetting one document. Clearing is the other way a person
+      // withdraws consent and it has to reach the same bytes, under the same exclusivity.
+      withExclusiveAccess(() => {
+        wipe.immediate();
+        reclaimSpace();
+      });
     },
 
     close() {

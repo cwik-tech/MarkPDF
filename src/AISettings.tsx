@@ -18,6 +18,7 @@ import type {
   AIProviderInput,
   AIProviderKind,
   AIProviderView,
+  CliInstallStatus,
   DefaultAppFileTypeId,
   DefaultAppStatus,
   LocalAgentInfo,
@@ -34,6 +35,7 @@ import {
   semanticScoreThresholdPresets
 } from "./semanticModels";
 import { semanticProgressToUpdate } from "./semanticProgress";
+import { describeCliInstall } from "./cliInstallCopy";
 
 const providerKindLabels: Record<AIProviderKind, string> = {
   "openai-compatible": "OpenAI Compatible",
@@ -517,12 +519,15 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
           )}
 
           {page === "general" && (
-            <GeneralSettingsPage
-              status={defaultAppStatus}
-              busyFileTypeId={busyDefaultAppFileTypeId}
-              onRefresh={() => void loadDefaultAppStatus()}
-              onSetDefault={(fileTypeIds, busyKey) => void setAsDefaultApp(fileTypeIds, busyKey)}
-            />
+            <>
+              <GeneralSettingsPage
+                status={defaultAppStatus}
+                busyFileTypeId={busyDefaultAppFileTypeId}
+                onRefresh={() => void loadDefaultAppStatus()}
+                onSetDefault={(fileTypeIds, busyKey) => void setAsDefaultApp(fileTypeIds, busyKey)}
+              />
+              <CommandLineSection />
+            </>
           )}
 
           {page === "providers" && (
@@ -724,6 +729,104 @@ function GeneralSettingsPage({
           </button>
         </div>
       )}
+    </section>
+  );
+}
+
+/**
+ * The `markpdf` command, and whether typing it reaches this copy of the application.
+ *
+ * It keeps its own state rather than threading through the settings dialog, because nothing else
+ * on this page depends on it. Every sentence it shows comes from `describeCliInstall`, which is
+ * a pure rule with its own tests — this component only decides where the words go.
+ */
+function CommandLineSection() {
+  const [status, setStatus] = useState<CliInstallStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const refresh = async () => {
+    if (!window.pdfReader?.cliInstall) return;
+    try {
+      setStatus(await window.pdfReader.cliInstall.getStatus());
+      setProblem(null);
+    } catch (error) {
+      // Surfaced rather than swallowed: an unreadable status used to leave `status` null forever,
+      // which rendered nothing at all — a section that silently disappears is worse than one that
+      // says what went wrong.
+      setStatus(null);
+      setProblem(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  useEffect(() => {
+    // Fire and forget: `refresh` records both its outcomes in state, so there is nothing for a
+    // caller to await and no rejection to lose.
+    void refresh();
+  }, []);
+
+  const run = async (kind: "install" | "remove") => {
+    if (!window.pdfReader?.cliInstall) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      const result =
+        kind === "remove"
+          ? await window.pdfReader.cliInstall.uninstall()
+          : await window.pdfReader.cliInstall.install();
+      setStatus(result.status);
+      setProblem(result.ok ? null : result.reason ?? "That did not work.");
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = status === null ? null : describeCliInstall(status);
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-heading">
+        <div>
+          <h3>Command Line</h3>
+          <p>Index, search, outline and convert your documents from a terminal or an agent.</p>
+        </div>
+        {/* Fire and forget: `refresh` puts both its outcomes in state, so nothing is dropped. */}
+        <button className="secondary-button" disabled={busy} onClick={() => void refresh()}>
+          <RefreshCw size={15} />
+          Refresh
+        </button>
+      </div>
+
+      <div className="agent-list">
+        {copy === null ? (
+          <div className="empty-row">Checking...</div>
+        ) : (
+          <div className="agent-row">
+            <div className="agent-main">
+              <span className={`status-dot ${copy.working ? "connected" : ""}`} />
+              <div>
+                <strong>markpdf</strong>
+                <span>{copy.summary}</span>
+              </div>
+            </div>
+            {copy.actionLabel && (
+              <button
+                className={copy.action === "remove" ? "secondary-button" : "primary-button"}
+                disabled={busy}
+                // Fire and forget: `run` handles its own failure and reports it through state.
+                onClick={() => void run(copy.action === "remove" ? "remove" : "install")}
+              >
+                {busy ? "Working..." : copy.actionLabel}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {copy?.instruction && <p className="settings-note">{copy.instruction}</p>}
+      {problem && <p className="settings-note">{problem}</p>}
     </section>
   );
 }

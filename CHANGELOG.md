@@ -4,14 +4,21 @@
 
 ### Added
 
+- A `markpdf` command you can run from a terminal, or hand to an AI agent. It indexes documents, searches one by meaning, shows a document's heading structure, and converts a PDF to Markdown. Results go to standard output — as JSON with `--json` — and progress goes to standard error, so the output can be piped into something that reads it. Install it from Settings › General.
+- The command asks before it reads anything. Nothing on your disk is readable until you grant a folder, either by answering a one-key prompt or by running the command the refusal prints. Granting a folder to read does not grant permission to write into it. You can withdraw a grant at any time, and withdrawing a folder also withdraws everything inside it.
+- Searching a document you have already indexed needs no file permission at all: the answer comes from the index, and the file is never opened. So you can index a library, take the grant away, and still search it.
+- `markpdf convert --pages 3-7` reads only those pages. On a scanned document it recognises only the pages you asked for, so pulling one page out of a long scan does not cost a pass over the whole thing.
+- Scanned pages can now be read outside the app window. Given a PDF that is only images, the command renders each unreadable page and reads the text off it, entirely offline — nothing is downloaded, and nothing is written into whatever folder you happened to run it from. Indexing, outlining and converting all read a document the same way, so a scanned page is not readable through one of them and blank through another.
+- Removing a document from the index now removes its text from the file on disk, not just its rows. The space it occupied is reclaimed and overwritten, so the words cannot be read back out of the database file afterwards. Clearing the whole index does the same. If another window or another process is using the index at that moment the reclaim cannot run, so the removal is refused outright and nothing is deleted — you are told to try again rather than told it worked while the text is still there.
 - Semantic indexing, embedding and search now run in a pure-Node `core/` layer inside the main process, reachable from the renderer through the preload bridge. This is the groundwork for driving MarkPDF from a terminal.
 - The semantic index is a real SQLite database managed with `better-sqlite3` and write-ahead logging, so a second process can read and write the file safely while the app is open. Coordinating two processes indexing the same document is separate work and is not part of this change.
 - Documents are now read by a native PDF extractor that preserves structure, so a table stays a table. A search result can quote a whole table row and tell you which page and which section it came from, instead of returning loose words with no context.
 - Search results carry the heading a passage sits under, including when that heading is on the previous page.
-- The extracted text of each document is now kept alongside the index, page by page. Nothing reads it back yet — indexing still re-reads the document each time — but it is there for the terminal tools that will need it.
+- The extracted text of each document is now kept alongside the index, page by page. `markpdf outline` reads it back, which is why showing the structure of a document you have already indexed needs no file permission; indexing itself still re-reads the document each time.
 
 ### Changed
 
+- Settings › General gained a Command Line section that says what the `markpdf` command on your machine is: not installed, installed and current, out of date, pointing at a different copy of MarkPDF, or shadowed by another program of the same name. If it is installed somewhere your shell does not look, it tells you and gives you the line to add.
 - The index file is upgraded in place on first launch, preserving every document and chunk already stored. Passages are then re-split as each document is opened, because how text is divided has changed. Nothing is lost and no action is needed.
 - Reading a document now happens in the main process rather than in the window, using the native extractor. Embedding, chunking and index writes moved there too, and progress is reported back to the window. Long stretches of that work are still measurable, so this reduces interface stalls rather than eliminating them.
 - Foreign key enforcement is now on, so removing a document genuinely removes its chunks and embeddings rather than leaving them behind.

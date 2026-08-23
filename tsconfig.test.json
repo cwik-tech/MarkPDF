@@ -1,15 +1,19 @@
 {
-  // Type-checks the test sources that no build config covers. `tsconfig.core.json` excludes
-  // them deliberately, because `build:core` emits and test files must never reach `dist-core/`.
-  // This config emits nothing, so it can include them without that risk.
+  // Type-checks the test sources that no build config covers. `tsconfig.core.json` and
+  // `tsconfig.cli.json` exclude them deliberately, because those configs emit and a test file
+  // must never reach `dist-core/` or `dist-cli/`. This config emits nothing, so it can include
+  // them without that risk.
   "extends": "./tsconfig.core.json",
   "compilerOptions": {
     "noEmit": true,
+    // Spans two source roots, so neither can be the root. Nothing is emitted, so nothing
+    // depends on the output layout this would otherwise decide.
+    "rootDir": ".",
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false
   },
-  "include": ["core/**/*.ts"],
+  "include": ["core/**/*.ts", "cli/**/*.ts"],
   "exclude": [
     // Deliberately spans two module-resolution regimes: it compares core's catalogue against
     // the renderer's copy, and the renderer half is written for Vite's bundler resolution. Only

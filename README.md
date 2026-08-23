@@ -83,10 +83,45 @@ and anything else you think we should implement to make it awesome.
 - **pdf-lib** for editing, annotations, forms, and export.
 - **Vite** for bundling, **electron-builder** for packaging.
 - **Embeddings:** generated locally with [Transformers.js](https://github.com/huggingface/transformers.js) running ONNX models in-process. Curated models include **BGE Small EN v1.5** (384-dim), **MiniLM L6 v2** (384-dim), and **BGE Base EN v1.5** (768-dim). Embeddings use mean pooling with L2 normalization.
-- **Vector store:** a local **SQLite** database (via `sql.js` / WebAssembly) persisted to the app's user-data directory. Document text is chunked, embedded, and stored as Float32 vector blobs alongside their source page, with deduplication by content hash so re-opening a document doesn't re-index it.
+- **Vector store:** a local **SQLite** database (via `better-sqlite3`, with write-ahead logging) in the app's user-data directory, written from the main process so the `markpdf` command and the app share one index. Document text is chunked, embedded, and stored as Float32 vector blobs alongside their source page and heading path, with deduplication by content hash so re-opening a document doesn't re-index it.
 - **Retrieval:** queries are embedded with the same model and ranked by **cosine similarity** against the stored chunk vectors, with a configurable score threshold (loose / balanced / strict) to tune precision vs. recall.
 - **Tunable chunking:** precise, balanced, and contextual presets control chunk size and overlap to trade granularity against context.
 - **Text extraction:** native PDF text where available, falling back to **Tesseract.js OCR** for scanned pages so even image-only PDFs become searchable.
+
+## Command Line
+
+MarkPDF ships a `markpdf` command that runs the same index, the same extractor and the same
+embedding model as the application. Install it from **Settings › General › Command Line**.
+
+```
+markpdf index   <path...>  [--recursive] [--force]
+markpdf search  <query>    (--path <pdf> | --id <hash>) [--top-k 12] [--min-score 0.3]
+markpdf outline <path>     [--depth 3]
+markpdf convert <path...>  [--pages 3-7] [--mode page-preserving|clean] [--out file.md]
+```
+
+Add `--json` to any of them for machine-readable output on standard output; progress and
+diagnostics go to standard error, so the two never mix.
+
+**It starts with no permission to read anything.** Grant a folder once and it is remembered:
+
+```
+markpdf --allow-read ~/Papers
+markpdf --allow-write ~/Notes      # separate: reading never implies writing
+markpdf --revoke-read ~/Papers     # and withdrawing a folder withdraws everything inside it
+```
+
+Run it on a terminal and it offers the grant with a single keystroke. Run it from a script and it
+never prompts: it exits 5 and prints the exact command that would grant what it needed. A document
+that is already indexed can still be searched after you withdraw the folder, because that answer
+comes from the index and never opens the file.
+
+Scanned pages are read with OCR, entirely offline — the language data ships with the application.
+
+Exit codes: `0` success, including an empty search result. `1` an unexpected failure, `2` usage,
+`3` not found, `4` not indexed, `5` access denied, `6` could not be read as a PDF, `7` some of a
+batch failed, `8` a bundled dependency is missing, `9` the index is busy, `69` MarkPDF itself
+could not be found or run, `130` interrupted.
 
 ## Development
 

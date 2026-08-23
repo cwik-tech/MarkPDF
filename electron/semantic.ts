@@ -263,8 +263,14 @@ export async function clearSemanticDatabase(): Promise<SemanticDatabaseInfo> {
   return getSemanticDatabaseInfo();
 }
 
+/**
+ * Remove a document at the reader's request, and mean it.
+ *
+ * `forgetDocument`, not `deleteDocument`: this is the user-facing surface, so it has to reclaim
+ * the space rather than leave the text recoverable from the file until something else happens to.
+ */
 export function deleteSemanticDocument(contentHash: unknown): boolean {
-  return getSemanticStore().deleteDocument(parseContentHash(contentHash));
+  return getSemanticStore().forgetDocument(parseContentHash(contentHash));
 }
 
 export function getSemanticDocument(contentHash: unknown) {

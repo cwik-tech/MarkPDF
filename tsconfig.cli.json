@@ -1,0 +1,27 @@
+{
+  // The command line surface. `rootDir: "cli"` keeps it a sibling of `core/`, never a parent of
+  // it, which is what forces the import rule: `cli/` reaches core through `dist-core/` and its
+  // emitted specifiers resolve the same way inside `app.asar`.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "rootDir": "cli",
+    "outDir": "dist-cli",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "skipLibCheck": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["cli/**/*.ts"],
+  "exclude": ["cli/**/*.test.ts", "cli/**/*.test-support.ts"]
+}

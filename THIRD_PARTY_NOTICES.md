@@ -12,6 +12,7 @@ publishing installers.
 | @firecrawl/pdf-inspector | 1.17.0 | MIT | https://github.com/firecrawl/pdf-inspector |
 | @huggingface/transformers | ^4.2.0 | Apache-2.0 | https://github.com/huggingface/transformers.js |
 | @napi-rs/canvas | ^0.1.100 | MIT | https://github.com/Brooooooklyn/canvas |
+| @tesseract.js-data/eng | 1.0.0 | MIT (package); Apache-2.0 (the traineddata itself) | https://github.com/naptha/tessdata |
 | @vitejs/plugin-react | ^5.1.1 | MIT | https://github.com/vitejs/vite-plugin-react |
 | better-sqlite3 | 13.0.3 | MIT | https://github.com/WiseLibs/better-sqlite3 |
 | electron-store | ^11.0.2 | MIT | https://github.com/sindresorhus/electron-store |
@@ -51,12 +52,19 @@ These ship inside the application, not only as build-time dependencies.
 | `assets/tokenizers/d241a60d….tokenizer.json` | `Xenova/bge-small-en-v1.5` and `Xenova/bge-base-en-v1.5` (byte-identical) | `ea104dacec62c0de699686887e3f920caeb4f3e3`, `4d6cd88e18e51a5e020c2c305726d76ada9c03cf` | MIT |
 | `assets/tokenizers/da0e7993….tokenizer.json` | `Xenova/all-MiniLM-L6-v2` | `751bff37182d3f1213fa05d7196b954e230abad9` | Apache-2.0 |
 | `assets/tokenizers/9261e7d7….tokenizer_config.json` | `Xenova/bge-small-en-v1.5` (byte-identical across all three) | `ea104dacec62c0de699686887e3f920caeb4f3e3` | MIT |
+| `node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz` | Tesseract OCR English language data, redistributed by the tesseract.js project | `@tesseract.js-data/eng@1.0.0` | Apache-2.0 |
 
 Bundled so that measuring a passage's length needs no network. Each file is
 named by the SHA-256 of its own contents and verified against that hash at load
 time. `bge-small-en-v1.5` and `bge-base-en-v1.5` are MIT; `all-MiniLM-L6-v2` is
 Apache-2.0. Embedding model *weights* are not bundled — they are downloaded on
 first use and cached under the application data directory.
+
+The English OCR language data is bundled so that reading a scanned page from the
+command line needs no network. Only the `4.0.0_best_int` variant is packaged —
+2.8 MB, and the only one the LSTM-only engine uses; the 10 MB `4.0.0` variant is
+excluded. The traineddata files themselves are Apache-2.0 from the Tesseract OCR
+project; the npm package that redistributes them is MIT.
 
 Platform binaries: `@firecrawl/pdf-inspector` and `better-sqlite3` ship
 prebuilt native modules. Only the `darwin-arm64` builds are packaged; the
@@ -66,7 +74,9 @@ release excludes every other platform's binary.
 
 - Electron release artifacts may include additional notices from bundled
   Chromium, Node.js, and Electron components.
-- PDF.js assets, Tesseract OCR assets, model files, and wasm artifacts should
-  be reviewed when included in a packaged release.
+- PDF.js assets, `tesseract.js-core` wasm artifacts, and downloaded embedding
+  model weights should be reviewed when included in a packaged release. The
+  Tesseract English language data is now bundled deliberately and is listed
+  above.
 - This file is informational and does not replace any third-party license text
   that must be distributed with binary releases.

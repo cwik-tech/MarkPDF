@@ -187,6 +187,45 @@ export interface DefaultAppStatus {
   fileTypes: DefaultAppFileTypeStatus[];
 }
 
+/**
+ * What the `markpdf` command on this machine is.
+ *
+ * Mirrored from `electron/cliInstall.ts` the way every other IPC contract in this file is: the
+ * renderer never imports from `core/` or `dist-core/`, so the shape crosses as a declaration.
+ * `core/modelParity.test.ts` is the precedent for keeping a mirrored declaration honest.
+ */
+export type ShimDifference = "version" | "electronPath" | "entryPoint" | "dataDir";
+
+export type CliInstallState =
+  | { state: "not-installed"; path: string }
+  | { state: "current"; path: string }
+  | { state: "stale"; path: string; installedVersion: string; differences: ShimDifference[] }
+  | { state: "points-elsewhere"; path: string; installedAppPath: string }
+  | { state: "foreign"; path: string }
+  | { state: "shadowed"; path: string; shadowedBy: string }
+  | { state: "not-on-path"; path: string }
+  | { state: "not-executable"; path: string }
+  | { state: "path-unknown"; path: string };
+
+export interface CliInstallStatus {
+  supported: boolean;
+  reason?: string;
+  command: string;
+  installDirectory: string;
+  installPath: string;
+  version: string;
+  state: CliInstallState;
+  pathHint: string;
+  /** True when the directory is one the shell looks in without the person changing anything. */
+  onDefaultPath: boolean;
+}
+
+export interface CliInstallResult {
+  ok: boolean;
+  reason?: string;
+  status: CliInstallStatus;
+}
+
 declare global {
   interface Window {
     pdfReader?: {
@@ -229,6 +268,11 @@ declare global {
       removeRecentFile: (filePath: string) => Promise<string[]>;
       clearRecentFiles: () => Promise<string[]>;
       readyForOpenFiles: () => Promise<void>;
+      cliInstall: {
+        getStatus: () => Promise<CliInstallStatus>;
+        install: () => Promise<CliInstallResult>;
+        uninstall: () => Promise<CliInstallResult>;
+      };
       defaultApp: {
         getStatus: () => Promise<DefaultAppStatus>;
         setAsDefault: (

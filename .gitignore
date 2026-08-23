@@ -17,3 +17,4 @@ workspace-smoke.png
 dist-core/
 test-results/
 playwright-report/
+dist-cli/

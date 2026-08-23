@@ -14,9 +14,14 @@ MarkPDF is one npm package with three runtime boundaries:
 - `electron/preload.ts` is the renderer's only bridge to privileged Electron
   capabilities. Its public TypeScript contract is mirrored in `src/global.d.ts`.
 - `core/` is pure Node.js. It has no imports from `electron`, no DOM types, and runs
-  under plain `node`. It owns chunking, embeddings, the SQLite semantic index, and
-  search. It is compiled by `tsconfig.core.json` to `dist-core/`, and `electron/` is
-  its only caller today — through `dist-core/`, never through `core/` sources.
+  under plain `node`. It owns chunking, embeddings, the SQLite semantic index,
+  search, document reading, OCR, and the consent model. It is compiled by
+  `tsconfig.core.json` to `dist-core/`, and `electron/` and `cli/` are its callers —
+  through `dist-core/`, never through `core/` sources.
+- `cli/` is the `markpdf` command. It parses arguments, calls core, and formats
+  output; it holds no document logic. It is compiled by `tsconfig.cli.json` to
+  `dist-cli/`, imports core through `dist-core/`, and runs on the Electron binary
+  under `ELECTRON_RUN_AS_NODE=1`.
 - `src/` is the React renderer. `src/App.tsx` coordinates the document UI;
   reusable document, conversion, Markdown, and OCR logic lives in focused modules
   under `src/`.
@@ -30,11 +35,13 @@ changes, update the handler in `electron/main.ts`, the bridge in
 IPC arguments, files, provider responses, subprocess output, persisted values,
 and model output as external input and validate them at the receiving boundary.
 
-The compiled directories `dist/`, `dist-electron/`, and `dist-core/` are build
-output. Never edit them by hand. `dist-core/` must be built before `electron/`
-typechecks or runs; `npm run build:core` and the `pretest` hook do this.
+The compiled directories `dist/`, `dist-electron/`, `dist-core/`, and `dist-cli/`
+are build output. Never edit them by hand. `dist-core/` must be built before
+`electron/` or `cli/` typechecks or runs; `npm run build:core`, `npm run build:cli`
+and the `pretest` hook do this.
 
-`core/` is a directory inside this single npm package, not a separate npm package.
+`core/` and `cli/` are directories inside this single npm package, not separate npm
+packages.
 This repository has no npm workspaces, no separate backend, no UI package, no
 file-parser package, no skill system, and no architecture-check command.
 
@@ -128,7 +135,8 @@ of widening the first test indefinitely.
 | Change | Test location |
 |--------|---------------|
 | Pure renderer, document, conversion, or parsing logic | Co-located `src/**/*.test.ts` using Vitest |
-| Pure Node core logic: store, chunking, embeddings, search | Co-located `core/**/*.test.ts` using Vitest |
+| Pure Node core logic: store, chunking, embeddings, search, reading, OCR, consent | Co-located `core/**/*.test.ts` using Vitest |
+| Command line argument handling, exit codes, and output shape | Co-located `cli/**/*.test.ts` using Vitest |
 | React behavior that can be expressed through an extracted pure rule | Co-located `src/**/*.test.ts` using Vitest |
 | Electron lifecycle, preload/IPC, filesystem, window, or complete UI behavior | `tests/e2e/*.spec.ts` using Playwright's Electron support |
 | Real external provider or managed tool | An explicit opt-in test or manual check that is excluded from the default suite. The embedding model is covered by `npm run test:live`; the default suite substitutes a deterministic embedder and the reason is documented in `core/index/embeddings.live.test.ts` |
@@ -255,6 +263,7 @@ above and still requires inspection of the rendered Electron UI when practical.
 | All co-located Vitest tests | `npm test` |
 | Renderer TypeScript | `npm run typecheck` |
 | Core TypeScript | `npm run typecheck:core` |
+| Command line TypeScript | `npm run typecheck:cli` |
 | Test-source TypeScript | `npm run typecheck:tests` |
 | Electron main and preload TypeScript | `npx tsc -p tsconfig.electron.json --noEmit` |
 | Renderer and Electron build | `npm run build` |

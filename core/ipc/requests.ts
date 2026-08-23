@@ -1,5 +1,5 @@
 import { curatedEmbeddingModels, type SemanticChunkingProfile } from "../models.js";
-import type { OcrPageCandidate } from "../index/indexPdfDocument.js";
+import type { OcrPageCandidate } from "../extract/readDocumentPages.js";
 
 /**
  * Validation for everything arriving from the renderer.

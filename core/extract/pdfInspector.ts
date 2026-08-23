@@ -9,8 +9,8 @@ import { classifyPdfAsync, extractPagesMarkdownAsync } from "@firecrawl/pdf-insp
  * result at all — it produces a citation that looks right and is not.
  */
 export class PdfInspectorError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "PdfInspectorError";
   }
 }
@@ -334,6 +334,25 @@ export interface ExtractOptions {
 export type ExtractionResult = { status: "extracted"; document: ExtractedDocument } | { status: "cancelled" };
 
 /**
+ * Run one engine call, and give whatever it raises this adapter's own type.
+ *
+ * The native binding reports a document it cannot read as a plain `Error` carrying
+ * `code: "GenericFailure"` — verified against the installed 1.17.0 binding, which answers
+ * `classify_pdf: Not a PDF: file appears to be plain text` for a text file. A caller cannot tell
+ * that apart from any other `Error` without matching on prose, so the type is applied here,
+ * where the call actually is. The original is kept as `cause`, because a native module that
+ * failed to load raises through the same call and is a different problem entirely.
+ */
+async function inspect<T>(call: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new PdfInspectorError(`${call} failed: ${reason}`, { cause: error });
+  }
+}
+
+/**
  * Extract every page of a document.
  *
  * Full-document only, deliberately. `extractPagesMarkdown` accepts a **0-based** `pages` array —
@@ -361,10 +380,10 @@ export async function extractPagesFromPdf(bytes: Uint8Array, options: ExtractOpt
   const buffer = Buffer.from(bytes);
 
   if (cancelled()) return { status: "cancelled" };
-  const rawClassification = await engine.classify(buffer);
+  const rawClassification = await inspect("classify", () => engine.classify(buffer));
 
   if (cancelled()) return { status: "cancelled" };
-  const rawExtraction = await engine.extractPages(buffer);
+  const rawExtraction = await inspect("extractPages", () => engine.extractPages(buffer));
 
   if (cancelled()) return { status: "cancelled" };
   return { status: "extracted", document: toExtractedDocumentFromEngine(rawClassification, rawExtraction) };

@@ -42,6 +42,17 @@ export function semanticIndexPath(dataDir: string): string {
   return join(dataDir, "semantic-search", "semantic-index.sqlite");
 }
 
+/**
+ * The consent record: which directories may be read, and which written.
+ *
+ * Beside the index rather than inside it, so that withdrawing consent by deleting the index does
+ * not also silently withdraw the grants that made it possible — and so that a corrupt database
+ * cannot take the record of what someone permitted down with it.
+ */
+export function allowlistPath(dataDir: string): string {
+  return join(dataDir, "consent", "allowlist.json");
+}
+
 /** Transformers.js `env.cacheDir`. One download serves both the app and the CLI. */
 export function modelCacheDir(dataDir: string): string {
   return join(dataDir, "models");

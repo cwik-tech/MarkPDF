@@ -36,6 +36,11 @@ contextBridge.exposeInMainWorld("pdfReader", {
   clearRecentFiles: () => ipcRenderer.invoke("recent:clear"),
   readyForOpenFiles: () =>
     ipcRenderer.invoke("app:renderer-ready-for-open-files"),
+  cliInstall: {
+    getStatus: () => ipcRenderer.invoke("cli-install:status"),
+    install: () => ipcRenderer.invoke("cli-install:install"),
+    uninstall: () => ipcRenderer.invoke("cli-install:uninstall"),
+  },
   defaultApp: {
     getStatus: () => ipcRenderer.invoke("default-app:status"),
     setAsDefault: (fileTypeIds: string[]) =>

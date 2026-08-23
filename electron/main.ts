@@ -49,6 +49,7 @@ import {
   setAsDefaultApp,
   type DefaultAppFileTypeId,
 } from "./defaultApp.js";
+import { getCliInstallStatus, installCli, uninstallCli } from "./cliInstall.js";
 import {
   convertPdfWithDocling,
   defaultMarkdownExportSettings,
@@ -569,6 +570,12 @@ ipcMain.handle("window:close-after-confirm", async (event) => {
   confirmedCloseWindows.add(window);
   window.close();
 });
+
+ipcMain.handle("cli-install:status", async () => getCliInstallStatus());
+
+ipcMain.handle("cli-install:install", async () => installCli());
+
+ipcMain.handle("cli-install:uninstall", async () => uninstallCli());
 
 ipcMain.handle("default-app:status", async () => getDefaultAppStatus());
 

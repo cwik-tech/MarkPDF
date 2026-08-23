@@ -13,31 +13,35 @@
   "main": "dist-electron/bootstrap.js",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && npm run electron:dev\"",
-    "electron:dev": "npm run build:core && tsc -p tsconfig.electron.json && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
-    "build": "npm run typecheck && npm run typecheck:core && npm run typecheck:tests && npm run build:core && tsc -p tsconfig.electron.json && vite build",
+    "electron:dev": "npm run build:core && npm run build:cli && tsc -p tsconfig.electron.json && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "build": "npm run typecheck && npm run typecheck:core && npm run typecheck:cli && npm run typecheck:tests && npm run build:core && npm run build:cli && tsc -p tsconfig.electron.json && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --maxWorkers=2",
-    "test:e2e": "npm run build:core && tsc -p tsconfig.electron.json && playwright test",
+    "test:e2e": "npm run build:core && npm run build:cli && tsc -p tsconfig.electron.json && playwright test",
     "package": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac --arm64",
     "dist:mac:arm64": "npm run build && electron-builder --mac --arm64",
     "release:mac:arm64": "npm run build && electron-builder --mac --arm64 --publish always",
     "build:core": "tsc -p tsconfig.core.json",
+    "build:cli": "tsc -p tsconfig.cli.json",
     "typecheck:core": "tsc -p tsconfig.core.json --noEmit",
+    "typecheck:cli": "tsc -p tsconfig.cli.json --noEmit",
     "typecheck:tests": "tsc -p tsconfig.test.json --noEmit",
-    "pretest": "npm run build:core",
+    "pretest": "npm run build:core && npm run build:cli",
     "test:live": "vitest run --config vitest.live.config.ts",
     "pretypecheck:core": "npm run build:core",
-    "pretypecheck:tests": "npm run build:core",
-    "pretest:e2e": "npm run build:core"
+    "pretypecheck:cli": "npm run build:core",
+    "pretypecheck:tests": "npm run build:core && npm run build:cli",
+    "pretest:e2e": "npm run build:core && npm run build:cli"
   },
   "dependencies": {
     "@firecrawl/pdf-inspector": "1.17.0",
     "@huggingface/transformers": "^4.2.0",
     "@napi-rs/canvas": "^0.1.100",
+    "@tesseract.js-data/eng": "1.0.0",
     "@vitejs/plugin-react": "^5.1.1",
     "better-sqlite3": "13.0.3",
     "electron-store": "^11.0.2",
@@ -75,6 +79,7 @@
       "dist/**/*",
       "dist-electron/**/*",
       "dist-core/**/*",
+      "dist-cli/**/*",
       "assets/tokenizers/**",
       "build/icon.png",
       "package.json",
@@ -85,7 +90,8 @@
       "!node_modules/better-sqlite3/prebuilds/linuxmusl-*.node",
       "!node_modules/better-sqlite3/prebuilds/win32-*.node",
       "!node_modules/better-sqlite3/deps/**/*",
-      "!node_modules/better-sqlite3/src/**/*"
+      "!node_modules/better-sqlite3/src/**/*",
+      "!node_modules/@tesseract.js-data/eng/4.0.0/**"
     ],
     "directories": {
       "buildResources": "build"
@@ -185,7 +191,10 @@
     "asarUnpack": [
       "**/*.node",
       "node_modules/onnxruntime-node/bin/**",
-      "node_modules/@img/**"
+      "node_modules/@img/**",
+      "node_modules/tesseract.js/src/worker-script/**",
+      "node_modules/tesseract.js-core/**",
+      "node_modules/@tesseract.js-data/eng/**"
     ]
   }
 }
