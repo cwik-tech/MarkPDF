@@ -56,20 +56,26 @@ export const PAGE_TURN_FRAMES_PER_SECOND = 20;
 export const PAGE_TURN_SETTLE_RATE = 2;
 
 /** Share of the loop spent fading the page off its old and onto its new stack. */
-const SETTLE_FADE = 0.12;
+const SETTLE_FADE = 0.08;
+/**
+ * How slowly the page's shading gives out as it flattens. The tilt itself falls
+ * away steeply near the end of the turn, which would leave the page white on
+ * white — and reading as though it had stopped short — well before it lands.
+ */
+const SHADE_FALLOFF = 0.45;
 /** Extra darkening towards the page's free edge while it is lifted. */
 const EDGE_SHADE = 0.18;
 /** A darker band along the free edge, so the page keeps an outline over the stack it lands on. */
 const FREE_EDGE_LINE = 0.34;
 const FREE_EDGE_LINE_START = 0.86;
 /**
- * Where the cover shows through once the page has lifted off it, and when the
- * page underneath rises to take its place. The gap opens as the page peels away
- * and closes again while the page is settling on the left, which is what lets a
- * one-way movement loop back to the icon it started from.
+ * Where the cover shows through once the page has lifted off it, and how the
+ * page underneath comes up to take its place. The gap opens as the page peels
+ * away, then lightens back to paper over the rest of the loop, which is what
+ * lets a one-way movement return to the icon it started from.
  */
-const COVER_RESTORE_START = 0.62;
-const COVER_RESTORE_END = 1;
+const NEXT_PAGE_RISE_START = 0.35;
+const NEXT_PAGE_RISE_END = 1;
 /** Width in pixels over which the lifted edge hands the cover its colour. */
 const LIFTED_EDGE_SOFTNESS = 0.75;
 /** Fraction of the tile over which the page's bottom bound fades out. */
@@ -260,6 +266,16 @@ function buildCoverColumn(
   return cover;
 }
 
+/**
+ * Mixes two channel values in linear light. Mixing cover red and paper white
+ * straight in sRGB drags the midpoint through a dusty pink; in linear light the
+ * page brightens as paper coming into view instead.
+ */
+function blendTowards(from: number, to: number, amount: number): number {
+  const mixed = (from * from) * (1 - amount) + (to * to) * amount;
+  return Math.sqrt(mixed);
+}
+
 export interface PageTurnRenderer {
   readonly frameCount: number;
   readonly size: number;
@@ -323,13 +339,12 @@ export function createPageTurnRenderer(
     const lift = arch * Math.sin(turn);
     const swept = pageWidth * Math.cos(turn);
 
-    // The cover shows through from the page's lifted edge outwards. The gap
-    // closes again from the spine out, as the page underneath settles flat into
-    // the space the turning page left.
-    const settled =
-      pageWidth * smoothstep(COVER_RESTORE_START, COVER_RESTORE_END, position);
-    const liftedEdge = spine + Math.max(swept, settled);
-    if (liftedEdge < spine + pageWidth) {
+    // The cover shows through from the page's lifted edge outwards, then pales
+    // back to paper as the next page comes up into the space that was left.
+    const bare =
+      1 - smoothstep(NEXT_PAGE_RISE_START, NEXT_PAGE_RISE_END, position);
+    const liftedEdge = spine + Math.max(swept, 0);
+    if (bare > 0 && liftedEdge < spine + pageWidth) {
       for (let y = bandTop; y <= bandBottom; y += 1) {
         const coverRed = cover[y * 3] ?? 0;
         const coverGreen = cover[y * 3 + 1] ?? 0;
@@ -340,15 +355,20 @@ export function createPageTurnRenderer(
             liftedEdge + LIFTED_EDGE_SOFTNESS,
             x + 0.5,
           );
-          const amount = (mask[y * size + x] ?? 0) * lifted;
+          const amount = (mask[y * size + x] ?? 0) * lifted * bare;
           if (amount <= 0) continue;
           const target = (y * size + x) * 4;
-          output[target] =
-            (output[target] ?? 0) * (1 - amount) + coverRed * amount;
-          output[target + 1] =
-            (output[target + 1] ?? 0) * (1 - amount) + coverGreen * amount;
-          output[target + 2] =
-            (output[target + 2] ?? 0) * (1 - amount) + coverBlue * amount;
+          output[target] = blendTowards(output[target] ?? 0, coverRed, amount);
+          output[target + 1] = blendTowards(
+            output[target + 1] ?? 0,
+            coverGreen,
+            amount,
+          );
+          output[target + 2] = blendTowards(
+            output[target + 2] ?? 0,
+            coverBlue,
+            amount,
+          );
         }
       }
     }
@@ -394,7 +414,7 @@ export function createPageTurnRenderer(
         const alpha = (coverage / samples) * presence;
         if (alpha <= 0) continue;
 
-        const tilt = 1 - flatness;
+        const tilt = Math.pow(1 - flatness, SHADE_FALLOFF);
         const shade =
           (1 - shadeDepth * tilt) *
           (1 - EDGE_SHADE * tilt * across) *
