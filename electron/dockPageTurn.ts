@@ -69,6 +69,20 @@ const EDGE_SHADE = 0.18;
 const FREE_EDGE_LINE = 0.34;
 const FREE_EDGE_LINE_START = 0.86;
 /**
+ * Once the page passes the spine it is lit from above rather than seen against
+ * the cover, so it stays close to paper white and reads against the shadow it
+ * casts instead of against the page underneath. The two halves of the turn can
+ * be lit differently without a seam because the page has no width at all at the
+ * moment it crosses.
+ */
+const BACK_SHADE = 0.14;
+/** The shadow the page throws on the stack it is coming down onto. */
+const LANDING_SHADOW = 0.5;
+/** How far that shadow reaches past the page's edge, as a fraction of the tile. */
+const SHADOW_REACH = 0.09;
+/** What is left of the shadow at the end of its reach. */
+const SHADOW_AMBIENT = 0.22;
+/**
  * Where the cover shows through once the page has lifted off it, and how the
  * page underneath comes up to take its place. The gap opens as the page peels
  * away, then lightens back to paper over the rest of the loop, which is what
@@ -336,6 +350,7 @@ export function createPageTurnRenderer(
     // edge at the spine halfway through and arrives flat on the left.
     const turn = Math.PI * position;
     const flatness = Math.abs(Math.cos(turn));
+    const tilt = Math.pow(1 - flatness, SHADE_FALLOFF);
     const lift = arch * Math.sin(turn);
     const swept = pageWidth * Math.cos(turn);
 
@@ -382,6 +397,36 @@ export function createPageTurnRenderer(
     if (presence <= 0) return output;
     if (Math.abs(swept) < MINIMUM_PAGE_PIXELS) return output;
 
+    // Past the spine the page comes down onto the left-hand stack, and the
+    // shadow it throws ahead of its edge is what separates the two. It builds as
+    // the page swings over and is gone by the time the page lies flat on it.
+    const landing = LANDING_SHADOW * Math.sqrt(Math.max(0, -Math.cos(turn)));
+    if (landing > 0 && swept < 0) {
+      const freeEdge = spine + swept;
+      const reach = SHADOW_REACH * size;
+      const from = Math.max(0, Math.floor(freeEdge - reach));
+      const to = Math.min(size - 1, Math.ceil(freeEdge));
+      for (let y = bandTop; y <= bandBottom; y += 1) {
+        for (let x = from; x <= to; x += 1) {
+          const distance = freeEdge - (x + 0.5);
+          if (distance < 0) continue;
+          // The page silhouette mirrors about the spine, so the stack it lands
+          // on is the same mask read from the other side.
+          const beneath = mask[y * size + (size - 1 - x)] ?? 0;
+          if (beneath <= 0) continue;
+          const falloff =
+            SHADOW_AMBIENT +
+            (1 - SHADOW_AMBIENT) * (1 - smoothstep(0, reach, distance));
+          const amount = landing * tilt * falloff * beneath;
+          if (amount <= 0) continue;
+          const target = (y * size + x) * 4;
+          output[target] = blendTowards(output[target] ?? 0, 0, amount);
+          output[target + 1] = blendTowards(output[target + 1] ?? 0, 0, amount);
+          output[target + 2] = blendTowards(output[target + 2] ?? 0, 0, amount);
+        }
+      }
+    }
+
     const samples = Math.min(
       MAXIMUM_SAMPLES,
       Math.max(1, Math.ceil(1 / Math.max(flatness, 1e-6))),
@@ -414,9 +459,8 @@ export function createPageTurnRenderer(
         const alpha = (coverage / samples) * presence;
         if (alpha <= 0) continue;
 
-        const tilt = Math.pow(1 - flatness, SHADE_FALLOFF);
         const shade =
-          (1 - shadeDepth * tilt) *
+          (1 - (swept < 0 ? BACK_SHADE : shadeDepth) * tilt) *
           (1 - EDGE_SHADE * tilt * across) *
           (1 -
             FREE_EDGE_LINE * tilt * smoothstep(FREE_EDGE_LINE_START, 1, across));

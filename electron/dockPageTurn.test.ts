@@ -115,6 +115,22 @@ describe("createPageTurnRenderer", () => {
     expect(landed[offset]).toBeGreaterThan(240);
   });
 
+  it("casts a shadow ahead of the page as it comes down on the left", () => {
+    const row = Math.round(size * 0.45);
+    // On the left page, just beyond the edge of the arriving page.
+    const column = Math.round(size * 0.33);
+    const offset = (row * size + column) * 4;
+    expect(source[offset]).toBe(255);
+
+    const landing = renderer.renderFrame(Math.round(renderer.frameCount * 0.7));
+    expect(landing[offset]).toBeLessThan(240);
+    expect(landing[offset]).toBeGreaterThan(150);
+
+    // The shadow is gone once the page is lying on the stack.
+    const settled = renderer.renderFrame(renderer.frameCount - 1);
+    expect(settled[offset]).toBeGreaterThan(250);
+  });
+
   it("reveals the cover behind the page as it lifts away", () => {
     const row = Math.round(size * 0.45);
     // Near the right page's outer edge, which the page clears early in its turn.
