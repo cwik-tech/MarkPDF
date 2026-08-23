@@ -3,6 +3,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } fr
 import { boundText, renderReply, type OutputBudget } from "../dist-core/output/budget.js";
 import { safeForTerminal } from "../dist-core/text/safeForTerminal.js";
 import { parseToolArguments, type ArgumentValue } from "./arguments.js";
+import { runListOpenDocuments, runReadOpenDocument } from "./openDocumentOperations.js";
 import { runOutline, runReadPages, runSearch, runToMarkdown, type ToolContext, type ToolOutcome } from "./operations.js";
 import { TOOLS } from "./toolSchemas.js";
 
@@ -26,6 +27,8 @@ const RUNNERS: Record<string, Runner> = {
   search: runSearch,
   read_pages: runReadPages,
   to_markdown: runToMarkdown,
+  list_open_documents: runListOpenDocuments,
+  read_open_document: runReadOpenDocument,
 };
 
 /** What a call that was given up on is told, whether it had started or was still waiting. */
@@ -119,7 +122,7 @@ export interface ServerIdentity {
 }
 
 /**
- * The MarkPDF MCP server: four tools, no resources, no prompts.
+ * The MarkPDF MCP server: six tools, no resources, no prompts.
  *
  * Built on the SDK's low-level `Server` rather than `McpServer` for one reason that matters: the
  * higher-level class takes Zod schemas, and these tools' schemas are generated from the command

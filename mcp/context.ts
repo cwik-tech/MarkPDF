@@ -7,6 +7,7 @@ import { createTransformersEmbedder, type Embedder } from "../dist-core/index/em
 import { getCuratedEmbeddingModel } from "../dist-core/models.js";
 import { ocrPages } from "../dist-core/ocr/ocrPages.js";
 import { DEFAULT_CONTENT_BUDGET, DEFAULT_REPLY_BUDGET } from "../dist-core/output/budget.js";
+import { readOpenDocuments } from "../dist-core/session/openDocuments.js";
 import { readSemanticSettings } from "../dist-core/settings/appSettings.js";
 import { openSemanticStore, type SemanticStore } from "../dist-core/store/index.js";
 import type { ToolContext } from "./operations.js";
@@ -62,6 +63,9 @@ export function createToolContext(input: ContextInput): { context: ToolContext; 
       return embedder;
     },
     allowlist: () => readAllowlist(input.dataDir),
+    // Per call, like the consent record above and for the same reason: a client session lasts
+    // hours, and which document somebody is looking at changes by the minute.
+    openDocuments: () => readOpenDocuments(input.dataDir),
     settings: readSemanticSettings(input.dataDir),
     readFile: async (path) => new Uint8Array(await readFile(path)),
     writeFile: async (path, text) => await writeFile(path, text, "utf8"),

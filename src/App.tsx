@@ -91,6 +91,7 @@ import {
 } from "./components/resizable";
 import type { MarkdownExportSettings, SemanticSearchSettings } from "./global";
 import { semanticProgressToUpdate } from "./semanticProgress";
+import { projectOpenDocuments } from "./openDocuments";
 import { buildIndexSource, buildOcrCandidates } from "./semanticSource";
 import {
   curatedEmbeddingModels,
@@ -487,6 +488,7 @@ export default function App() {
   const tabsRef = useRef<DocumentTab[]>([]);
   const semanticSettingsRef = useRef(semanticSettings);
   const semanticModelDownloadStartedRef = useRef(false);
+  const publishedOpenDocumentsRef = useRef<string | null>(null);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? null,
@@ -1348,6 +1350,32 @@ export default function App() {
     // cleared on unmount and whenever semantic settings change or the index is
     // reset.
   }, [semanticSettings, startSemanticIndex, tabs]);
+
+  // Tell the rest of the machine which documents this window has open, so that an assistant can
+  // act on "the PDF I have open" without being told where it lives. Only when the report actually
+  // changes: `tabs` is rewritten on every page turn, OCR tick and overlay edit, and the report is
+  // deliberately narrow enough that almost none of those alter it. The delay coalesces the burst
+  // that opening several files at once produces.
+  useEffect(() => {
+    const bridge = window.pdfReader?.openDocuments;
+    if (!bridge) return undefined;
+
+    const report = projectOpenDocuments(tabs, activeTabId);
+    const serialized = JSON.stringify(report);
+    if (serialized === publishedOpenDocumentsRef.current) return undefined;
+
+    const timer = window.setTimeout(() => {
+      publishedOpenDocumentsRef.current = serialized;
+      void bridge.publish(report).catch((error: unknown) => {
+        // Recorded and not surfaced: a window that cannot publish is still a window somebody is
+        // reading in, and the cost is only that agents cannot see what is open.
+        publishedOpenDocumentsRef.current = null;
+        console.warn("Could not report the open documents", error);
+      });
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [activeTabId, tabs]);
 
   useEffect(() => {
     if (!window.pdfReader) return undefined;

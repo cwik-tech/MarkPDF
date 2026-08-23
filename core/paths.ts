@@ -53,6 +53,21 @@ export function allowlistPath(dataDir: string): string {
   return join(dataDir, "consent", "allowlist.json");
 }
 
+/**
+ * Where each open window records the documents it is showing.
+ *
+ * A directory rather than a file, because every window writes its own and nothing arbitrates
+ * between them: one writer per file means there is no lost update to prevent and no lock to take.
+ *
+ * Beside the index and the consent record rather than inside either. This is the most volatile
+ * state the application shares — it changes when somebody clicks a tab — and neither the durable
+ * index nor the record of what a person has permitted should be rewritten at that rate, or be
+ * emptied when this is.
+ */
+export function openDocumentsDir(dataDir: string): string {
+  return join(dataDir, "session", "open-documents");
+}
+
 /** Transformers.js `env.cacheDir`. One download serves both the app and the CLI. */
 export function modelCacheDir(dataDir: string): string {
   return join(dataDir, "models");

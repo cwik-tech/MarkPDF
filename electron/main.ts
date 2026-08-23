@@ -51,6 +51,12 @@ import {
 } from "./defaultApp.js";
 import { getCliInstallStatus, installCli, uninstallCli } from "./cliInstall.js";
 import {
+  forgetAllOpenDocuments,
+  noteWindowFocused,
+  publishOpenDocuments,
+  registerOpenDocumentWindow,
+} from "./openDocuments.js";
+import {
   convertPdfWithDocling,
   defaultMarkdownExportSettings,
   getMarkdownEngineAvailability,
@@ -284,6 +290,11 @@ const createWindow = async (filePaths: string[] = []) => {
     },
   });
 
+  // Before anything loads, so that this window counts as the one in front from the moment it is
+  // made — MarkPDF shows and focuses every window it opens — and so its first `did-start-loading`
+  // records it as present and holding nothing yet.
+  registerOpenDocumentWindow(window);
+
   window.on("close", (event) => {
     if (confirmedCloseWindows.has(window)) {
       confirmedCloseWindows.delete(window);
@@ -374,6 +385,12 @@ if (!isTestRun) {
   });
 }
 
+// One listener for every window. A window cannot know whether it is the one in front, so the
+// answer to "which document is open" is decided here rather than by any renderer.
+app.on("browser-window-focus", (_event, window) => {
+  noteWindowFocused(window);
+});
+
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
   setDockIcon();
@@ -392,6 +409,8 @@ app.whenReady().then(async () => {
 // outlive us and a later open cannot resurrect uncommitted state.
 app.on("will-quit", () => {
   closeSemanticStore();
+  // So that anything a reader finds from this process afterwards is the residue of a crash.
+  forgetAllOpenDocuments();
 });
 
 app.on("window-all-closed", () => {
@@ -551,6 +570,14 @@ ipcMain.handle("app:renderer-ready-for-open-files", async (event) => {
   if (pendingPaths.length > 0) {
     sendOpenPathsToWindow(window, pendingPaths);
   }
+});
+
+ipcMain.handle("open-documents:publish", async (event, raw: unknown) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return;
+  // The report is untrusted input from a renderer and is validated before it reaches a file
+  // another process reads.
+  publishOpenDocuments(window, raw);
 });
 
 ipcMain.handle("window:set-full-screen", async (event, enabled: boolean) => {

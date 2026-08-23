@@ -226,6 +226,28 @@ export interface CliInstallResult {
   status: CliInstallStatus;
 }
 
+/**
+ * One open tab, as this window reports it to the main process.
+ *
+ * The mirror of `OpenDocumentRecord` in core, which is where it is validated and written. It
+ * carries no document text and no bytes; `path` is used only to prove read permission for a
+ * document that is not yet indexed, and never leaves the machine's own processes.
+ */
+export interface ReportedOpenDocument {
+  tabId: string;
+  kind: "pdf" | "markdown";
+  name: string;
+  path: string | null;
+  pageCount: number;
+  contentHash: string | null;
+  unsavedChanges: boolean;
+}
+
+export interface OpenDocumentsReport {
+  activeTabId: string | null;
+  documents: ReportedOpenDocument[];
+}
+
 declare global {
   interface Window {
     pdfReader?: {
@@ -268,6 +290,9 @@ declare global {
       removeRecentFile: (filePath: string) => Promise<string[]>;
       clearRecentFiles: () => Promise<string[]>;
       readyForOpenFiles: () => Promise<void>;
+      openDocuments: {
+        publish: (report: OpenDocumentsReport) => Promise<void>;
+      };
       cliInstall: {
         getStatus: () => Promise<CliInstallStatus>;
         install: () => Promise<CliInstallResult>;

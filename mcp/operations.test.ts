@@ -80,6 +80,7 @@ function contextWith(overrides: Partial<ToolContext> = {}): ToolContext & { read
     store: () => store,
     embedder: () => embedder,
     allowlist: () => ({ readRoots: [], writeRoots: [] }),
+    openDocuments: () => ({ windows: 0, activeRef: null, documents: [], unreadableWindows: 0 }),
     settings: defaultSemanticSearchSettings,
     readFile: filesystem.readFile,
     writeFile: async (path, text) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { propertyFromOption, TOOLS } from "./toolSchemas.js";
+import { ACTIVE_DOCUMENT, propertyFromOption, TOOLS } from "./toolSchemas.js";
 
 /**
  * The tool schemas a client sees, generated from the command table rather than written twice.
@@ -46,9 +46,25 @@ describe("turning a command option into a schema property", () => {
   });
 });
 
+/**
+ * The four tools that address a document the caller names.
+ *
+ * The open-document tools are deliberately not among them: they address a document the *user* has
+ * in front of them, which is the whole reason they exist, so the identity rules below are about
+ * these four rather than about every tool.
+ */
+const NAMED_DOCUMENT_TOOLS = ["outline", "search", "read_pages", "to_markdown"];
+
 describe("the tools this server offers", () => {
-  it("is exactly the four the plan names, and no more", () => {
-    expect(TOOLS.map((tool) => tool.name)).toEqual(["outline", "search", "read_pages", "to_markdown"]);
+  it("is the four that name a document plus the two that reach the open application", () => {
+    expect(TOOLS.map((tool) => tool.name)).toEqual([
+      "outline",
+      "search",
+      "read_pages",
+      "to_markdown",
+      "list_open_documents",
+      "read_open_document",
+    ]);
   });
 
   it("describes every one of them, because a description costs context in every session", () => {
@@ -59,21 +75,50 @@ describe("the tools this server offers", () => {
     }
   });
 
-  it("lets every tool name a document either way, by path or by content hash", () => {
-    for (const tool of TOOLS) {
-      expect(Object.keys(tool.inputSchema.properties)).toEqual(expect.arrayContaining(["path", "id"]));
+  it("lets every tool that names a document do it either way, by path or by content hash", () => {
+    for (const name of NAMED_DOCUMENT_TOOLS) {
+      const tool = TOOLS.find((candidate) => candidate.name === name);
+      expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(["path", "id"]));
     }
   });
 
   it("publishes the exactly-one-of rule rather than only enforcing it", () => {
     // A schema leaving both optional advertises calls the server refuses, and a client validating
     // against it builds them.
-    for (const tool of TOOLS) {
-      expect(tool.inputSchema.oneOf).toEqual([
+    for (const name of NAMED_DOCUMENT_TOOLS) {
+      const tool = TOOLS.find((candidate) => candidate.name === name);
+      expect(tool?.inputSchema.oneOf).toEqual([
         { required: ["path"], not: { required: ["id"] } },
         { required: ["id"], not: { required: ["path"] } },
       ]);
     }
+  });
+
+  it("asks the open-document tools for no document identity at all", () => {
+    // Naming a path is exactly what these two exist to avoid, so publishing a path argument would
+    // invite the call the feature is for.
+    for (const name of ["list_open_documents", "read_open_document"]) {
+      const tool = TOOLS.find((candidate) => candidate.name === name);
+      expect(Object.keys(tool?.inputSchema.properties ?? {})).not.toContain("path");
+      expect(Object.keys(tool?.inputSchema.properties ?? {})).not.toContain("id");
+      expect(tool?.inputSchema.oneOf).toBeUndefined();
+    }
+  });
+
+  it("takes no arguments at all to say what is open", () => {
+    const listing = TOOLS.find((tool) => tool.name === "list_open_documents");
+
+    expect(listing?.inputSchema.properties).toEqual({});
+  });
+
+  it("publishes the active document as the default a read falls back to", () => {
+    // A published default is what makes "read the PDF I have open" a call with no arguments; an
+    // implied one would leave a client guessing what absence means.
+    const read = TOOLS.find((tool) => tool.name === "read_open_document");
+
+    expect(read?.inputSchema.properties.ref?.default).toBe(ACTIVE_DOCUMENT);
+    expect(read?.inputSchema.properties.ref?.type).toBe("string");
+    expect(ACTIVE_DOCUMENT).toBe("active");
   });
 
   it("requires the arguments a tool cannot work without, and nothing else", () => {
@@ -83,6 +128,18 @@ describe("the tools this server offers", () => {
     expect(required.search).toEqual(["query"]);
     expect(required.read_pages).toEqual(["pages"]);
     expect(required.to_markdown).toEqual([]);
+    expect(required.list_open_documents).toEqual([]);
+    expect(required.read_open_document).toEqual([]);
+  });
+
+  it("says that an open document's own edits are visible but its markings are not", () => {
+    // The distinction a person actually needs: MarkPDF indexes the document it has loaded, so a
+    // page they deleted is reflected without saving — while a highlight they drew is not part of
+    // the document until it is written into one.
+    const read = TOOLS.find((tool) => tool.name === "read_open_document");
+
+    expect(read?.description).toMatch(/annotation|highlight|comment/i);
+    expect(read?.description).toMatch(/saved/i);
   });
 
   it("takes search's bounds from the same table the command line validates against", () => {

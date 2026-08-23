@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BoundedScheduler } from "../dist-core/index/boundedScheduler.js";
@@ -68,6 +69,7 @@ function contextWith(scheduler: BoundedScheduler, readFile: ToolContext["readFil
     store: () => store,
     embedder: () => embedder,
     allowlist: () => ({ readRoots: [libraryDir], writeRoots: [] }),
+    openDocuments: () => ({ windows: 0, activeRef: null, documents: [], unreadableWindows: 0 }),
     settings: defaultSemanticSearchSettings,
     readFile,
     writeFile: async () => {},
@@ -305,5 +307,88 @@ describe("how much text one call can hand back", () => {
       expect(reply.isError).toBe(true);
       expect(replyBytesOf(reply)).toBeLessThanOrEqual(DEFAULT_REPLY_BUDGET);
     }
+  }, 60_000);
+  it("keeps the active document when a great many open tabs will not fit", async () => {
+    // The one case where truncating a list can give a wrong answer rather than a short one: a
+    // caller asking about "the document I have open" must not have that document be the entry the
+    // bound removed. The list arrives active-first so that the cut can never reach it.
+    const many = Array.from({ length: 500 }, (unused, index) => ({
+      tabId: `tab-${index}`,
+      kind: "pdf" as const,
+      name: `${"long-document-name-".repeat(20)}${index}.pdf`,
+      path: null,
+      pageCount: 10,
+      contentHash: null,
+      unsavedChanges: false,
+      ref: `1-1:tab-${index}`,
+      window: 1,
+      activeInWindow: index === 499,
+      active: index === 499,
+    }));
+    const context: ToolContext = {
+      ...readingContext(),
+      openDocuments: () => ({
+        windows: 1,
+        activeRef: "1-1:tab-499",
+        // Active first, exactly as the reader hands it over.
+        documents: [many[499]!, ...many.slice(0, 499)],
+        unreadableWindows: 0,
+      }),
+    };
+
+    const reply = await callTool(context, "list_open_documents", {});
+    const payload = JSON.parse(reply.content[0]!.text) as {
+      documents: Array<{ ref: string; active: boolean }>;
+      truncated: boolean;
+      omittedDocuments: number;
+    };
+
+    expect(replyBytesOf(reply)).toBeLessThanOrEqual(DEFAULT_REPLY_BUDGET);
+    expect(payload.truncated).toBe(true);
+    expect(payload.omittedDocuments).toBeGreaterThan(0);
+    expect(payload.documents[0]).toMatchObject({ ref: "1-1:tab-499", active: true });
+  }, 60_000);
+  it("never hands back a path when the read behind an open document throws", async () => {
+    // The public contract these two tools carry: no absolute path in any reply, success or
+    // failure. A thrown filesystem error is the way that promise is easiest to break, because the
+    // call boundary answers an exception with its message and Node puts the path in the message.
+    const secret = "/Users/someone/Private Papers/annual-report.pdf";
+    const context: ToolContext = {
+      ...readingContext(),
+      allowlist: () => ({ readRoots: ["/Users/someone/Private Papers"], writeRoots: [] }),
+      // A real Node error: the path genuinely does not exist, so this is the exception a document
+      // moved out from under MarkPDF actually raises, path in the message and all.
+      readFile: async () => new Uint8Array(await readFile(secret)),
+      openDocuments: () => ({
+        windows: 1,
+        activeRef: "1-1:tab-a",
+        documents: [
+          {
+            tabId: "tab-a",
+            kind: "pdf" as const,
+            name: "annual-report.pdf",
+            path: secret,
+            pageCount: 2,
+            contentHash: null,
+            unsavedChanges: false,
+            ref: "1-1:tab-a",
+            window: 1,
+            activeInWindow: true,
+            active: true,
+          },
+        ],
+        unreadableWindows: 0,
+      }),
+    };
+
+    const reply = await callTool(context, "read_open_document", {});
+    const text = reply.content.map((block) => block.text).join("");
+
+    expect(reply.isError).toBe(true);
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain("/Users/someone");
+    // Still an answer somebody can act on: which document, and why it could not be read.
+    expect(text).toContain("annual-report.pdf");
+    expect(text).toContain("ENOENT");
   }, 60_000);
 });

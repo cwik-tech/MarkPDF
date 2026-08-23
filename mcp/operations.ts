@@ -17,6 +17,7 @@ import {
   type OutputBudget,
 } from "../dist-core/output/budget.js";
 import type { SemanticSearchSettings } from "../dist-core/ipc/settings.js";
+import type { OpenDocumentsView } from "../dist-core/session/openDocuments.js";
 import type { SemanticStore } from "../dist-core/store/index.js";
 import type { ArgumentValue } from "./arguments.js";
 
@@ -31,6 +32,15 @@ export interface ToolContext {
   store: () => SemanticStore;
   embedder: () => Embedder;
   allowlist: () => Allowlist;
+  /**
+   * What the application has open, read fresh on every call.
+   *
+   * A function for the same reason the consent record is one: a session lasts as long as the
+   * client does, and which document somebody is looking at changes far faster than that. Reading
+   * it once at startup would answer every question for the rest of the day with whatever happened
+   * to be on screen when the client launched.
+   */
+  openDocuments: () => OpenDocumentsView;
   settings: SemanticSearchSettings;
   readFile: (path: string) => Promise<Uint8Array>;
   writeFile: (path: string, text: string) => Promise<void>;
@@ -101,7 +111,7 @@ function count(args: Record<string, ArgumentValue>, name: string): number {
 const PAGE_SUMMARY_BUDGET = outputBudget(1_000);
 
 /** Document bytes a list of items carries, for reporting what a second cut took away. */
-function bytesOfText<T>(items: readonly T[], textOf: (item: T) => string): number {
+export function bytesOfText<T>(items: readonly T[], textOf: (item: T) => string): number {
   return items.reduce((total, item) => total + Buffer.byteLength(textOf(item), "utf8"), 0);
 }
 
@@ -232,7 +242,7 @@ export async function runSearch(
 }
 
 /** The pages a caller asked for, or a sentence saying why that selection cannot be honoured. */
-function selectPages(
+export function selectPages(
   args: Record<string, ArgumentValue>,
   pages: readonly { page: number; markdown: string }[],
 ): { ok: true; pages: { page: number; markdown: string }[] } | { ok: false; message: string } {

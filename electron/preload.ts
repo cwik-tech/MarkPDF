@@ -36,6 +36,12 @@ contextBridge.exposeInMainWorld("pdfReader", {
   clearRecentFiles: () => ipcRenderer.invoke("recent:clear"),
   readyForOpenFiles: () =>
     ipcRenderer.invoke("app:renderer-ready-for-open-files"),
+  openDocuments: {
+    // What this window is showing, for processes that cannot see it. Names and page counts only;
+    // no document text and no bytes cross here.
+    publish: (report: unknown) =>
+      ipcRenderer.invoke("open-documents:publish", report),
+  },
   cliInstall: {
     getStatus: () => ipcRenderer.invoke("cli-install:status"),
     install: () => ipcRenderer.invoke("cli-install:install"),

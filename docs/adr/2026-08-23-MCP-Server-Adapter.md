@@ -51,6 +51,12 @@ the same verdict the server does.
 
 ### Exactly four tools, and nothing else
 
+> **Superseded by `2026-08-23-Open-Document-Awareness.md`, which takes this to six.** The two it
+> adds — `list_open_documents` and `read_open_document` — answer a question none of the four below
+> can, because every one of them requires the caller to already know a path or a hash. The rule
+> that governs this section is unchanged, and that ADR argues its case against it: nothing new
+> indexes, grants or deletes, and having a document open supplies a name rather than an authority.
+
 `outline`, `search`, `read_pages`, `to_markdown`. No resources, no prompts, no Streamable HTTP,
 and nothing from Tier 2 or Tier 3. Every tool costs context in every session of every client
 forever, so the surface is the smallest one that is useful: orient, search, read what a hit points

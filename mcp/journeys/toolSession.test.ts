@@ -65,12 +65,19 @@ afterEach(() => {
 });
 
 describe("an agent session over stdio", () => {
-  it("lists exactly the four tools, with schemas a client can validate against", async () => {
+  it("lists exactly the six tools, with schemas a client can validate against", async () => {
     const client = await connect();
     try {
       const listed = await client.listTools();
 
-      expect(listed.tools.map((tool) => tool.name).sort()).toEqual(["outline", "read_pages", "search", "to_markdown"]);
+      expect(listed.tools.map((tool) => tool.name).sort()).toEqual([
+        "list_open_documents",
+        "outline",
+        "read_open_document",
+        "read_pages",
+        "search",
+        "to_markdown",
+      ]);
       for (const tool of listed.tools) {
         expect(tool.description).toBeTruthy();
         expect(tool.inputSchema.type).toBe("object");

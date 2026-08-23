@@ -108,12 +108,30 @@ function documentIdentity(): Record<string, SchemaProperty> {
 }
 
 /**
- * Exactly four tools.
+ * The reference that means "whichever document is at the front right now".
  *
- * Every tool costs context in every client's session, forever, so the surface is the smallest one
- * that is useful: orient, search, read what a hit points at, convert. Nothing here indexes, grants
- * or deletes — consent is given out of band with the command line, and a server that could widen
- * its own access would make the allowlist decorative.
+ * A reserved value rather than a separate argument, because a tool argument here is a string or a
+ * number and never a flag — so `use_active: true` is not expressible without widening the
+ * validator every tool depends on. Publishing it as the *default* is better than either: the
+ * schema says what absence means, so "read the PDF I have open" is a call with no arguments, and
+ * an agent can still name it deliberately.
+ *
+ * A real reference is `<process>-<window>:<tab>`, which cannot collide with this.
+ */
+export const ACTIVE_DOCUMENT = "active";
+
+/**
+ * Six tools: four that read a document somebody names, and two that reach the open application.
+ *
+ * Every tool costs context in every client's session, forever, so the surface stays the smallest
+ * one that is useful: orient, search, read what a hit points at, convert — and then the pair that
+ * answers "the document I have open", which none of the first four can, because each of them
+ * requires the caller to already know a path or a hash.
+ *
+ * Nothing here indexes, grants or deletes — consent is given out of band with the command line,
+ * and a server that could widen its own access would make the allowlist decorative. The two below
+ * are no exception: having a document open supplies a *name*, never an authority, and reading one
+ * still passes the same permission checks as reading it by path.
  */
 export const TOOLS: readonly ToolDefinition[] = [
   {
@@ -174,6 +192,37 @@ export const TOOLS: readonly ToolDefinition[] = [
       },
       required: [],
       oneOf: DOCUMENT_IDENTITY_BRANCHES,
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_open_documents",
+    description:
+      "List the documents the person is working on right now in the MarkPDF application, and say which one is active. Use this to act on \"the document I have open\" without being told a filesystem path. Reads MarkPDF's own record of its open tabs, so it needs no filesystem permission; it returns no document text and no file paths. Markdown tabs are listed as well as PDFs, so the active document is reported truthfully even when it is one this server cannot read.",
+    inputSchema: {
+      type: "object",
+      // No arguments at all. Publishing a path here would invite the very call these tools exist
+      // to make unnecessary.
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "read_open_document",
+    description:
+      "Read the pages of a PDF that is open in MarkPDF, named by a reference from list_open_documents. Defaults to whichever document is active, so reading the PDF the person has in front of them takes no arguments. Answered from the index when the document is already indexed; otherwise it reads the file, which needs read permission. Edits to the document itself — a deleted or inserted page — are picked up once MarkPDF reindexes it, without saving; annotations, comments, highlights, signatures and form entries are not part of the document and stay invisible here until they have been saved into it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ref: {
+          type: "string",
+          description: `A reference from list_open_documents, or "${ACTIVE_DOCUMENT}" for whichever document is at the front. Defaults to "${ACTIVE_DOCUMENT}".`,
+          default: ACTIVE_DOCUMENT,
+        },
+        pages: propertyFromOption("convert", "pages"),
+      },
+      required: [],
       additionalProperties: false,
     },
   },
