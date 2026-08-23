@@ -1,4 +1,5 @@
 import type { SemanticIndexRequest } from "./global";
+import type { OcrPageText } from "./types";
 
 export interface IndexableTab {
   path?: string | undefined;
@@ -21,4 +22,25 @@ export function buildIndexSource(tab: IndexableTab): SemanticIndexRequest["sourc
   return tab.path === undefined
     ? { kind: "bytes", bytes: tab.bytes }
     : { kind: "bytes", bytes: tab.bytes, path: tab.path };
+}
+
+/**
+ * The OCR text worth sending to the main process.
+ *
+ * Main reads the document itself now, so this is the only page text that still crosses IPC. OCR
+ * stays here as a Phase 2 scope decision rather than a capability limit — the main process has
+ * `@napi-rs/canvas` and could rasterise — but this window has already scanned these pages for
+ * the visible text layer, so sending the result costs nothing while redoing it would cost a
+ * second full pass.
+ *
+ * Pages with no usable OCR text are left out rather than sent empty: an empty candidate would
+ * claim a page was read when it was not. Sorted ascending because the request guard requires it.
+ */
+export function buildOcrCandidates(
+  ocrCandidates: readonly OcrPageText[],
+): NonNullable<SemanticIndexRequest["ocrCandidates"]> {
+  return ocrCandidates
+    .filter((page) => page.text.trim().length > 0)
+    .map((page) => ({ page: page.page, text: page.text }))
+    .sort((a, b) => a.page - b.page);
 }

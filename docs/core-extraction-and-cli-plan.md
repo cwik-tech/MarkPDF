@@ -276,30 +276,50 @@ and formats output, with no document logic. `:27-29` keeps its sentence with one
 Run in a scratch directory outside the repository. No production code, no dependency added to
 `package.json`. The real index was copied before being touched; the original was not modified.
 
-### S0.1 — PDF Inspector page indexing: **three conventions in one return object**
+### S0.1 — PDF Inspector page indexing: **two bases in one return object**
 
 The suspicion was that the package was inconsistent. It is worse than that, and a single shared
-offset constant would have been wrong for three fields out of four.
+offset constant would have been wrong for four fields out of five.
 
-Measured with a 3-page fixture carrying a unique sentinel string per page, and a second fixture
-whose second page is image-only:
+Stage 0 measured two fixtures: a 3-page fixture carrying a unique sentinel per page, and a
+second fixture whose second page is image-only. Those two filled four of the five page-bearing
+fields. `pagesWithColumns` stayed empty on both, and Stage 0 left its base taken from the type
+declaration.
 
-| Field of `extractPagesMarkdownAsync` | Base | Evidence |
-| --- | --- | --- |
-| `pages[].page` | **0-based** | `.page=0` carries the page-one sentinel |
-| `pagesWithTables` | **1-based** | returns `[2]`; the table is on `.page=1` |
-| `pagesNeedingOcr` | **1-based** | returns `[2]`; the scanned page is `.page=1`, `needsOcr=true` |
-| `ocrReasonsByPage[].page` | **1-based** | returns `{"page":2,"reasons":["scanned"]}` |
+Phase 2 added a third fixture — a dense two-column page — and measured it. The table below marks
+which stage produced each row, because "measured" and "declared" are not the same evidence and
+the difference decided whether a normalizer could be mutation-proved against the real package:
+
+| Field of `extractPagesMarkdownAsync` | Base | Measured in | Evidence |
+| --- | --- | --- | --- |
+| `pages[].page` | **0-based** | Stage 0 | `.page=0` carries the page-one sentinel |
+| `pagesWithTables` | **1-based** | Stage 0 | returns `[2]`; the table is on `.page=1` |
+| `pagesNeedingOcr` | **1-based** | Stage 0 | returns `[2]`; the scanned page is `.page=1`, `needsOcr=true` |
+| `ocrReasonsByPage[].page` | **1-based** | Stage 0 | returns `{"page":2,"reasons":["scanned"]}` |
+| `pagesWithColumns` | **1-based** | **Phase 2** | returns `[2]`; the two-column page is on `.page=1` |
+
+All five were re-confirmed independently against the installed `1.17.0` during Phase 2, on fresh
+pdf-lib fixtures. `pages[].page` came back `[0,1,2]` with engine page 0 holding the page-one
+sentinel. The first field and the other four disagree inside one return object, which is the
+whole reason for what follows.
+
+**Column detection needs a dense page, and that is a fixture property worth writing down.** Nine
+short lines per column are read as ordinary prose and report no columns at all; forty-five lines
+are recognised, stably across gutter widths of 40 and 80 points and across two and three
+columns. A sparse fixture would have made `pageFromColumnsList` look untestable when it is not.
 
 `classifyPdfAsync().pagesNeedingOcr` is different again — it returned `[0,1,2]` for that
 fixture, because it classifies the whole document as `ImageBased` rather than reporting
 per-page need. Different semantics, not merely a different base. Do not use it as a per-page
 signal.
 
-**Consequence for the design:** the adapter needs one named constant *per field*, not one
-shared constant. `pages[].page` is the only one that takes an offset. Each gets its own range
-check, and the fixture asserting "the table is on page 2" catches a regression in either
-direction.
+**Consequence for the design:** the adapter needs one named validating *function* per field —
+not a constant, shared or otherwise. A constant is a value a caller can pass wrongly, and it
+would also mean one mutation breaks every normalizer at once so no test could show which one it
+protects. `pages[].page` is the only field whose function applies an offset; the rest are
+identity. Each carries its own range check, and the fixture asserting "the table is on page 2"
+catches a regression in either direction. See the normalizer contract in Phase 2, which is the
+binding statement of this rule.
 
 ### S0.1b — Extraction quality confirms the premise
 
@@ -478,6 +498,27 @@ handler, preload and declaration; deletion of `src/semanticIndex.ts` and removal
 
 ## Phase 2 — Markdown as the index representation
 
+**Status: delivered.** `@firecrawl/pdf-inspector` 1.17.0 extracts per-page Markdown behind one
+adapter; the main process indexes from document bytes rather than renderer-supplied text; chunks
+are split by structure under a measured token budget; oversized tables become lossless row
+windows; snippets are plain text; and chunk identity carries a fingerprint of the text so a
+re-extraction that changes it rebuilds rather than reuses. `semanticChunkingVersion` is 2, so
+every stored chunk re-indexes lazily, one document at a time.
+
+Three ADRs record the decisions: `2026-08-23-PDF-Inspector-Extractor.md`,
+`2026-08-23-Embedding-Input-Budget.md` and `2026-08-23-Structure-Aware-Chunking.md`.
+
+Measured by `scripts/bench/chunkingBenchmark.mjs`, which reports two scenarios separately.
+
+On the **six-page ground-truthed fixture**: before, 6 chunks with one past the 510-token encoder
+limit and a largest of 695 tokens, intact-table rate 0.752. After, 14 chunks, largest 415, none
+over the 420-token chunking target or the encoder limit, intact-table rate 1.000. The full table
+of ranking figures is under Verification.
+
+On the **400-row stress scenario**, one oversized table on one page: before, 4 chunks with three
+past the encoder limit and a largest of 1,052 tokens, of which 287 of 400 rows reached the model.
+After, 12 chunks, largest 420, none over either limit, and 400 of 400 rows reached.
+
 **The crux is solved by the API, not by parsing.** `extractPagesMarkdownAsync` returns
 `{ page, markdown, needsOcr, ocrReason? }` per page, so page identity is a property of the
 return type. No markers to emit, none to find, no `## Unmatched Page Markers`. **The planned
@@ -495,10 +536,11 @@ attributing that table to the previous page — precisely the case the exit crit
 `core/extract/pdfInspector.ts` is the only file importing the package and the only place engine
 page numbers exist.
 
-Do **not** model the three conventions as configurable numeric constants. Stage 0 measured
-three fields 1-based and one 0-based in a single return object; a shared offset would be wrong
-for three of four, and a per-field integer constant still lets a caller apply the wrong one.
-Instead give each external field its own small named function that validates integer and range
+Do **not** model the conventions as configurable numeric constants. Four fields are 1-based and
+one is 0-based in a single return object, every one of them measured against `1.17.0`; a shared
+offset would be wrong for four of five, and a per-field integer constant still lets a caller
+apply the wrong one. Instead
+give each external field its own small named function that validates integer and range
 semantics and returns the single internal 1-based `PageNumber` type:
 
 ```ts
@@ -506,13 +548,27 @@ type PageNumber = number & { readonly __brand: "PageNumber1Based" };
 
 pageFromMarkdownResult(engineValue, pageCount): PageNumber   // 0-based source
 pageFromTablesList(engineValue, pageCount): PageNumber       // 1-based source
+pageFromColumnsList(engineValue, pageCount): PageNumber      // 1-based source
 pageFromOcrList(engineValue, pageCount): PageNumber          // 1-based source
 pageFromOcrReason(engineValue, pageCount): PageNumber        // 1-based source
 ```
 
+`pagesWithColumns` is carried rather than dropped, and is fixture-measured like the rest. Every
+page-bearing field the engine returns is either normalized through a named function or
+deliberately excluded with a recorded reason — letting one cross the adapter unvalidated is the
+failure the adapter exists to prevent.
+
 Each rejects non-integers and anything falling outside `1..pageCount` after normalization, so a
 convention change upstream throws immediately rather than shifting every citation silently. The
 branded type means an un-normalized engine number cannot reach storage or a result by accident.
+
+**The adapter exposes full-document extraction only, so no page number ever crosses it inward.**
+`extractPagesMarkdown(buffer, pages)` accepts a **0-based** `pages` array — a third convention,
+on the input side, verified against `1.17.0` by passing `[1]` and receiving the second page. Phase
+2 has no caller that needs partial extraction, so the adapter simply does not offer it, and the
+inverse conversion has nothing to get wrong. A future partial-extraction API must add its own
+named inverse function, `enginePagesFromPageNumbers`, at the point it acquires a real caller —
+never speculatively, and never by inlining `page - 1` at a call site.
 
 **`classifyPdfAsync` stays separate and never feeds per-page logic.** Stage 0 showed it
 returning `[0,1,2]` for a document where only one page lacked text, because it classifies the
@@ -520,8 +576,17 @@ whole document rather than reporting per-page need. It is a document-level signa
 is deliberately no normalization function for its `pagesNeedingOcr`, so there is no way to
 route it into page-level code.
 
-The 3-page sentinel-and-table fixture plus the scanned fixture must exercise **every** one of
-these functions, and each must bite under an implementation mutation.
+Three fixtures are needed, not two, and between them they exercise **every** one of these
+functions non-empty: the 3-page sentinel-and-table fixture fills `pages[].page` and
+`pagesWithTables`, the scanned fixture fills `pagesNeedingOcr` and `ocrReasonsByPage`, and the
+dense two-column fixture fills `pagesWithColumns`. Each normalizer must bite under an
+implementation mutation *against a fixture*, not only against a focused boundary test — a
+normalizer whose only coverage is a hand-written value has never met the engine.
+
+`classifyPdfAsync`'s own result is narrowed by `classificationPageCount`, which reads
+`pageCount` and nothing else. It is third-party output like any other and is not destructured at
+the call site: an unchecked `pageCount` of `undefined` would turn every `1..pageCount` range
+check into a silent no-op, which is the failure mode the range checks exist to prevent.
 
 **Chunking** splits at headings; carries the heading stack **across page boundaries** so a
 table on page 8 still knows its heading from page 7; prepends the breadcrumb to `embedText`
@@ -637,14 +702,33 @@ establish one arrangement that serves both the bundled tokenizers and the downlo
 set once. Toggling `env` per operation would race a settings-dialog download against an index
 job, and the scheduler's cap of one does not prevent that — it bounds index jobs, not downloads.
 
-**The floor is measured and versioned, never written from memory.** No number for any curated
-model appears in this document, because none has been measured. Phase 2 reads
-`model_max_length` and the tokenizer hashes from the downloaded artefacts, records them in the
-ADR alongside the date and the model revisions they came from, and stores the resulting budget
-as a versioned constant. Recalling a limit from a model card is exactly the failure this section
-exists to prevent. Adding a future model whose budget is below the recorded floor, or whose
-tokenizer hash differs, is a `semanticChunkingVersion` bump, which D9 re-indexes lazily and per
-document.
+**The floor is measured and versioned, never written from memory. Measured 2026-08-23 against
+`@huggingface/transformers` 4.2.0:**
+
+| Model | `tokenizer.json` sha256 (first 16) | `model_max_length` |
+| --- | --- | --- |
+| `Xenova/bge-small-en-v1.5` | `d241a60d5e8f04cc` | 512 |
+| `Xenova/bge-base-en-v1.5` | `d241a60d5e8f04cc` | 512 |
+| `Xenova/all-MiniLM-L6-v2` | `da0e79933b9ed517` | 512 |
+
+**The hashes do not all agree, so worst-case measurement is the mode in force.** Two distinct
+files for three models, and the budget is `min(512) − 2 = 510` body tokens, the two being the
+`[CLS]`/`[SEP]` pair every BERT-family tokenizer adds.
+
+Two findings worth recording rather than smoothing over. First, the two files differ **only** in
+their `truncation` and `padding` blocks — vocabulary, normalizer, pre-tokenizer, post-processor
+and added tokens are byte-identical — and this library ignores both blocks when encoding, so the
+two demonstrably count every input identically. Mode selection is driven by the hashes anyway,
+because "the files differ" is a fact and "the difference happens not to matter today" is a
+judgement that a future artifact could invalidate silently. Second, MiniLM's `tokenizer.json`
+declares `truncation.max_length: 128`, which is **inert**: encoding a 1,726-token string through
+it returned all 1,726 tokens, and only the `model_max_length` from `tokenizer_config.json`
+truncates, at 512 for every model. A budget of 128 would have been wrong by a factor of four.
+
+`tokenizer_config.json` is bundled and hashed alongside, and the recorded 512 is verified
+against it at load time — so no number above rests on a note. Adding a future model whose budget
+is below the recorded floor, or whose tokenizer hash differs, is a `semanticChunkingVersion`
+bump, which D9 re-indexes lazily and per document.
 
 **The breadcrumb reservation is a number, so it can be tested.** The breadcrumb may occupy at
 most `BREADCRUMB_TOKEN_SHARE = 0.15` of the budget, floored to a whole number of tokens. Over
@@ -724,6 +808,45 @@ floor is what keeps chunk text model-independent, and a model-scoped identifier 
 license a future change that makes text depend on the active model — the change the schema
 cannot absorb. The text hash is what makes identity honest; the model belongs in
 `chunk_embeddings`, where it already is.
+
+### OCR arbitration moves from pdf.js to PDF Inspector
+
+**This is a deliberate behaviour change, not preservation, and the affected set is measured.**
+
+Before Phase 2, `src/pdf/pageText.ts` arbitrated per page with a pdf.js rule: if a page's native
+text held fewer than 100 non-space characters and OCR text existed for it, the OCR text won.
+Phase 2 deletes that rule. PDF Inspector's per-page `needsOcr` decides instead, and renderer OCR
+becomes a *candidate* offered to it rather than a command — which is why the IPC field is
+`ocrCandidates`, not `ocrOverrides`.
+
+Measured against `1.17.0`, on fixtures whose page 2 carries exactly 30, 60 and 99 non-space
+characters:
+
+| Page shape | Old rule | PDF Inspector | Agree? |
+| --- | --- | --- | --- |
+| Scan with a 30/60/99-character text stamp | OCR | `needsOcr=true`, reason `scanned`, **no markdown returned** | **yes** |
+| Text-only page of 30/60/99 characters | OCR | `needsOcr=false`, markdown returned | **no** |
+
+So the case the old rule was written for — a scan with a thin stamp — behaves identically, and
+arguably better: the extractor discards the stamp rather than mixing a fragment of native text
+into a scanned page.
+
+**The affected set is pages in an OCR-triggered document whose native text runs 1–99 non-space
+characters and which PDF Inspector reads successfully.** It is reachable, not theoretical:
+`detectOcrNeed` returns a document-level verdict from a page sample and `runDocumentOcr` then
+scans every page, so candidates arrive for readable pages too. Those pages now keep their native
+Markdown.
+
+**Reinstating the old rule was considered and rejected.** OCR text is a flat run of words; the
+native Markdown for such a page may be a table, a heading, or a list. Letting a character count
+replace structured Markdown with flat OCR would discard exactly the representation PDF Inspector
+was chosen to preserve — the `|Enterprise|1204|1318|` that the Electron acceptance journey
+proves reaches the index.
+
+**Non-selection is reported, not silent.** The post-extraction progress message reads
+`Read 3 pages, 1 of 3 OCR candidates used` whenever candidates were offered, so a candidate the
+extractor did not need is an observable outcome. There is no warning API; this uses the progress
+surface that already exists.
 
 **Failure handling is functional only, never architectural.** A binding that will not load, a
 malformed PDF, and a page needing OCR each have defined behaviour. Critically, **an unanchored
@@ -928,10 +1051,53 @@ extraction rule survives verbatim in `src/pdf/pageText.ts`; and the deleted file
 recoverable from git history at the Phase 1 parent commit. Phase 2 copies that pair into
 `scripts/bench/` at the point it replaces them, rather than committing dead code now.
 
-The benchmark reports page accuracy@1, recall@5, MRR, and **intact-table rate** — which is zero
-today by construction, and is the number that turns the strategy document's citation of someone
-else's benchmark into a measurement of this repository. Those numbers go into the ADR's
-Verification section.
+The benchmark reports page accuracy@1, recall@5, MRR, and **intact-table rate**, against a fixed
+six-page fixture whose seven queries each have one correct page written down when the fixture was
+built. It also reports how the two OCR arbitration rules disagree, and how much of each chunk
+actually reaches the model.
+
+**Measured, and one prediction half-corrected.** This document said intact-table rate was "zero
+today by construction". That is true of a *structural* reading — no word-window chunk ever
+contained a GFM table row, because pdf.js never produced one — and false of the reading that
+matters, which is whether a row's cells reach the model in order. Both are now reported, and the
+distinction is the point.
+
+Each side is driven by its own representation: the old pipeline gets a realistic pdf.js
+reading-order string, the new one gets PDF Inspector's Markdown. Feeding Firecrawl's output to
+the old chunker would have credited it with work it could not do.
+
+| | before | after |
+| --- | --- | --- |
+| intact-table rate (cells in order, reaching the model) | **0.752** | **1.000** |
+| GFM rows preserved (structural) | **0 of 125** | **125 of 125** |
+| page accuracy@1 | 0.857 | **1.000** |
+| recall@5 | 1.000 | 1.000 |
+| MRR | 0.905 | **1.000** |
+| chunks over the encoder limit | 1 of 6 | 0 of 14 |
+| largest chunk | 695 tokens | 415 tokens |
+
+Two token numbers are kept apart throughout, because conflating them misreports the old
+pipeline. The **chunking target** is 420 — the user's profile choice, capped by the catalogue
+floor — and is what new chunks are built to. The **encoder payload limit** is 510, the smallest
+`model_max_length` less the special-token pair, and is where the installed models actually
+truncate. Truncation is simulated at 510; charging the old chunker at 420 would have blamed it
+for tokens the model would have accepted.
+
+A separately reported stress scenario — one 400-row table on one page — shows the failure mode
+where it dominates: **287 of 400 rows reached the model before, 400 of 400 after**, with three of
+four chunks over the encoder limit and a largest chunk of 1,052 tokens against 510.
+
+**The ranking figures are deterministic regression proxies, not evidence about the real model.**
+They are computed with `createDeterministicEmbedder`, a normalized bag of words. This document
+already states that a replaced boundary proves nothing about whether the real weights rank
+usefully, whether ONNX Runtime initialises, or whether the score threshold is calibrated — and
+that applies here. What they do prove is that a change to chunking did not move retrieval
+backwards under a fixed, reproducible scorer.
+
+recall@5 was already 1.000 and stays there — on a fixture this small every correct page is within
+the top five either way, and reporting it unchanged is more useful than choosing a fixture that
+made it move. OCR arbitration disagrees on exactly one page of six, the readable-but-sparse case
+recorded above as the affected set.
 
 **CI ships in Phase 1.** `.github/workflows/ci.yml` runs on push to `main` and on every pull
 request: renderer, core and Electron typechecks, the unit suites, and a build, plus a second job

@@ -2,6 +2,7 @@ import { defaultSemanticScoreThreshold, defaultSemanticTopK, getCuratedEmbedding
 import type { SemanticStore } from "../store/index.js";
 import type { Embedder } from "./embeddings.js";
 import { createSnippet } from "./chunking.js";
+import { toPlainText } from "./structuredChunking.js";
 
 export interface SemanticSearchResult {
   id: string;
@@ -47,5 +48,8 @@ export async function searchDocument(
     input.minScore ?? defaultSemanticScoreThreshold,
   );
 
-  return hits.map((hit) => ({ ...hit, snippet: createSnippet(hit.snippet) }));
+  // Plain text before trimming. The stored text is Markdown, and the snippet is matched against
+  // pdf.js's reading of the page to place the highlight — where no pipe, hash or emphasis marker
+  // appears. A snippet carrying them matches nothing and the highlight silently disappears.
+  return hits.map((hit) => ({ ...hit, snippet: createSnippet(toPlainText(hit.snippet)) }));
 }

@@ -1,13 +1,34 @@
 import { contentHash as hashBytes } from "../hash.js";
-import { getCuratedEmbeddingModel, modelVersion, semanticChunkingVersion, type SemanticChunkingProfile } from "../models.js";
+import {
+  getCuratedEmbeddingModel,
+  modelVersion,
+  semanticChunkingVersion,
+  UNKNOWN_EXTRACTION_VERSION,
+  type SemanticChunkingProfile,
+} from "../models.js";
+import type { MarkdownCacheInput } from "../store/index.js";
+
+/**
+ * What a caller knows about how it produced the page text.
+ *
+ * All of it or none of it. Recording an engine without a version, or a version without the text
+ * it describes, would leave the document making a claim nothing backs up.
+ */
+export interface ExtractionProvenance extends MarkdownCacheInput {
+  /** Recorded on `documents.text_extraction_version`. */
+  textExtractionVersion: number;
+  /** Recorded on `documents.ocr_extraction_version`. */
+  ocrExtractionVersion: number;
+}
 import type { ChunkInsert, ChunkScope, SemanticStore, TextSource } from "../store/index.js";
-import { chunkPages, type PageText, type TextChunk } from "./chunking.js";
+import type { PageText } from "./chunking.js";
+import { chunkPagesForIndex, type IndexableChunk } from "./structuredChunking.js";
 import type { Embedder } from "./embeddings.js";
 import { runExclusive } from "./serialQueue.js";
 
 export type IndexStatus = "ready" | "reused" | "empty" | "cancelled";
 
-function hasExactChunks(store: SemanticStore, scope: ChunkScope, chunks: readonly TextChunk[]): boolean {
+function hasExactChunks(store: SemanticStore, scope: ChunkScope, chunks: readonly IndexableChunk[]): boolean {
   const stored = store.listIndexedChunkIds(scope);
   if (stored.length !== chunks.length) return false;
   const expected = new Set(chunks.map((chunk) => chunk.id));
@@ -44,6 +65,19 @@ export interface IndexDocumentInput {
   signal?: AbortSignal;
   /** Awaited once after each batch's progress event, so the interface can render it. */
   yieldControl?: () => Promise<void>;
+  /**
+   * The extracted Markdown to cache, and which engine produced it.
+   *
+   * Optional, and absent by default, because this function is deliberately agnostic about where
+   * its page text came from — a caller may hand it text from anywhere. Stamping an engine on a
+   * document whose text this function never saw produced would be a false provenance claim, so
+   * nothing is stamped and nothing is cached unless a caller supplies this.
+   *
+   * `pages` must cover the document completely, `1..pageCount`, with unread or blank pages
+   * carried as empty strings. A gap is refused by the store rather than stored as a shorter
+   * document.
+   */
+  markdownCache?: ExtractionProvenance;
 }
 
 export interface IndexedDocumentResult {
@@ -65,6 +99,42 @@ export interface IndexedDocumentResult {
  * caller instead of the runtime discovering it later.
  */
 export type IndexDocumentResult = IndexedDocumentResult | { status: "cancelled" };
+
+/**
+ * Provenance has to describe *this* document, and the type alone cannot say so.
+ *
+ * `engineId` and `markdownVersion` are runtime values a caller supplies; `pages` has to cover
+ * `1..pageCount` exactly. Checked here, before anything is written, because the alternative is a
+ * document row claiming an engine with no cache behind it.
+ */
+function requireCompleteCache(cache: ExtractionProvenance, pageCount: number): void {
+  if (cache.engineId.trim().length === 0) {
+    throw new Error("A Markdown cache needs an engine id with something in it.");
+  }
+  if (!Number.isInteger(cache.markdownVersion) || cache.markdownVersion < 1) {
+    throw new Error(
+      `A Markdown cache needs a representation version of at least 1; received ${String(cache.markdownVersion)}.`,
+    );
+  }
+  for (const [field, value] of [
+    ["textExtractionVersion", cache.textExtractionVersion],
+    ["ocrExtractionVersion", cache.ocrExtractionVersion],
+  ] as const) {
+    if (!Number.isInteger(value) || value < 1) {
+      throw new Error(`Provenance needs a ${field} of at least 1; received ${String(value)}.`);
+    }
+  }
+  if (cache.pages.length !== pageCount) {
+    throw new Error(
+      `A Markdown cache must cover every page: the document has ${pageCount} but ${cache.pages.length} were supplied.`,
+    );
+  }
+  for (const [position, page] of cache.pages.entries()) {
+    if (page.page !== position + 1) {
+      throw new Error(`A Markdown cache must run from page 1 without gaps; entry ${position} is page ${page.page}.`);
+    }
+  }
+}
 
 /** Embedded, then written, in groups of this size. Never held open across an await. */
 const EMBED_BATCH = 32;
@@ -116,9 +186,16 @@ async function indexDocumentExclusive(
   if (cancelled()) return { status: "cancelled" };
 
   input.onProgress?.({ status: "checking", message: "Checking semantic index" });
+  // The callback can abort synchronously, so the very next write re-reads the signal. Without
+  // this, a run cancelled from its own progress handler still leaves a document row behind.
+  if (cancelled()) return { status: "cancelled" };
 
   const model = getCuratedEmbeddingModel(embedder.modelId);
   const textSource = textSourceOf(input.pages);
+  const cache = input.markdownCache;
+  // Validated before the document row is written, so a cache that cannot be stored can never
+  // leave a document stamped with an engine that cached nothing for it.
+  if (cache !== undefined) requireCompleteCache(cache, input.pageCount);
 
   const stored = store.upsertDocument({
     contentHash,
@@ -127,13 +204,24 @@ async function indexDocumentExclusive(
     fileSize: input.bytes.byteLength,
     pageCount: input.pageCount,
     textSource,
-    // Phase 1 caches no Markdown, so nothing may claim an engine or a Markdown version.
-    // Stamping one here would make a Phase 2 document indistinguishable from a Phase 1 one.
+    // The extraction version describes the run and is recorded here. A caller that said nothing
+    // records "unknown", which preserves whatever an earlier informed caller wrote.
+    textExtractionVersion: cache?.textExtractionVersion ?? UNKNOWN_EXTRACTION_VERSION,
+    ocrExtractionVersion: cache?.ocrExtractionVersion ?? UNKNOWN_EXTRACTION_VERSION,
+    // The engine and Markdown version are *not* stamped here. They are written by `putMarkdown`
+    // in the same transaction as the cache row itself, so a document can never advertise a cache
+    // that failed to be written. Nulls here preserve whatever is already recorded.
     markdownEngine: null,
     markdownVersion: null,
   });
 
-  const chunks = chunkPages(contentHash, input.pages, input.chunkingProfile);
+  // Page text in, structure-aware chunks out. `pages[].text` is Markdown when the caller
+  // extracted Markdown, and plain text otherwise; the chunker handles both.
+  const chunks = await chunkPagesForIndex(
+    contentHash,
+    input.pages.map((page) => ({ page: page.page, markdown: page.text, source: page.source })),
+    input.chunkingProfile,
+  );
   const scope: ChunkScope = {
     documentId: stored.id,
     chunkingProfile: input.chunkingProfile,
@@ -145,25 +233,37 @@ async function indexDocumentExclusive(
     dimensions: embedder.dimensions,
   };
 
+  // Re-read the signal immediately after the awaited chunk build. Loading the token counter and
+  // measuring a document are both asynchronous, so a cancel can land inside them — and every
+  // branch below either reports success or writes: `empty` and `reused` are both success, and
+  // the reuse path backfills the Markdown cache.
+  if (cancelled()) return { status: "cancelled" };
+
   if (chunks.length === 0) {
+    // A document that yields no chunks still has pages, and the cache is keyed to the document
+    // rather than to its chunks. Returning before writing it would leave the row stamped with an
+    // engine that cached nothing — exactly the false claim the provenance check exists to stop.
+    if (cache !== undefined) store.putMarkdown(stored.id, cache);
     input.onProgress?.({ status: "ready", message: "No text to index" });
     return { status: "empty", contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: 0, textSource };
   }
 
   // Completeness is an identity question, not a counting one.
   //
-  // Chunk identifiers embed page and per-page position, so the same total can describe a
-  // different set: one extraction run can yield [page1:0, page1:1] and the next [page1:0,
-  // page2:0] for the same file, because the content hash covers the file's bytes while the
-  // extracted text comes from the renderer and OCR output is not deterministic. Comparing the
-  // stored identifiers against the expected ones catches that; comparing counts does not.
+  // The content hash covers the file's bytes; the text extracted from those bytes is a separate
+  // thing that can differ between runs. A native parser's output can shift with its version or
+  // its heuristics, OCR is not deterministic at all, and which pages take which path is decided
+  // per run. So the same file can yield [page1:0, page1:1] on one run and [page1:0, page2:0] on
+  // the next, with an identical total. Comparing stored identifiers against expected ones catches
+  // that — the identifier carries a fingerprint of the text — and comparing counts does not.
   //
-  // Remaining limitation, deliberately not claimed away: identical identifiers can still carry
-  // stale text, because an identifier does not cover its chunk's content and OCR output is not
-  // deterministic. Phase 2 does not remove this by itself — the app's OCR stays in the renderer
-  // — so Phase 2 must extend chunk identity or invalidation to cover changed extracted text.
-  // Until then a forced rebuild is the only way to refresh such a document.
   if (input.force !== true && hasExactChunks(store, scope, chunks)) {
+    // Backfill: a document indexed before caching existed has complete chunks and no cached
+    // text. Writing it here means the cache becomes complete as documents are opened, rather
+    // than only for documents that happen to be rebuilt.
+    if (cache !== undefined && store.getMarkdown(stored.id, cache.engineId, cache.markdownVersion) === null) {
+      store.putMarkdown(stored.id, cache);
+    }
     input.onProgress?.({ status: "ready", current: chunks.length, total: chunks.length, message: "Semantic index ready" });
     return { status: "reused", contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: chunks.length, textSource };
   }
@@ -174,6 +274,12 @@ async function indexDocumentExclusive(
   if (cancelled()) {
     return { status: "cancelled" };
   }
+
+  // Written here, after the last cancellation check and before anything destructive. The
+  // contract is deliberate: a run cancelled before this point writes no cache at all, and a run
+  // cancelled after it keeps one — the extraction is valid whether or not the embedding
+  // finished, and re-reading the file would be pure waste.
+  if (cache !== undefined) store.putMarkdown(stored.id, cache);
 
   store.beginChunkReplace(scope);
 
@@ -198,7 +304,16 @@ async function indexDocumentExclusive(
         return { status: "cancelled" };
       }
       // Awaits happen here, with no transaction open.
-      prepared.push({ ...chunk, vector: await embedder.embed(chunk.text, "passage") });
+      // Embedded with its breadcrumb, stored without it: the model gets the context, the reader
+      // gets what was on the page.
+      prepared.push({
+        id: chunk.id,
+        page: chunk.page,
+        index: chunk.index,
+        text: chunk.text,
+        headingPath: chunk.headingPath,
+        vector: await embedder.embed(chunk.embedText, "passage"),
+      });
     }
 
     // Re-check immediately before committing: the await above yields, so cancellation can

@@ -1,5 +1,5 @@
 import { curatedEmbeddingModels, type SemanticChunkingProfile } from "../models.js";
-import type { PageText } from "../index/chunking.js";
+import type { OcrPageCandidate } from "../index/indexPdfDocument.js";
 
 /**
  * Validation for everything arriving from the renderer.
@@ -47,14 +47,6 @@ function requireChunkingProfile(value: unknown): SemanticChunkingProfile {
   throw new SemanticRequestError("chunkingProfile must be precise, balanced or contextual.");
 }
 
-/** At least one. A zero page count describes nothing indexable and every page would be out of range. */
-function requirePositiveInteger(value: unknown, what: string): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-    throw new SemanticRequestError(`${what} must be an integer of at least 1.`);
-  }
-  return value;
-}
-
 /** Absent means the default. Present but not a boolean is a caller error, never a false. */
 function requireOptionalBoolean(value: unknown, what: string, fallback: boolean): boolean {
   if (value === undefined) return fallback;
@@ -79,43 +71,43 @@ function requireBytes(value: unknown, what: string): Uint8Array {
 }
 
 /**
- * Pages must be within the document and strictly ascending.
+ * OCR text the renderer contributes for pages the extractor reports as unreadable.
  *
- * Out of range would store a citation pointing at a page the reader cannot open. Duplicates
- * would index the same page twice under colliding chunk positions. Requiring strict ascent
- * rejects both in one rule and keeps stored chunk order matching reading order.
+ * This is all the renderer sends now: PDF Inspector is authoritative for page count and for
+ * native Markdown, so page text no longer crosses IPC. OCR stays in the renderer as a scope
+ * decision for Phase 2, not because the main process lacks the means — `@napi-rs/canvas` is a
+ * direct dependency and the native stack runs there. It stays because the renderer has already
+ * rasterised and scanned those pages for the visible text layer, and doing that work twice
+ * would cost a second full pass for the same result.
+ *
+ * Strictly ascending rejects duplicates and disorder in one rule, and blank text is refused
+ * outright: a candidate that carries nothing would mark a page as read when it was not.
  */
-function requirePages(value: unknown, pageCount: number): PageText[] {
-  if (!Array.isArray(value)) throw new SemanticRequestError("pages must be an array.");
+function requireOcrCandidates(value: unknown): OcrPageCandidate[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new SemanticRequestError("ocrCandidates must be an array when present.");
 
-  const pages: PageText[] = [];
+  const candidates: OcrPageCandidate[] = [];
   let previous = 0;
   for (const [position, entry] of value.entries()) {
-    const row = requireObject(entry, `pages[${position}]`);
+    const row = requireObject(entry, `ocrCandidates[${position}]`);
     const page = row.page;
-    const text = row.text;
-    const source = row.source;
-
-    if (typeof page !== "number" || !Number.isInteger(page)) {
-      throw new SemanticRequestError(`pages[${position}].page must be an integer.`);
-    }
-    if (page < 1 || page > pageCount) {
-      throw new SemanticRequestError(`pages[${position}].page is ${page}, outside 1..${pageCount}.`);
+    if (typeof page !== "number" || !Number.isInteger(page) || page < 1) {
+      throw new SemanticRequestError(`ocrCandidates[${position}].page must be a whole number of at least 1.`);
     }
     if (page <= previous) {
       throw new SemanticRequestError(
-        `pages must be in strictly ascending order; pages[${position}].page is ${page} after ${previous}.`,
+        `ocrCandidates must be in strictly ascending order; ocrCandidates[${position}].page is ${page} after ${previous}.`,
       );
     }
-    if (typeof text !== "string") throw new SemanticRequestError(`pages[${position}].text must be a string.`);
-    if (source !== "pdf" && source !== "ocr") {
-      throw new SemanticRequestError(`pages[${position}].source must be pdf or ocr.`);
+    const text = row.text;
+    if (typeof text !== "string" || text.trim().length === 0) {
+      throw new SemanticRequestError(`ocrCandidates[${position}].text must be a non-empty string.`);
     }
-
     previous = page;
-    pages.push({ page, text, source });
+    candidates.push({ page, text });
   }
-  return pages;
+  return candidates;
 }
 
 export interface ParsedIndexRequest {
@@ -123,8 +115,7 @@ export interface ParsedIndexRequest {
   bytes: Uint8Array | null;
   filePath: string | null;
   name: string;
-  pages: PageText[];
-  pageCount: number;
+  ocrCandidates: OcrPageCandidate[];
   chunkingProfile: SemanticChunkingProfile;
   force: boolean;
 }
@@ -132,7 +123,6 @@ export interface ParsedIndexRequest {
 export function parseIndexRequest(raw: unknown): ParsedIndexRequest {
   const request = requireObject(raw, "index request");
   const source = requireObject(request.source, "index request source");
-  const pageCount = requirePositiveInteger(request.pageCount, "pageCount");
 
   let bytes: Uint8Array | null = null;
   let filePath: string | null = null;
@@ -154,8 +144,7 @@ export function parseIndexRequest(raw: unknown): ParsedIndexRequest {
     bytes,
     filePath,
     name: requireText(request.name, "name"),
-    pages: requirePages(request.pages, pageCount),
-    pageCount,
+    ocrCandidates: requireOcrCandidates(request.ocrCandidates),
     chunkingProfile: requireChunkingProfile(request.chunkingProfile),
     force: requireOptionalBoolean(request.force, "force", false),
   };

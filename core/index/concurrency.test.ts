@@ -8,6 +8,7 @@ import { createDeterministicEmbedder } from "./deterministicEmbedder.js";
 import type { Embedder } from "./embeddings.js";
 import { deferred } from "./deferred.test-support.js";
 import { expectIndexed } from "./indexResult.test-support.js";
+import { semanticChunkingVersion } from "../models.js";
 
 let dataDir: string;
 let store: SemanticStore;
@@ -88,7 +89,7 @@ describe("the same document indexed twice at once", () => {
     const scope = {
       documentId: primary.documentId,
       chunkingProfile: "balanced",
-      chunkingVersion: 1,
+      chunkingVersion: semanticChunkingVersion,
       modelId: "Xenova/bge-small-en-v1.5",
       modelVersion: "hf-transformers-js",
       dimensions: 384,

@@ -7,7 +7,11 @@ import { CURRENT_SCHEMA_VERSION, migrate, type MigrationReport } from "./schema.
 import { SchemaTooNewError, StoreDataError } from "./errors.js";
 import { blobToVector, cosineSimilarity, vectorToBlob } from "./vector.js";
 import { indexSizeOnDisk } from "./size.js";
-import { OCR_EXTRACTION_VERSION, TEXT_EXTRACTION_VERSION } from "../models.js";
+import {
+  parsePagePreservingMarkdown,
+  renderPagePreservingMarkdown,
+  type MarkdownPageRecord,
+} from "./markdownDocument.js";
 import {
   asRow, countFrom, parseHeadingPath, pragmaInteger, pragmaText,
   requireBlob, requireInteger, requireNullableString, requireString,
@@ -30,6 +34,15 @@ export interface UpsertDocumentInput {
   fileSize: number;
   pageCount: number;
   textSource: TextSource;
+  /**
+   * How the page text was produced, if the caller knows.
+   *
+   * `UNKNOWN_EXTRACTION_VERSION` (0) means it did not say. On an existing row a 0 preserves
+   * whatever is recorded rather than downgrading it, so a caller that does not know cannot erase
+   * what a caller that did know wrote.
+   */
+  textExtractionVersion: number;
+  ocrExtractionVersion: number;
   markdownEngine: string | null;
   markdownVersion: number | null;
 }
@@ -52,6 +65,12 @@ export interface ChunkScope {
   modelId: string;
   modelVersion: string;
   dimensions: number;
+}
+
+export interface MarkdownCacheInput {
+  engineId: string;
+  markdownVersion: number;
+  pages: readonly MarkdownPageRecord[];
 }
 
 export interface ChunkInsert {
@@ -130,6 +149,16 @@ export interface SemanticStore {
    */
   listIndexedChunkIds(scope: ChunkScope): string[];
   search(scope: ChunkScope, queryVector: Float32Array, topK: number, minScore: number): ScoredChunk[];
+  /**
+   * Cache the Markdown a document was extracted to.
+   *
+   * Raises rather than returning a flag when the pages are not exactly `1..pageCount` for this
+   * document. A cache that does not describe the whole document would later be served as though
+   * it did, and a boolean nobody is obliged to read is how that gets missed.
+   */
+  putMarkdown(documentId: number, input: MarkdownCacheInput): void;
+  /** The cached Markdown, if this engine wrote it at this version and it still parses. */
+  getMarkdown(documentId: number, engineId: string, markdownVersion: number): MarkdownPageRecord[] | null;
   deleteDocument(contentHash: string): boolean;
   listDocuments(limit?: number): StoredDocument[];
   info(): StoreInfo;
@@ -215,6 +244,56 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
      VALUES (?,?,?,?,?,?)`,
   );
 
+  const writeMarkdown = db.transaction((documentId: number, input: MarkdownCacheInput) => {
+    // This is a boundary in its own right — it stamps `documents` atomically, so it cannot lean
+    // on a caller having validated first. A blank engine id or a nonsensical version would be
+    // written straight into the provenance that later reads key off, and `getMarkdown` would
+    // then never match what was stored.
+    if (input.engineId.trim().length === 0) {
+      throw new StoreDataError(`Cannot cache Markdown for document ${documentId}: the engine id is blank.`);
+    }
+    if (!Number.isInteger(input.markdownVersion) || input.markdownVersion < 1) {
+      throw new StoreDataError(
+        `Cannot cache Markdown for document ${documentId}: the representation version must be a positive whole number, not ${String(input.markdownVersion)}.`,
+      );
+    }
+
+    // The store is the only place that knows how many pages the document has, so it checks here
+    // rather than trusting whoever assembled the cache. A caller reaching past `indexDocument`
+    // cannot bypass it.
+    const owner = db.prepare("SELECT page_count FROM documents WHERE id = ?").get(documentId);
+    if (owner === undefined) {
+      throw new StoreDataError(`Cannot cache Markdown for document ${documentId}: no such row exists.`);
+    }
+    const pageCount = requireInteger(asRow(owner, "documents row"), "page_count", "documents row");
+    if (input.pages.length !== pageCount) {
+      throw new StoreDataError(
+        `Markdown cache for document ${documentId} covers ${input.pages.length} pages, but the document has ${pageCount}.`,
+      );
+    }
+
+    const rendered = renderPagePreservingMarkdown(input.pages);
+    if (rendered === null) {
+      throw new StoreDataError(`Markdown cache for document ${documentId} is not a complete run of pages from 1.`);
+    }
+
+    db.prepare(
+      `INSERT INTO document_markdown (document_id,engine_id,markdown_version,markdown,created_at)
+       VALUES (?,?,?,?,?)
+       ON CONFLICT(document_id) DO UPDATE SET
+         engine_id = excluded.engine_id, markdown_version = excluded.markdown_version,
+         markdown = excluded.markdown, created_at = excluded.created_at`,
+    ).run(documentId, input.engineId, input.markdownVersion, rendered, clock().toISOString());
+
+    // The stamp is part of the same write. Applying it before the row exists is how a document
+    // comes to advertise a cache it does not have.
+    db.prepare("UPDATE documents SET markdown_engine = ?, markdown_version = ? WHERE id = ?").run(
+      input.engineId,
+      input.markdownVersion,
+      documentId,
+    );
+  });
+
   const insertBatch = db.transaction((scope: ChunkScope, chunks: readonly ChunkInsert[]) => {
     const now = clock().toISOString();
     for (const chunk of chunks) {
@@ -272,12 +351,20 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
              name = excluded.name, file_path = excluded.file_path, file_size = excluded.file_size,
              page_count = excluded.page_count, text_source = excluded.text_source,
              last_opened_at = excluded.last_opened_at,
-             markdown_engine = excluded.markdown_engine, markdown_version = excluded.markdown_version
+             -- Preserve rather than clear when a caller says nothing. Absence means "I do not
+             -- know how this text was produced", not "there is no provenance", and clearing
+             -- would discard a record — and leave a cache row — written by a caller that knew.
+             markdown_engine = COALESCE(excluded.markdown_engine, markdown_engine),
+             markdown_version = COALESCE(excluded.markdown_version, markdown_version),
+             text_extraction_version = CASE WHEN excluded.text_extraction_version = 0
+               THEN text_extraction_version ELSE excluded.text_extraction_version END,
+             ocr_extraction_version = CASE WHEN excluded.ocr_extraction_version = 0
+               THEN ocr_extraction_version ELSE excluded.ocr_extraction_version END
            RETURNING *`,
         )
         .get(
           input.contentHash, input.name, input.filePath, input.fileSize, input.pageCount,
-          input.textSource, TEXT_EXTRACTION_VERSION, OCR_EXTRACTION_VERSION, now, now,
+          input.textSource, input.textExtractionVersion, input.ocrExtractionVersion, now, now,
           input.markdownEngine, input.markdownVersion,
         );
       return toStoredDocument(row);
@@ -357,6 +444,37 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
         .sort((a, b) => b.score - a.score)
         .slice(0, topK)
         .sort((a, b) => a.page - b.page || b.score - a.score);
+    },
+
+    putMarkdown(documentId, input) {
+      // One transaction for the row and the stamp on `documents`, because a document claiming an
+      // engine with no cache behind it is the false state the provenance rules exist to prevent.
+      // Validating inside the transaction means a refusal — or a failure part-way — leaves the
+      // previous cache and its stamp exactly as they were, still consistent with each other.
+      writeMarkdown.immediate(documentId, input);
+    },
+
+    getMarkdown(documentId, engineId, markdownVersion) {
+      // The document's own page count comes back with the row, because syntax alone cannot tell
+      // a complete cache from a shorter one that happens to parse. A truncated or hand-edited
+      // row can be a perfectly valid two-page document; serving it for a three-page document
+      // would report pages that were never cached as though they had been.
+      const raw = db
+        .prepare(
+          `SELECT m.markdown AS markdown, d.page_count AS page_count
+             FROM document_markdown m JOIN documents d ON d.id = m.document_id
+            WHERE m.document_id = ? AND m.engine_id = ? AND m.markdown_version = ?`,
+        )
+        .get(documentId, engineId, markdownVersion);
+      if (raw === undefined) return null;
+
+      const context = "document_markdown row";
+      const row = asRow(raw, context);
+      const pages = parsePagePreservingMarkdown(requireString(row, "markdown", context));
+      if (pages === null) return null;
+      // A miss, deliberately, and consistently with a malformed row: the caller's remedy for
+      // both is the same — extract again — and a corrupt cache must never be served in part.
+      return pages.length === requireInteger(row, "page_count", context) ? pages : null;
     },
 
     deleteDocument(contentHash) {

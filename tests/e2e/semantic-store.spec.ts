@@ -43,6 +43,37 @@ async function createPdfFixture(filePath: string) {
   await writeFile(filePath, await pdfDoc.save());
 }
 
+/** A ruled table on page 2, which PDF Inspector renders as a GFM table and a text layer cannot. */
+async function createTablePdfFixture(filePath: string) {
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const first = pdfDoc.addPage([612, 792]);
+  first.drawText("Annual Report", { x: 60, y: 720, size: 20, font: bold });
+  first.drawText("Administrative preamble concerning departmental record keeping", { x: 60, y: 680, size: 12, font });
+
+  const second = pdfDoc.addPage([612, 792]);
+  second.drawText("Revenue by Segment", { x: 60, y: 720, size: 16, font: bold });
+  const columnX = [60, 260, 420];
+  let rowY = 680;
+  ["Segment", "Revenue 2025", "Revenue 2026"].forEach((cell, column) => {
+    second.drawText(cell, { x: columnX[column]!, y: rowY, size: 12, font: bold });
+  });
+  second.drawLine({ start: { x: 55, y: rowY - 6 }, end: { x: 540, y: rowY - 6 }, thickness: 1 });
+  for (const row of [["Consumer", "412", "455"], ["Education", "308", "331"], ["Government", "677", "702"], ["Enterprise", "1204", "1318"]]) {
+    rowY -= 24;
+    row.forEach((cell, column) => second.drawText(cell, { x: columnX[column]!, y: rowY, size: 12, font }));
+  }
+  second.drawLine({ start: { x: 55, y: rowY - 6 }, end: { x: 540, y: rowY - 6 }, thickness: 1 });
+
+  const third = pdfDoc.addPage([612, 792]);
+  third.drawText("Notes", { x: 60, y: 720, size: 16, font: bold });
+  third.drawText("Enterprise revenue is discussed on page 2 of this report", { x: 60, y: 680, size: 12, font });
+
+  await writeFile(filePath, await pdfDoc.save());
+}
+
 function embeddingCount(dbPath: string): number {
   if (!existsSync(dbPath)) return 0;
   try {
@@ -331,11 +362,6 @@ test("cancelling from the renderer stops a rebuild before it clears the existing
         jobId,
         source: { kind: "path", path: file },
         name: "semantic-fixture.pdf",
-        pages: [
-          { page: 1, text: "Introduction and preamble concerning unrelated administrative matters", source: "pdf" },
-          { page: 2, text: "The escape velocity of Deimos is five point six metres per second", source: "pdf" },
-        ],
-        pageCount: 2,
         chunkingProfile: "balanced",
         force: true,
       });
@@ -349,6 +375,98 @@ test("cancelling from the renderer stops a rebuild before it clears the existing
     expect(outcome.status).toBe("cancelled");
     // And the forced rebuild it stopped did not take the existing index with it.
     expect(embeddingCount(dbPath)).toBe(before);
+  } finally {
+    await closeBounded(app, 15_000);
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The Phase 2 acceptance journey: a table read by PDF Inspector, cited on the page it is on.
+ *
+ * The distinguishing evidence is the pipes. The renderer's old text path read a PDF page as a
+ * flat run of words and could not produce `|Enterprise|1204|1318|` under any circumstances — the
+ * structure simply is not in the text layer. So a stored chunk containing GFM table syntax
+ * proves the main-process extractor produced it, not merely that some path produced text.
+ */
+test("finds a table row extracted in the main process and navigates to its page", async () => {
+  test.setTimeout(180_000);
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "markpdf-table-"));
+  const pdfPath = path.join(tempDir, "revenue-report.pdf");
+  const userDataPath = path.join(tempDir, "user-data");
+  await mkdir(userDataPath, { recursive: true });
+  await createTablePdfFixture(pdfPath);
+  const dbPath = path.join(userDataPath, "semantic-search", "semantic-index.sqlite");
+
+  const consoleLines: string[] = [];
+  let stage = "launching the application";
+  let app: ElectronApplication | null = null;
+  let window: Page | null = null;
+
+  try {
+    app = await electron.launch({
+      executablePath: electronPath,
+      args: [path.join(projectRoot, "dist-electron/bootstrap.js"), pdfPath],
+      env: {
+        ...process.env,
+        ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
+        MARKPDF_TEST_USER_DATA: userDataPath,
+        MARKPDF_DATA_DIR: userDataPath,
+        MARKPDF_E2E_EMBEDDER: "deterministic",
+        VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
+      },
+    });
+    window = await app.firstWindow();
+    window.on("console", (message) => consoleLines.push(`${message.type()}: ${message.text()}`));
+
+    stage = "waiting for the document to finish indexing";
+    await expect
+      .poll(
+        async () => embeddingCount(dbPath) > 0 && (await window!.locator(".ocr-status.semantic").count()) === 0,
+        { timeout: 90_000 },
+      )
+      .toBe(true);
+
+    stage = "checking the stored page-two chunk kept the table's structure";
+    // Supporting store evidence, read before touching the interface so a later failure cannot
+    // be confused with a search problem.
+    const db = new Database(dbPath, { readonly: true });
+    const rows = db
+      .prepare("SELECT page_number AS page, text FROM document_chunks ORDER BY page_number")
+      .all() as Array<{ page: number; text: string }>;
+    db.close();
+
+    const tableChunks = rows.filter((row) => row.text.includes("|Enterprise|1204|1318|"));
+    expect(tableChunks.map((row) => row.page)).toEqual([2]);
+
+    stage = "submitting the semantic query";
+    const searchInput = window.locator(".search-box input");
+    await window.locator(".search-box").click();
+    await searchInput.fill("Enterprise revenue by segment");
+    await searchInput.press("Enter");
+
+    stage = "waiting for the result";
+    await expect(window.locator(".semantic-result").first()).toBeVisible({ timeout: 45_000 });
+    const firstResult = window.locator(".semantic-result").first();
+    await expect(firstResult).toContainText("Page 2");
+
+    stage = "navigating to the cited page";
+    await firstResult.click();
+    await expect(window.locator(".page-box input")).toHaveValue("2");
+  } catch (error) {
+    const diagnostics = [
+      "",
+      `--- failed during: ${stage} ---`,
+      "--- renderer console (last 40) ---",
+      consoleLines.slice(-40).join("\n") || "(none)",
+      `--- embeddings in store: ${embeddingCount(dbPath)} ---`,
+    ].join("\n");
+    if (error instanceof Error) {
+      error.message = `${error.message}\n${diagnostics}`;
+      throw error;
+    }
+    throw new Error(`${String(error)}\n${diagnostics}`);
   } finally {
     await closeBounded(app, 15_000);
     await rm(tempDir, { recursive: true, force: true });

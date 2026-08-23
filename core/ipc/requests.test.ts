@@ -6,83 +6,19 @@ const validIndex = {
   jobId: "tab-1",
   source: { kind: "path", path: "/tmp/a.pdf" },
   name: "a.pdf",
-  pages: [
-    { page: 1, text: "one", source: "pdf" },
-    { page: 2, text: "two", source: "pdf" },
-  ],
-  pageCount: 2,
   chunkingProfile: "balanced",
 };
 
 describe("validating an index request", () => {
   it("accepts a well-formed request", () => {
-    expect(parseIndexRequest(validIndex).pages).toHaveLength(2);
+    expect(parseIndexRequest(validIndex).name).toBe("a.pdf");
+    expect(parseIndexRequest(validIndex).ocrCandidates).toEqual([]);
   });
 
-  it("rejects a page number beyond the document, which would cite a page that does not exist", () => {
-    expect(() =>
-      parseIndexRequest({ ...validIndex, pages: [{ page: 7, text: "x", source: "pdf" }] }),
-    ).toThrow(/outside 1..2/);
-  });
-
-  it("rejects a page number below one", () => {
-    expect(() =>
-      parseIndexRequest({ ...validIndex, pages: [{ page: 0, text: "x", source: "pdf" }] }),
-    ).toThrow(/outside 1..2/);
-  });
-
-  it("rejects duplicate pages, which would double-count a page's text", () => {
-    expect(() =>
-      parseIndexRequest({
-        ...validIndex,
-        pages: [
-          { page: 1, text: "x", source: "pdf" },
-          { page: 1, text: "y", source: "pdf" },
-        ],
-      }),
-    ).toThrow(/ascending order/);
-  });
-
-  it("rejects out-of-order pages, so stored chunk positions follow the document", () => {
-    expect(() =>
-      parseIndexRequest({
-        ...validIndex,
-        pages: [
-          { page: 2, text: "x", source: "pdf" },
-          { page: 1, text: "y", source: "pdf" },
-        ],
-      }),
-    ).toThrow(/ascending order/);
-  });
 });
 
 describe("validating the scalar fields of an index request", () => {
-  it("rejects a page count of zero, because a document with no pages cannot be indexed", () => {
-    // Zero passed the old non-negative check and then produced an unindexable request whose
-    // every page was already out of range — a confusing failure much later than this one.
-    expect(() => parseIndexRequest({ ...validIndex, pageCount: 0, pages: [] })).toThrow(
-      /pageCount/,
-    );
-  });
-
-  it("still rejects a negative or fractional page count", () => {
-    expect(() => parseIndexRequest({ ...validIndex, pageCount: -1 })).toThrow(/pageCount/);
-    expect(() => parseIndexRequest({ ...validIndex, pageCount: 2.5 })).toThrow(/pageCount/);
-  });
-
-  it("accepts a single-page document", () => {
-    expect(
-      parseIndexRequest({
-        ...validIndex,
-        pageCount: 1,
-        pages: [{ page: 1, text: "one", source: "pdf" }],
-      }).pageCount,
-    ).toBe(1);
-  });
-
   it("rejects a force value that is not a boolean rather than reading it as false", () => {
-    // Coercing "true" to false is the dangerous direction: the user asked for a rebuild and
-    // silently got the cached index back.
     expect(() => parseIndexRequest({ ...validIndex, force: "true" })).toThrow(/force/);
     expect(() => parseIndexRequest({ ...validIndex, force: 1 })).toThrow(/force/);
   });
@@ -90,7 +26,44 @@ describe("validating the scalar fields of an index request", () => {
   it("treats an absent force as no rebuild, and an explicit true as one", () => {
     expect(parseIndexRequest(validIndex).force).toBe(false);
     expect(parseIndexRequest({ ...validIndex, force: true }).force).toBe(true);
-    expect(parseIndexRequest({ ...validIndex, force: false }).force).toBe(false);
+  });
+});
+
+describe("validating renderer OCR candidates", () => {
+  const withOverrides = (ocrCandidates: unknown) => parseIndexRequest({ ...validIndex, ocrCandidates });
+
+  it("treats an absent list as no candidates at all", () => {
+    // The common case: a document with a text layer on every page. PDF Inspector reads it and
+    // the renderer contributes nothing.
+    expect(parseIndexRequest(validIndex).ocrCandidates).toEqual([]);
+  });
+
+  it("accepts candidates in strictly ascending page order", () => {
+    expect(withOverrides([{ page: 2, text: "scanned words" }, { page: 5, text: "more" }]).ocrCandidates).toEqual([
+      { page: 2, text: "scanned words" },
+      { page: 5, text: "more" },
+    ]);
+  });
+
+  it("rejects a list that is not an array", () => {
+    expect(() => withOverrides("2")).toThrow(/ocrCandidates/);
+  });
+
+  it("rejects a page that is not a whole number at or above one", () => {
+    for (const page of [0, -1, 1.5, "2", null, undefined, Number.NaN]) {
+      expect(() => withOverrides([{ page, text: "x" }])).toThrow(/ocrCandidates/);
+    }
+  });
+
+  it("rejects empty or blank candidate text, which would index a page as read when it was not", () => {
+    for (const text of ["", "   ", null, 7, undefined]) {
+      expect(() => withOverrides([{ page: 1, text }])).toThrow(/text/);
+    }
+  });
+
+  it("rejects duplicate or out-of-order pages rather than sorting them", () => {
+    expect(() => withOverrides([{ page: 2, text: "a" }, { page: 2, text: "b" }])).toThrow(/ascending/);
+    expect(() => withOverrides([{ page: 3, text: "a" }, { page: 1, text: "b" }])).toThrow(/ascending/);
   });
 });
 

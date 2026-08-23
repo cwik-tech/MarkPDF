@@ -6,23 +6,27 @@
 
 - Semantic indexing, embedding and search now run in a pure-Node `core/` layer inside the main process, reachable from the renderer through the preload bridge. This is the groundwork for driving MarkPDF from a terminal.
 - The semantic index is a real SQLite database managed with `better-sqlite3` and write-ahead logging, so a second process can read and write the file safely while the app is open. Coordinating two processes indexing the same document is separate work and is not part of this change.
+- Documents are now read by a native PDF extractor that preserves structure, so a table stays a table. A search result can quote a whole table row and tell you which page and which section it came from, instead of returning loose words with no context.
+- Search results carry the heading a passage sits under, including when that heading is on the previous page.
+- The extracted text of each document is now kept alongside the index, page by page. Nothing reads it back yet — indexing still re-reads the document each time — but it is there for the terminal tools that will need it.
 
 ### Changed
 
-- The index is upgraded in place on first launch. Existing documents and their chunks are preserved; nothing needs re-indexing.
+- The index file is upgraded in place on first launch, preserving every document and chunk already stored. Passages are then re-split as each document is opened, because how text is divided has changed. Nothing is lost and no action is needed.
+- Reading a document now happens in the main process rather than in the window, using the native extractor. Embedding, chunking and index writes moved there too, and progress is reported back to the window. Long stretches of that work are still measurable, so this reduces interface stalls rather than eliminating them.
 - Foreign key enforcement is now on, so removing a document genuinely removes its chunks and embeddings rather than leaving them behind.
-- Embedding, chunking and the SQLite index work have moved off the renderer thread into the main process, and progress is reported over IPC. Page-text extraction still runs in the renderer for now, and long stretches of main-process work are still measurable, so this reduces interface stalls rather than eliminating them.
 - Embedding model weights are cached on disk under the application data directory instead of in the browser cache. Existing users download the model once more; afterwards the same copy serves every process.
-- Semantic search no longer fetches its runtime from a content delivery network on first use, so it works offline once the model is present.
+- Semantic search no longer fetches anything from the network to work: the embedding runtime is bundled, and so are the small files used to measure how long a passage is.
 - Two windows holding the same document can no longer index it at the same time. Previously the second run collided with the first on duplicate chunk identifiers and failed.
-- Opening many documents at once now indexes them one at a time instead of all at once. Embedding cannot run in parallel anyway, so overlapping the jobs only made the application less responsive and used more memory.
-- Cancelling an index — by closing a tab, changing a setting, or turning semantic search off — now stops a document that is still waiting its turn, before it reads the file or loads the model.
-- Cancelling also stops the page-by-page text extraction that runs before indexing. Previously a long document kept reading every remaining page after the user had already turned the feature off.
+- Opening many documents at once now indexes them one at a time. Embedding cannot run in parallel anyway, so overlapping the jobs only used more memory and made the application less responsive.
+- Cancelling an index — by closing a tab, changing a setting, or turning semantic search off — stops a document that is still waiting its turn before it reads the file or loads the model, and stops one already being read at the next point the extractor returns. The extractor itself cannot be interrupted mid-read, so a cancel there costs one wasted read and never a written row.
+- Scanned pages are decided by the extractor rather than by counting characters. Text this window has already scanned is offered to it as a candidate and used for the pages it reports as unreadable; the progress line says how many candidates were used.
 - The embedding model's download progress now reaches whoever is watching. Previously only the first request to trigger a download saw the percentage, so opening the settings dialog partway through showed a bar that never moved.
 - A model is recorded as downloaded only after either a successful load — an explicit download finishing — or indexing that actually embedded document text, and in both cases only once its files are confirmed on disk. If the model cache is cleared or the data directory moves, the application notices and offers the download again instead of claiming the model is ready.
 
 ### Fixed
 
+- Large tables are no longer lost past their first rows. Text handed to the embedding model was silently cut at the model's limit, and a long table exceeded it many times over — measured on a 400-row table, 287 rows reached the model and 113 did not. Every row is now reachable. A table too long for one passage is split between whole rows wherever it can be, and where a single row or cell is itself too long it is carried across passages in consecutive parts, keeping every character.
 - Render Mermaid fenced blocks as theme-aware SVG charts in Markdown previews instead of displaying their source code.
 
 ### Removed

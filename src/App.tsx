@@ -90,9 +90,8 @@ import {
   ResizablePanelGroup,
 } from "./components/resizable";
 import type { MarkdownExportSettings, SemanticSearchSettings } from "./global";
-import { extractDocumentPages, pdfPageTextReader } from "./pdf/pageText";
 import { semanticProgressToUpdate } from "./semanticProgress";
-import { buildIndexSource } from "./semanticSource";
+import { buildIndexSource, buildOcrCandidates } from "./semanticSource";
 import {
   curatedEmbeddingModels,
   defaultSemanticScoreThreshold,
@@ -780,33 +779,15 @@ export default function App() {
       });
 
       try {
-        // Extraction stays here because OCR does: it needs a canvas, and its output already
-        // feeds the on-screen text layer. Everything after this runs in the main process.
-        const extraction = await extractDocumentPages(
-          pdfPageTextReader(tab.pdfDoc),
-          tab.ocrPages,
-          {
-            signal: job.controller.signal,
-            onProgress: (progress) => {
-              updatePdfTab(tabId, {
-                semanticIndexStatus: progress.status,
-                semanticIndexProgress: progress,
-                semanticIndexError: undefined,
-              });
-            },
-          },
-        );
-        // Cancellation is an outcome here, not a failure: whoever cancelled has already set the
-        // tab state it wants, so this leaves it alone.
-        if (extraction.status === "cancelled") return;
-        const pages = extraction.pages;
-
+        // Page text now comes from the main process, which reads the document itself. This
+        // window contributes only the OCR it has already produced for the visible text layer.
+        // That split is a Phase 2 scope decision, not a capability limit: main could rasterise
+        // too, but scanning the same pages a second time would buy nothing.
         const result = await window.pdfReader.semantic.indexDocument({
           jobId: tabId,
           source: buildIndexSource(tab),
           name: tab.name,
-          pages,
-          pageCount: tab.pdfDoc.numPages,
+          ocrCandidates: buildOcrCandidates(tab.ocrPages),
           chunkingProfile: settings.chunkingProfile,
         });
 

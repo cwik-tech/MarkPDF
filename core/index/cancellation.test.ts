@@ -8,6 +8,7 @@ import { createDeterministicEmbedder } from "./deterministicEmbedder.js";
 import { deferred } from "./deferred.test-support.js";
 import type { Embedder } from "./embeddings.js";
 import { expectIndexed } from "./indexResult.test-support.js";
+import { semanticChunkingVersion } from "../models.js";
 
 let dataDir: string;
 let store: SemanticStore;
@@ -33,7 +34,7 @@ function scopeFor(documentId: number): ChunkScope {
   return {
     documentId,
     chunkingProfile: "balanced",
-    chunkingVersion: 1,
+    chunkingVersion: semanticChunkingVersion,
     modelId: "Xenova/bge-small-en-v1.5",
     modelVersion: "hf-transformers-js",
     dimensions: 384,
@@ -50,36 +51,41 @@ afterEach(() => {
 });
 
 describe("deciding an index is already complete", () => {
-  it("rebuilds when the same total is spread across different pages", async () => {
-    // The count alone is not identity. Chunk ids embed page and per-page position, so the same
-    // file can yield [page1:0, page1:1] on one run and [page1:0, page2:0] on the next when the
-    // extracted text is distributed differently — which happens because OCR output is not
-    // deterministic and the content hash covers the file, not the extracted text.
+  it("rebuilds when the same text moves to a different page, though the count is unchanged", async () => {
+    // The count alone is not identity. A chunk id embeds the page it came from, so the same file
+    // extracted twice can produce the same *number* of chunks describing different pages —
+    // which happens because extraction is not deterministic and the content hash covers the
+    // file's bytes, not the text pulled out of them. Comparing counts would call that complete.
     const inner = createDeterministicEmbedder(384);
-    const words = (count: number, prefix: string) =>
-      Array.from({ length: count }, (_, i) => `${prefix}${i}`).join(" ");
     const bytes = new TextEncoder().encode("one file, two extraction outcomes");
+    const alpha = "Administrative preamble concerning departmental record keeping and audit.";
+    const beta = "The escape velocity of Deimos is five point six metres per second.";
 
-    // 500 words on a single page: balanced chunking (420 tokens, 350 stride) yields two chunks.
-    const onePage = await indexDocument(store, inner, {
-      bytes, name: "shifting.pdf", filePath: null, pageCount: 2, chunkingProfile: "balanced",
-      pages: [{ page: 1, text: words(500, "a"), source: "pdf" }],
-    });
-    const scope = scopeFor(expectIndexed(onePage).documentId);
-    expect(store.countIndexedChunks(scope)).toBe(2);
-
-    // The same file, extracted as two pages of 250 words: also two chunks, different ids.
-    const twoPages = await indexDocument(store, inner, {
+    const first = await indexDocument(store, inner, {
       bytes, name: "shifting.pdf", filePath: null, pageCount: 2, chunkingProfile: "balanced",
       pages: [
-        { page: 1, text: words(250, "a"), source: "pdf" },
-        { page: 2, text: words(250, "b"), source: "pdf" },
+        { page: 1, text: alpha, source: "pdf" },
+        { page: 2, text: beta, source: "pdf" },
+      ],
+    });
+    const scope = scopeFor(expectIndexed(first).documentId);
+    const before = store.countIndexedChunks(scope);
+    expect(before).toBeGreaterThan(0);
+
+    // The same file, the same two pieces of text, the same number of chunks — swapped pages.
+    const swapped = await indexDocument(store, inner, {
+      bytes, name: "shifting.pdf", filePath: null, pageCount: 2, chunkingProfile: "balanced",
+      pages: [
+        { page: 1, text: beta, source: "pdf" },
+        { page: 2, text: alpha, source: "pdf" },
       ],
     });
 
-    expect(twoPages.status).toBe("ready");
-    const pages = store.search(scope, await inner.embed("a1", "query"), 10, 0).map((hit) => hit.page);
-    expect(pages).toContain(2);
+    // Rebuilt, not reused: the count is identical, so only identity could have told them apart.
+    expect(swapped.status).toBe("ready");
+    expect(store.countIndexedChunks(scope)).toBe(before);
+    const pages = store.search(scope, await inner.embed("escape velocity Deimos", "query"), 10, 0);
+    expect(pages.find((hit) => hit.snippet.includes("escape velocity"))?.page).toBe(1);
   });
 
   it("rebuilds when the scope holds more rows than expected, rather than trusting a surplus", async () => {

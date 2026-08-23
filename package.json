@@ -35,7 +35,9 @@
     "pretest:e2e": "npm run build:core"
   },
   "dependencies": {
+    "@firecrawl/pdf-inspector": "1.17.0",
     "@huggingface/transformers": "^4.2.0",
+    "@napi-rs/canvas": "^0.1.100",
     "@vitejs/plugin-react": "^5.1.1",
     "better-sqlite3": "13.0.3",
     "electron-store": "^11.0.2",
@@ -73,6 +75,7 @@
       "dist/**/*",
       "dist-electron/**/*",
       "dist-core/**/*",
+      "assets/tokenizers/**",
       "build/icon.png",
       "package.json",
       "!node_modules/onnxruntime-node/bin/napi-v6/linux/**/*",

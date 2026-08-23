@@ -82,8 +82,12 @@ export interface SemanticIndexRequest {
   jobId: string;
   source: { kind: "bytes"; bytes: Uint8Array | number[]; path?: string } | { kind: "path"; path: string };
   name: string;
-  pages: Array<{ page: number; text: string; source: "pdf" | "ocr" }>;
-  pageCount: number;
+  /**
+   * OCR text for pages the main-process extractor cannot read. Page numbers are 1-based and must
+   * be strictly ascending. Page text otherwise no longer crosses IPC: the main process reads the
+   * document itself.
+   */
+  ocrCandidates?: Array<{ page: number; text: string }>;
   chunkingProfile: SemanticChunkingProfile;
   force?: boolean;
 }

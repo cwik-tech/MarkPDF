@@ -2,7 +2,8 @@ import { app } from "electron";
 import { readFile } from "node:fs/promises";
 import { openSemanticStore, type SemanticStore } from "../dist-core/store/index.js";
 import { resolveDataDir } from "../dist-core/paths.js";
-import { indexDocument, type IndexProgress, type IndexDocumentResult } from "../dist-core/index/indexDocument.js";
+import type { IndexProgress, IndexDocumentResult } from "../dist-core/index/indexDocument.js";
+import { indexPdfDocument } from "../dist-core/index/indexPdfDocument.js";
 import { searchDocument, type SemanticSearchResult } from "../dist-core/index/search.js";
 import { createTransformersEmbedder, type Embedder } from "../dist-core/index/embeddings.js";
 import { createDeterministicEmbedder } from "../dist-core/index/deterministicEmbedder.js";
@@ -184,12 +185,11 @@ export async function runIndexJob(
         }
         bytes = new Uint8Array(await readFile(request.filePath));
       }
-      return indexDocument(getSemanticStore(), getEmbedder(modelId), {
+      return indexPdfDocument(getSemanticStore(), getEmbedder(modelId), {
         bytes,
         name: request.name,
         filePath: request.filePath,
-        pages: request.pages,
-        pageCount: request.pageCount,
+        ocrCandidates: request.ocrCandidates,
         chunkingProfile: request.chunkingProfile,
         force: request.force,
         onProgress,

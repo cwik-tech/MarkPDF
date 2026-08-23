@@ -65,23 +65,39 @@ export const chunkingPresets: readonly ChunkingPreset[] = [
  * Bumping this invalidates every stored chunk, because it is both part of the chunk id and a
  * predicate in every query — so each document silently re-indexes on next open.
  *
- * Phase 1 deliberately leaves it at 1. The chunking algorithm is unchanged by the move into
- * core, so an existing index stays valid and no user pays for a reindex they gain nothing
- * from. Phase 2 raises it to 2 when structure-aware chunking actually changes the output.
+ * Raised to 2 by Phase 2, which replaced word-window chunking with structure-aware chunking:
+ * headings carried across page boundaries, tables kept in windows rather than cut mid-row, and a
+ * measured token budget instead of a word count. The output genuinely changed, so every stored
+ * chunk is invalidated — and re-indexed lazily, one document at a time, on next open.
  */
-export const semanticChunkingVersion = 1;
+export const semanticChunkingVersion = 2;
 
 /**
  * Recorded on `documents`; diagnostic only.
  *
- * Phase 1 does not change extraction — page text still reaches the index through the same path
- * the sql.js build used — so this stays at the value legacy rows already carry. Phase 2 raises
- * it when extraction actually moves to structured Markdown.
+ * Raised to 2 by Phase 2, which genuinely changed extraction: page text now comes from PDF
+ * Inspector as structured Markdown read in the main process, not from pdf.js in the renderer.
+ * A row carrying 1 was extracted the old way, which is what makes the column worth having.
  */
-export const TEXT_EXTRACTION_VERSION = 1;
+export const TEXT_EXTRACTION_VERSION = 2;
 
-/** Recorded on `documents`; diagnostic only. Unchanged from the legacy pipeline. */
+/**
+ * Recorded on `documents`; diagnostic only. Still 1: OCR itself is unchanged — the renderer
+ * produces it exactly as before, and Phase 2 only changed which pages it is used for.
+ */
 export const OCR_EXTRACTION_VERSION = 1;
+
+/**
+ * Recorded when a caller did not say how the text was produced.
+ *
+ * Distinguishable from 1 (the legacy renderer path) and 2 (PDF Inspector), so a row that simply
+ * does not know is not mistaken for a row that was read one particular way.
+ */
+export const UNKNOWN_EXTRACTION_VERSION = 0;
+
+/** The engine whose Markdown the cache holds, and the shape of what it produces. */
+export const MARKDOWN_ENGINE_ID = "pdf-inspector";
+export const MARKDOWN_VERSION = 1;
 
 export const modelVersion = "hf-transformers-js";
 

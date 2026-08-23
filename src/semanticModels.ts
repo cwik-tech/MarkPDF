@@ -79,7 +79,6 @@ export const chunkingPresets: ChunkingPreset[] = [
   }
 ];
 
-export const semanticChunkingVersion = 1;
 
 export const defaultSemanticScoreThreshold = 0.3;
 

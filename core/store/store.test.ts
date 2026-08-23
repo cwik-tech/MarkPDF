@@ -128,7 +128,7 @@ describe("opening the semantic store", () => {
     const store = open();
     const doc = store.upsertDocument({
       contentHash: "hc", name: "c.pdf", filePath: null, fileSize: 1, pageCount: 1,
-      textSource: "pdf", markdownEngine: null, markdownVersion: null,
+      textSource: "pdf", textExtractionVersion: 2, ocrExtractionVersion: 1, markdownEngine: null, markdownVersion: null,
     });
     expect(doc.createdAt).toBe("2026-08-22T12:00:00.000Z");
   });
@@ -156,13 +156,13 @@ describe("migrating a database left behind by the sql.js build", () => {
 
 describe("the version columns a document row records", () => {
   it("records the extraction versions the pipeline actually used, not a hardcoded number", () => {
-    // Phase 1 does not change extraction: page text still comes from the renderer through the
-    // same path the sql.js build used. Stamping a higher version would claim a change that did
-    // not happen, and would make a later genuine bump indistinguishable.
+    // The store records what the caller says and hardcodes nothing. It cannot know how the text
+    // was produced, so stamping a constant of its own would put a claim on the row that nothing
+    // backs up — and would make a later genuine bump indistinguishable from it.
     const store = open();
     store.upsertDocument({
       contentHash: "v".repeat(64), name: "v.pdf", filePath: null, fileSize: 1, pageCount: 1,
-      textSource: "pdf", markdownEngine: null, markdownVersion: null,
+      textSource: "pdf", textExtractionVersion: 2, ocrExtractionVersion: 1, markdownEngine: null, markdownVersion: null,
     });
 
     const db = connectDirectly();
@@ -188,7 +188,7 @@ describe("reporting index size", () => {
     for (let i = 0; i < 40; i += 1) {
       const doc = store.upsertDocument({
         contentHash: `size${String(i).padStart(60, "0")}`, name: `d${i}.pdf`, filePath: null,
-        fileSize: 1, pageCount: 1, textSource: "pdf", markdownEngine: null, markdownVersion: null,
+        fileSize: 1, pageCount: 1, textSource: "pdf", textExtractionVersion: 2, ocrExtractionVersion: 1, markdownEngine: null, markdownVersion: null,
       });
       store.replaceChunks(scopeFor(doc.id), [chunk(`size${i}:balanced:2:1:0`, 1, 0, "x".repeat(400))]);
     }
@@ -211,7 +211,7 @@ describe("deleting a document", () => {
     const store = open();
     const doc = store.upsertDocument({
       contentHash: "h1", name: "a.pdf", filePath: "/tmp/a.pdf", fileSize: 1, pageCount: 1,
-      textSource: "pdf", markdownEngine: null, markdownVersion: null,
+      textSource: "pdf", textExtractionVersion: 2, ocrExtractionVersion: 1, markdownEngine: null, markdownVersion: null,
     });
     store.replaceChunks(scopeFor(doc.id), [chunk("h1:balanced:2:1:0", 1, 0, "hello")]);
     expect(store.info().chunkCount).toBe(1);
@@ -244,7 +244,7 @@ describe("deleting a document", () => {
     const store = open();
     const doc = store.upsertDocument({
       contentHash: "h2", name: "b.pdf", filePath: null, fileSize: 1, pageCount: 1,
-      textSource: "pdf", markdownEngine: null, markdownVersion: null,
+      textSource: "pdf", textExtractionVersion: 2, ocrExtractionVersion: 1, markdownEngine: null, markdownVersion: null,
     });
     store.replaceChunks(scopeFor(doc.id), [chunk("h2:balanced:2:1:0", 1, 0, "hi")]);
 
@@ -269,7 +269,7 @@ describe("an interrupted index", () => {
     const store = open();
     const doc = store.upsertDocument({
       contentHash: "h3", name: "d.pdf", filePath: null, fileSize: 1, pageCount: 1,
-      textSource: "pdf", markdownEngine: null, markdownVersion: null,
+      textSource: "pdf", textExtractionVersion: 2, ocrExtractionVersion: 1, markdownEngine: null, markdownVersion: null,
     });
     const scope = scopeFor(doc.id);
     const all = [
@@ -294,7 +294,7 @@ describe("an interrupted index", () => {
     const store = open();
     const doc = store.upsertDocument({
       contentHash: "h4", name: "e.pdf", filePath: null, fileSize: 1, pageCount: 1,
-      textSource: "pdf", markdownEngine: null, markdownVersion: null,
+      textSource: "pdf", textExtractionVersion: 2, ocrExtractionVersion: 1, markdownEngine: null, markdownVersion: null,
     });
     const oldScope = { ...scopeFor(doc.id), chunkingVersion: 1 };
     store.replaceChunks(oldScope, [chunk("h4:balanced:1:1:0", 1, 0, "stale")]);
@@ -315,7 +315,7 @@ describe("a second operating-system process", () => {
     const store = open();
     store.upsertDocument({
       contentHash: "parent", name: "p.pdf", filePath: null, fileSize: 1, pageCount: 1,
-      textSource: "pdf", markdownEngine: null, markdownVersion: null,
+      textSource: "pdf", textExtractionVersion: 2, ocrExtractionVersion: 1, markdownEngine: null, markdownVersion: null,
     });
 
     const path = semanticIndexPath(dataDir);
