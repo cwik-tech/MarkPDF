@@ -212,9 +212,11 @@ describe("the version columns a document row records", () => {
     // was produced, so stamping a constant of its own would put a claim on the row that nothing
     // backs up — and would make a later genuine bump indistinguishable from it.
     const store = open();
+    const textExtractionVersion = TEXT_EXTRACTION_VERSION + 7;
+    const ocrExtractionVersion = OCR_EXTRACTION_VERSION + 7;
     store.upsertDocument({
       contentHash: "v".repeat(64), name: "v.pdf", filePath: null, fileSize: 1, pageCount: 1,
-      textSource: "pdf", textExtractionVersion: 2, ocrExtractionVersion: 1, markdownEngine: null, markdownVersion: null,
+      textSource: "pdf", textExtractionVersion, ocrExtractionVersion, markdownEngine: null, markdownVersion: null,
     });
 
     const db = connectDirectly();
@@ -223,8 +225,8 @@ describe("the version columns a document row records", () => {
       .get() as Record<string, unknown>;
     db.close();
 
-    expect(row.text_extraction_version).toBe(TEXT_EXTRACTION_VERSION);
-    expect(row.ocr_extraction_version).toBe(OCR_EXTRACTION_VERSION);
+    expect(row.text_extraction_version).toBe(textExtractionVersion);
+    expect(row.ocr_extraction_version).toBe(ocrExtractionVersion);
     // No Markdown is cached in Phase 1, so nothing may claim a Markdown engine or version.
     expect(row.markdown_engine).toBeNull();
     expect(row.markdown_version).toBeNull();

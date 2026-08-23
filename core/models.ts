@@ -1,3 +1,5 @@
+import { OCR_CONTRACT_VERSION } from "./ocr/ocrContract.js";
+
 export type SemanticChunkingProfile = "precise" | "balanced" | "contextual";
 
 export interface CuratedEmbeddingModel {
@@ -69,8 +71,13 @@ export const chunkingPresets: readonly ChunkingPreset[] = [
  * headings carried across page boundaries, tables kept in windows rather than cut mid-row, and a
  * measured token budget instead of a word count. The output genuinely changed, so every stored
  * chunk is invalidated — and re-indexed lazily, one document at a time, on next open.
+ *
+ * Raised to 3 by the OCR contract phase: a recognised table now reaches chunking as a table
+ * rather than as a run of paragraph lines, so a scanned page's chunks are windowed by row with
+ * the header as embedding context. Chunk output changed, so stored chunks are invalidated the
+ * same lazy way.
  */
-export const semanticChunkingVersion = 2;
+export const semanticChunkingVersion = 3;
 
 /**
  * Recorded on `documents`; diagnostic only.
@@ -82,10 +89,14 @@ export const semanticChunkingVersion = 2;
 export const TEXT_EXTRACTION_VERSION = 2;
 
 /**
- * Recorded on `documents`; diagnostic only. Still 1: OCR itself is unchanged — the renderer
- * produces it exactly as before, and Phase 2 only changed which pages it is used for.
+ * Recorded on `documents`; diagnostic only.
+ *
+ * Raised to 2 by the OCR contract phase, which made recognition versioned and geometry-carrying:
+ * one contract module names the index and overlay profiles, and pages read under it are
+ * reconstructed into tables when their word positions carry one. A row carrying 1 was read by
+ * the unversioned configuration, which is what makes the column worth having.
  */
-export const OCR_EXTRACTION_VERSION = 1;
+export const OCR_EXTRACTION_VERSION = OCR_CONTRACT_VERSION;
 
 /**
  * Recorded when a caller did not say how the text was produced.

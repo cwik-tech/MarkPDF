@@ -67,6 +67,46 @@ the difference between the application and the command line without removing it,
 IPC surface to carry per-word coordinates for every page of a scan. Parity needs one producer, not
 two producers agreeing more closely.
 
+### Recognition has one versioned contract with two measured profiles
+
+One producer does not mean one reading can serve every consumer. Core indexes with Tesseract's
+default page segmentation, preserved interword spaces, and a 200 dpi raster. The window overlay
+keeps sparse-text segmentation, preserved spaces, and scale 2. The installed engine was measured on
+the adversarial financial table: default segmentation kept each row together, while sparse-text
+segmentation returned separately boxed cells suitable for the selectable overlay. The index needs
+the former; the overlay needs the latter.
+
+`core/ocr/ocrContract.ts` names both profiles under contract version 2. Core translates the index
+profile into the installed engine enum, recognition parameters, and raster resolution rather than
+repeating those values at their call sites. The renderer cannot import core, so
+`src/ocrContract.ts` mirrors the overlay profile and translates all of its fields into the browser
+Tesseract API. `core/modelParity.test.ts` holds the versions and overlay values together.
+
+`OCR_EXTRACTION_VERSION` is the contract version rather than a second constant that can drift.
+`semanticChunkingVersion` is 3 because reconstructed tables produce different blocks and chunks
+from flat OCR text. Both changes cause the existing lazy document-reuse check to rebuild affected
+rows without a database migration.
+
+### Word geometry is narrowed at the engine boundary and reconstructed deterministically
+
+Core requests blocks and text from the Node Tesseract worker. `pageFromRecognitionResult` treats
+the worker reply as unknown input: text remains required, while malformed blocks, lines, words, and
+boxes are skipped. Missing geometry therefore degrades to the engine text with its internal layout
+preserved instead of making the page unreadable.
+
+`core/ocr/tableFromLines.ts` reconstructs a table only when at least three candidate lines support
+at least two positional columns. Column starts must be supported by 60 percent of candidate lines.
+The position tolerance is the lower-quartile adjacent-word gap, because the median on a financial
+table mostly measures wide column gutters. After the leftmost column, a supported start must also
+follow a visible gutter; this prevents aligned second words in labels such as `Line item` and
+`Full row` from becoming false columns. Words are assigned by position, so a missing cell remains
+empty and later values do not shift left. Weak evidence returns `null`, and the caller preserves the
+engine text unchanged.
+
+The existing structured chunker already understands GFM tables. For this small fixture all three
+body rows fit one stored window, while the header is added only to the embedding text. No P2
+chunking branch was added.
+
 ### A page that was not read is recorded as not read
 
 Recognising every page is only half the problem. The other half is what happens when recognition
@@ -101,8 +141,9 @@ re-indexing of documents that were never wrong.
 
 ### The window keeps its own recognition, for the window
 
-`src/pdf/ocr.ts` is unchanged and still runs. Its output serves four things that are properties of
-the window rather than of the index: the selectable text layer over a scanned page
+`src/pdf/ocr.ts` still runs, but now reads every setting from the mirrored overlay profile. Its
+output serves four things that are properties of the window rather than of the index: the
+selectable text layer over a scanned page
 (`src/App.tsx:3967`), in-window text search (`:2323`), the Markdown conversion engine's choice
 (`:1735`), and conversion itself (`:1817`). None of it is sent to the main process.
 
@@ -125,7 +166,25 @@ if somebody downgrades.
 
 **A page recorded as `empty` is never looked at again**, which is correct for a blank page and wrong
 if recognition improves later. The extraction and OCR version columns are what a future change would
-key a re-read off; nothing does that yet.
+key a re-read off. P2 now raises the OCR version when the recognition contract changes, and the
+existing reuse identity uses it to trigger that re-read.
+
+**Table reconstruction is deliberately conservative.** It recovers the measured single-layout
+financial page and falls back to flat text when positional evidence is weak. A page containing
+separate tables with incompatible column layouts is not yet modelled as multiple reconstruction
+regions.
+
+**A failed worker setup is cleaned up.** Applying recognition parameters happens after worker
+creation. If setup fails, the worker is terminated before the error crosses the boundary; if both
+operations fail, the error retains both causes.
+
+**The ranking fixture needed two corrections after measurement.** MCP search selects by score and
+then presents selected hits in page order, so array position is not rank; the Electron journey
+compares the returned scores. The originally proposed live query, `Sales & Marketing spend in
+2028`, is also ambiguous because the report contains both an approved plan and a superseded table.
+The real model ranked the superseded page first. The opt-in check therefore asks what was approved,
+which matches the document's own distinction. This is a correction to the verification premise,
+not a retrieval threshold adjustment.
 
 **`pageNeedsRecognition`'s second branch guards a case the installed extractor does not produce.**
 Measured: `@firecrawl/pdf-inspector` 1.17.0 reports a blank page, a page with a caption under a large
@@ -133,7 +192,40 @@ image, and a whole-page raster all as `needsOcr`. The branch exists because that
 dependency's behaviour rather than about ours — but it is currently unreachable through the real
 extractor, and its test drives the rule directly for that reason.
 
+## Alternatives Considered
+
+**Carry renderer geometry across IPC.** Rejected because it preserves two recognition producers,
+widens the privileged boundary, and still lets the browser and Node Tesseract builds disagree.
+
+**Use one OCR profile everywhere.** Rejected by measurement. Default segmentation gives the index
+coherent rows; sparse segmentation gives the overlay useful per-cell boxes. Either universal choice
+would make one consumer worse.
+
+**Trust flat OCR text or add a model-based table parser.** Flat text cannot associate a cell with
+both its row and column. A model-based parser would add a dependency, nondeterminism, and a new
+runtime failure mode for geometry the installed engine already supplies. The deterministic local
+rule is sufficient for the measured fixture and fails closed to the original text.
+
 ## Verification
+
+- `tests/e2e/mixed-document-search.spec.ts` — the P2 acceptance journey: the real Electron app
+  indexes the mixed report, an MCP client reads page ten as a GFM table, crosses the `Sales &
+  Marketing` row with `Approved 2028` to get `5170`, and verifies that the highest-scoring selected
+  passage is on page ten without a glued table header or neighbouring-page decoy.
+- `core/ocr/ocr.test.ts`, "the versioned OCR contract", "what the engine hands back with geometry",
+  and "reading a page that carries a table" — runtime profile wiring, defensive engine-result
+  narrowing, exact-text fallback, worker cleanup, and reconstruction at the OCR boundary.
+- `core/ocr/tableFromLines.test.ts` — the recorded engine geometry, wide title, prose fallback,
+  missing-cell preservation, minimum evidence, and no-geometry fallback. Mutation proof removes
+  column support by setting its threshold to zero; this file and the Electron journey both fail,
+  then pass after the implementation is restored.
+- `core/index/structuredChunking.test.ts`, "a page that recognition rebuilt as a table" — the
+  existing table window stores body rows and carries the header only in embedding context.
+- `core/modelParity.test.ts`, "the OCR contract the renderer mirrors and the one core indexes with"
+  — version and overlay-profile parity, including runtime enum and parameter translation.
+- `core/index/tableRetrieval.live.test.ts` — opt-in real-model quality check using the production
+  tokenizer, profile budget, structured chunker, and all fixture competitors. For the unambiguous
+  approved-plan question, page ten scores above every decoy.
 
 - `tests/e2e/mixed-document-ocr.spec.ts` — the acceptance journey: MarkPDF opens and indexes a
   thirteen-page report whose tenth page is only a picture, and an agent reading page ten over MCP

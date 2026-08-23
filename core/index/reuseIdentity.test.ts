@@ -121,9 +121,10 @@ describe("what a Phase 2 document records about itself", () => {
 
     expect(row.text_extraction_version).toBe(TEXT_EXTRACTION_VERSION);
     expect(TEXT_EXTRACTION_VERSION).toBe(2);
-    // OCR is unchanged: the renderer produces it exactly as before.
+    // OCR recognition is versioned with its contract: 2 marks rows read under the versioned
+    // profiles, whose pages are reconstructed into tables when their geometry carries one.
     expect(row.ocr_extraction_version).toBe(OCR_EXTRACTION_VERSION);
-    expect(OCR_EXTRACTION_VERSION).toBe(1);
+    expect(OCR_EXTRACTION_VERSION).toBe(2);
     expect(row.markdown_engine).toBe(MARKDOWN_ENGINE_ID);
     expect(row.markdown_version).toBe(MARKDOWN_VERSION);
   }, 60_000);

@@ -1,11 +1,18 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import Tesseract from "tesseract.js";
 import type { OcrPageText, OcrProgress } from "../types";
+import {
+  RENDERER_OCR_PROFILE,
+  overlayEngineValue,
+  overlayRecognitionParameters,
+} from "../ocrContract";
 import { extractPageText } from "./document";
 
 const ocrAssetBase = `${import.meta.env.BASE_URL}tesseract/`;
 const ocrCoreBase = `${import.meta.env.BASE_URL}tesseract-core/`;
-const renderScale = 2;
+// The window reads with the contract's overlay profile; the segmentation and space preservation
+// it sets below are that profile's other fields, spelled with the engine's own enums.
+const renderScale = RENDERER_OCR_PROFILE.renderScale;
 const minimumSampleChars = 360;
 const minimumPageChars = 24;
 const mostlyTextlessPageRatio = 0.6;
@@ -54,7 +61,7 @@ export async function runDocumentOcr(
     onProgress: (progress: OcrProgress) => void;
   }
 ): Promise<OcrPageText[]> {
-  const worker = await Tesseract.createWorker("eng", Tesseract.OEM.LSTM_ONLY, {
+  const worker = await Tesseract.createWorker("eng", overlayEngineValue(Tesseract.OEM), {
     workerPath: `${ocrAssetBase}worker.min.js`,
     corePath: ocrCoreBase,
     logger: (message) => {
@@ -69,10 +76,7 @@ export async function runDocumentOcr(
   });
 
   try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT,
-      preserve_interword_spaces: "1"
-    });
+    await worker.setParameters(overlayRecognitionParameters(Tesseract.PSM));
 
     const pages: OcrPageText[] = [];
 

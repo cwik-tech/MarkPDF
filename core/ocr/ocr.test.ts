@@ -6,15 +6,25 @@ import { gzipSync } from "node:zlib";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { ocrPages } from "./ocrPages.js";
 import { rasterisePdfPages, RasterisationCancelled } from "./rasterisePages.js";
+import { OCR_CONTRACT_VERSION, ocrProfile } from "./ocrContract.js";
 import {
+  configureTesseractWorker,
   OcrEngineError,
+  indexEngineValue,
+  indexRecognitionParameters,
+  pageFromRecognitionResult,
   progressFromLoggerMessage,
   tesseractOptions,
   tesseractWorkerOptions,
   textFromRecognitionResult,
 } from "./tesseractEngine.js";
+import { OCR_EXTRACTION_VERSION } from "../models.js";
 import { OcrDataUnavailableError, resolveOcrDataDirectory, TRAINED_DATA_FILE } from "./trainedData.js";
 import type { TextRecogniser } from "./tesseractEngine.js";
+import {
+  EXPECTED_PAGE_10_MARKDOWN,
+  RECORDED_PAGE_10_RESULT,
+} from "./recordedRecognition.test-support.js";
 
 /**
  * Reading a page that is only pixels.
@@ -44,7 +54,7 @@ function recogniser(answers: Record<number, string>, calls: number[] = []): Text
     async recognise() {
       position += 1;
       calls.push(position);
-      return answers[position] ?? "";
+      return { text: answers[position] ?? "", lines: [] };
     },
     async close() {
       // Nothing to release in the stand-in; the real one terminates a worker thread.
@@ -115,6 +125,22 @@ describe("rendering pages to images", () => {
 });
 
 describe("recognising the pages that could not be read", () => {
+  it("renders with the index profile DPI when the caller does not override it", async () => {
+    let renderedDpi: number | undefined;
+
+    await ocrPages(
+      { bytes: await buildTwoPagePdf(), pages: [1] },
+      {
+        rasterise: async (_bytes, options) => {
+          renderedDpi = options.dpi;
+          return [];
+        },
+      },
+    );
+
+    expect(renderedDpi).toBe(ocrProfile("index").dpi);
+  });
+
   it("returns one candidate per page, numbered as the extractor numbers them", async () => {
     const candidates = await ocrPages(
       { bytes: await buildTwoPagePdf(), pages: [1, 2] },
@@ -160,7 +186,7 @@ describe("recognising the pages that could not be read", () => {
     const engine: TextRecogniser = {
       async recognise() {
         controller.abort();
-        return "read before the cancel";
+        return { text: "read before the cancel", lines: [] };
       },
       async close() {},
     };
@@ -233,7 +259,6 @@ describe("recognising the pages that could not be read", () => {
         closed = true;
       },
     };
-
     await expect(
       ocrPages({ bytes: await buildTwoPagePdf(), pages: [1] }, { createRecogniser: async () => engine }),
     ).rejects.toThrow("the engine gave up");
@@ -242,6 +267,23 @@ describe("recognising the pages that could not be read", () => {
 });
 
 describe("keeping the engine offline and out of the way", () => {
+  it("terminates a worker when applying the index profile fails", async () => {
+    let terminated = false;
+    const worker = {
+      async setParameters() {
+        throw new Error("parameters refused");
+      },
+      async terminate() {
+        terminated = true;
+      },
+    };
+
+    await expect(configureTesseractWorker(worker, { preserve_interword_spaces: "1" })).rejects.toThrow(
+      "parameters refused",
+    );
+    expect(terminated).toBe(true);
+  });
+
   it("points it at language data inside this installation", () => {
     const options = tesseractOptions({});
 
@@ -337,7 +379,7 @@ describe("holding the engine open", () => {
     let closed = false;
     const engine: TextRecogniser = {
       async recognise() {
-        return textFromRecognitionResult({ data: {} });
+        return pageFromRecognitionResult({ data: {} });
       },
       async close() {
         closed = true;
@@ -348,5 +390,162 @@ describe("holding the engine open", () => {
       ocrPages({ bytes: await buildTwoPagePdf(), pages: [1] }, { createRecogniser: async () => engine }),
     ).rejects.toThrow(OcrEngineError);
     expect(closed).toBe(true);
+  }, 60_000);
+});
+
+describe("the versioned OCR contract", () => {
+  it("carries one version for every profile, so changing either reading is changing the contract", () => {
+    expect(OCR_CONTRACT_VERSION).toBe(2);
+    expect(OCR_EXTRACTION_VERSION).toBe(OCR_CONTRACT_VERSION);
+  });
+
+  it("reads for the index with the configuration that keeps rows intact", () => {
+    // Measured against the real engine: the default page segmentation returns a financial table
+    // one row per line, while sparse segmentation returns every cell as its own paragraph. The
+    // index is the consumer that needs rows.
+    expect(ocrProfile("index")).toEqual({
+      engine: "LSTM_ONLY",
+      pageSegmentation: "default",
+      preserveInterwordSpaces: true,
+      dpi: 200,
+    });
+  });
+
+  it("reads for the window overlay with the configuration that keeps per-cell boxes", () => {
+    // The overlay draws highlight rectangles from cell positions, which sparse segmentation
+    // gives directly. Two profiles rather than one is the honest outcome of the measurement,
+    // not an oversight.
+    expect(ocrProfile("overlay")).toEqual({
+      engine: "LSTM_ONLY",
+      pageSegmentation: "SPARSE_TEXT",
+      preserveInterwordSpaces: true,
+      renderScale: 2,
+    });
+  });
+
+  it("hands the engine exactly the parameters the index profile names", () => {
+    // The default page segmentation is expressed by the absence of an override, which is how
+    // the engine's own default is selected.
+    expect(indexRecognitionParameters()).toEqual({ preserve_interword_spaces: "1" });
+  });
+
+  it("maps the engine named by the index profile to the installed runtime value", () => {
+    const installedEngine = Symbol("installed LSTM engine");
+
+    expect(indexEngineValue({ LSTM_ONLY: installedEngine })).toBe(installedEngine);
+  });
+});
+
+describe("what the engine hands back with geometry", () => {
+  it("returns the page's text and its lines, each word with the x extent it occupies", () => {
+    const page = pageFromRecognitionResult(RECORDED_PAGE_10_RESULT);
+
+    expect(page.text).toContain("Sales & Marketing 4110 4620 5170 5890");
+    expect(page.lines.map((entry) => entry.text)).toEqual([
+      "Approved operating plan",
+      "Line item Approved 2026 Approved 2027 Approved 2028 Approved 2029",
+      "Sales & Marketing 4110 4620 5170 5890",
+      "R&D 3020 3310 3640 3980",
+      "G&A 1180 1240 1310 1390",
+    ]);
+
+    const sales = page.lines.find((entry) => entry.text.startsWith("Sales"));
+    expect(sales?.words.map((word) => word.text)).toEqual([
+      "Sales",
+      "&",
+      "Marketing",
+      "4110",
+      "4620",
+      "5170",
+      "5890",
+    ]);
+    // The positions are what reconstruction clusters on, so they are stated exactly.
+    expect(sales?.words[5]).toEqual({ text: "5170", x0: 1154, x1: 1226 });
+  });
+
+  it("keeps the strictness of the text half: a result with no text is not a page", () => {
+    for (const malformed of [undefined, null, {}, { data: null }, { data: {} }, { data: { text: 42 } }, "text"]) {
+      expect(() => pageFromRecognitionResult(malformed)).toThrow(OcrEngineError);
+    }
+  });
+
+  it("returns no lines rather than failing when the engine produced no blocks", () => {
+    // Reconstruction is a pure function of the lines: an empty list degrades to the flat text,
+    // which is the behaviour every page had before geometry existed.
+    expect(pageFromRecognitionResult({ data: { text: "words" } }).lines).toEqual([]);
+    expect(pageFromRecognitionResult({ data: { text: "words", blocks: null } }).lines).toEqual([]);
+  });
+
+  it("skips a line or word it cannot place rather than trusting a shape it does not recognise", () => {
+    const shaped = {
+      data: {
+        text: "t",
+        blocks: [
+          {
+            paragraphs: [
+              {
+                lines: [
+                  {
+                    text: "kept line",
+                    bbox: { x0: 0, y0: 0, x1: 100, y1: 30 },
+                    words: [
+                      { text: "kept", bbox: { x0: 0, y0: 0, x1: 40, y1: 30 } },
+                      { text: "no bbox" },
+                      "not a word",
+                    ],
+                  },
+                  { text: "no bbox" },
+                  "not a line",
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const page = pageFromRecognitionResult(shaped);
+
+    expect(page.lines).toEqual([
+      { text: "kept line", bbox: { x0: 0, y0: 0, x1: 100, y1: 30 }, words: [{ text: "kept", x0: 0, x1: 40 }] },
+    ]);
+  });
+});
+
+describe("reading a page that carries a table", () => {
+  it("stores the reconstructed table, with its columns associated", async () => {
+    const recognised = pageFromRecognitionResult(RECORDED_PAGE_10_RESULT);
+    const engine: TextRecogniser = {
+      async recognise() {
+        return recognised;
+      },
+      async close() {},
+    };
+
+    const candidates = await ocrPages(
+      { bytes: await buildTwoPagePdf(), pages: [1] },
+      { createRecogniser: async () => engine },
+    );
+
+    expect(candidates).toEqual([{ page: 1, text: EXPECTED_PAGE_10_MARKDOWN }]);
+  }, 60_000);
+
+  it("stores the engine's own text with internal blank lines when the page carries no table", async () => {
+    // The engine's text field is the authority for everything reconstruction declines to
+    // rewrite. Losing its blank lines would merge blocks that every page before geometry kept
+    // apart.
+    const engine: TextRecogniser = {
+      async recognise() {
+        return { text: RECORDED_PAGE_10_RESULT.data.text, lines: [] };
+      },
+      async close() {},
+    };
+
+    const candidates = await ocrPages(
+      { bytes: await buildTwoPagePdf(), pages: [1] },
+      { createRecogniser: async () => engine },
+    );
+
+    expect(candidates).toEqual([{ page: 1, text: RECORDED_PAGE_10_RESULT.data.text.trim() }]);
   }, 60_000);
 });

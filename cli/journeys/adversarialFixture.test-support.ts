@@ -47,9 +47,8 @@ export const ADVERSARIAL = Object.freeze({
   /**
    * The answer, and it exists only as pixels on page 10.
    *
-   * Exactly three body rows, deliberately: without row-level chunking the whole page is one block,
-   * and that block has to stay under `createSnippet`'s 260-character cut for a test to be able to
-   * see the other rows in the snippet. Widen this table and that discriminator stops working.
+   * Exactly three body rows: enough repeated geometry to establish columns while keeping the
+   * acceptance page small enough to inspect as one coherent financial table.
    */
   page10: Object.freeze({
     title: "Approved operating plan",
@@ -59,7 +58,7 @@ export const ADVERSARIAL = Object.freeze({
     row2026: "4110",
     row2027: "4620",
     row2029: "5890",
-    /** Must not appear in the snippet that answers a question about Sales & Marketing. */
+    /** Neighbouring rows used to prove the reconstructed table preserves every body row. */
     otherRows: Object.freeze({ rd2026: "3020", ga2026: "1180" }),
   }),
 

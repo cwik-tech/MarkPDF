@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { chunkStructuredPages, toPlainText, BREADCRUMB_SEPARATOR } from "./structuredChunking.js";
 import { BREADCRUMB_TOKEN_SHARE } from "../tokenize/budget.js";
 import { createTruncatingEmbedder } from "./truncatingEmbedder.js";
+import { EXPECTED_PAGE_10_MARKDOWN } from "../ocr/recordedRecognition.test-support.js";
 
 /**
  * Assembling blocks into chunks that fit the embedding budget.
@@ -237,5 +238,29 @@ describe("the truncating embedder, which is what makes truncation observable", (
     const embedder = createTruncatingEmbedder({ limit: 5, count });
     await embedder.embed("abcdefghij", "passage");
     expect(embedder.truncations).toEqual([{ given: 10, embedded: 5 }]);
+  });
+});
+
+describe("a page that recognition rebuilt as a table", () => {
+  it("chunks through the existing table windowing: body rows stored, header embedded, not stored", () => {
+    // The reconstructed page-10 table is small enough to fit one window, so its rows share one
+    // stored chunk — the windowing groups as many rows as fit, and does not split one row per
+    // chunk. What matters for retrieval is where the header goes: `embedText` carries it, so the
+    // model knows what the numbers are, and the stored text does not, so a snippet cannot quote
+    // a header that is not contiguous with the row anywhere on the page. No new chunking code
+    // is needed for this; the machinery that windows native tables windows rebuilt ones too.
+    const chunks = chunkStructuredPages([{ page: 10, markdown: EXPECTED_PAGE_10_MARKDOWN, source: "ocr" }], {
+      budget: 400,
+      count,
+    });
+
+    const answer = chunks.find((chunk) => chunk.text.includes("5170"));
+    expect(answer, "the answer row is stored").toBeDefined();
+    expect(answer?.text).toContain("Sales & Marketing");
+    expect(answer?.text).toContain("R&D");
+    expect(answer?.text).toContain("G&A");
+    expect(answer?.text, "the header is not stored with the rows").not.toContain("Approved 2026");
+    expect(answer?.embedText, "the header is embedded before the rows").toContain("Approved 2026");
+    expect(answer?.embedText).toContain("5170");
   });
 });

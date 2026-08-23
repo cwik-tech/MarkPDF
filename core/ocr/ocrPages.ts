@@ -1,6 +1,8 @@
 import type { OcrPageCandidate } from "../extract/readDocumentPages.js";
 import { rasterisePdfPages, RasterisationCancelled, type PageImage, type RasteriseOptions } from "./rasterisePages.js";
 import { createTesseractRecogniser, type TextRecogniser } from "./tesseractEngine.js";
+import { tableFromLines } from "./tableFromLines.js";
+import { ocrProfile } from "./ocrContract.js";
 
 export interface OcrRequest {
   bytes: Uint8Array;
@@ -45,7 +47,7 @@ export async function ocrPages(request: OcrRequest, dependencies: OcrDependencie
   try {
     images = await (dependencies.rasterise ?? rasterisePdfPages)(request.bytes, {
       pages: request.pages,
-      ...(dependencies.dpi === undefined ? {} : { dpi: dependencies.dpi }),
+      dpi: dependencies.dpi ?? ocrProfile("index").dpi,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     });
   } catch (error) {
@@ -70,7 +72,11 @@ export async function ocrPages(request: OcrRequest, dependencies: OcrDependencie
       // signal is read between pages and nothing pretends otherwise.
       if (cancelled()) break;
       request.onProgress?.(`Reading page ${image.page} with OCR (${position + 1} of ${images.length})`);
-      const text = (await recogniser.recognise(image.image)).trim();
+      const recognised = await recogniser.recognise(image.image);
+      // Reconstruction is a pure function of the recognised lines; when it declines the page
+      // (no table, or no geometry at all), the engine's own internal line breaks are preserved.
+      // As before, outer whitespace is trimmed before storage.
+      const text = (tableFromLines(recognised.lines) ?? recognised.text).trim();
       if (text.length > 0) candidates.push({ page: image.page, text });
     }
     return candidates;

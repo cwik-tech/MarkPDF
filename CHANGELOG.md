@@ -41,6 +41,7 @@
 
 ### Fixed
 
+- Scanned financial tables now keep their rows and columns when they enter the index. Reading the pictured page through an assistant returns a Markdown table, and semantic search can associate a value with the correct row and year instead of seeing a loose sequence of numbers.
 - A page that is only a picture is no longer skipped when the app indexes a document. MarkPDF decided whether to read a scan by sampling five pages — the first three, the middle and the last — so a scanned table in an otherwise ordinary report was stored as an empty page, and searching for anything on it found nothing. Every page a document's structure cannot be read from is now read, whichever way the document was opened.
 - A page nothing could read is no longer counted as a blank page. MarkPDF now records why each page is empty — because there was nothing on it, or because nothing managed to read it — so a document with a gap is reported as incomplete rather than ready, the tab names the pages that could not be read, and an assistant reading those pages is told they are missing instead of being handed an empty page. Documents indexed before this change repair themselves the next time they are opened.
 - Scanned pages are read the same way in the app as at the command line. The app used to index its own on-screen reading of a scan, which was produced for displaying selectable text and flattened tables into a loose run of numbers; the same file therefore indexed differently depending on which one had opened it. On-screen text selection, in-window search and Markdown conversion are unchanged and still use the app's own reading.
@@ -227,4 +228,3 @@ Created a planning document for open-document-awareness capabilities in the MCP 
 ## 2026-08-23 14:54
 
 Implemented Phase 2 document indexing to track extraction provenance and Markdown caching, allowing the system to detect when extracted text changes between runs even when file bytes remain identical. The changes add extraction version tracking (`textExtractionVersion`, `ocrExtractionVersion`) and optional Markdown caching with engine metadata, enabling documents with variable OCR or parsing output to be properly reindexed rather than incorrectly reused. A comprehensive test suite validates the reuse logic, cache backfilling for legacy documents, page-outcome tracking, and cancellation behavior across these scenarios.
-

@@ -1,7 +1,15 @@
 import { resolveOcrDataDirectory } from "./trainedData.js";
+import { ocrProfile } from "./ocrContract.js";
+import type { OcrLineBox, OcrWordBox } from "./tableFromLines.js";
+
+/** A recognised page: the engine's own text, which is authoritative, and the geometry it found. */
+export interface RecognisedPage {
+  text: string;
+  lines: OcrLineBox[];
+}
 
 export interface TextRecogniser {
-  recognise(image: Uint8Array): Promise<string>;
+  recognise(image: Uint8Array): Promise<RecognisedPage>;
   close(): Promise<void>;
 }
 
@@ -62,6 +70,116 @@ export function textFromRecognitionResult(value: unknown): string {
     throw new OcrEngineError("The recognition engine returned no text field; the page cannot be treated as read.");
   }
   return text;
+}
+
+/**
+ * The engine's parameters for the contract's index profile, which is the profile core reads
+ * with.
+ *
+ * Exported so a test can assert them without starting an engine. The default page segmentation
+ * is selected by the absence of an override — that is how the engine's own default is chosen,
+ * and the measurement behind the contract says the default is the reading that keeps rows.
+ */
+export function indexRecognitionParameters(): Record<string, string> {
+  const profile = ocrProfile("index");
+  return { preserve_interword_spaces: profile.preserveInterwordSpaces ? "1" : "0" };
+}
+
+/** Resolve the installed engine enum through the name carried by the OCR contract. */
+export function indexEngineValue<T>(engines: Readonly<{ LSTM_ONLY: T }>): T {
+  return engines[ocrProfile("index").engine];
+}
+
+export interface ConfigurableTesseractWorker {
+  setParameters(parameters: Readonly<Record<string, string>>): Promise<unknown>;
+  terminate(): Promise<unknown>;
+}
+
+/** Apply the profile before exposing a worker, and release it if setup fails. */
+export async function configureTesseractWorker<T extends ConfigurableTesseractWorker>(
+  worker: T,
+  parameters: Readonly<Record<string, string>>,
+): Promise<T> {
+  try {
+    await worker.setParameters(parameters);
+    return worker;
+  } catch (configurationError) {
+    try {
+      await worker.terminate();
+    } catch (terminationError) {
+      throw new OcrEngineError("The recognition engine rejected its parameters and could not be terminated.", {
+        cause: new AggregateError([configurationError, terminationError]),
+      });
+    }
+    throw configurationError;
+  }
+}
+
+/**
+ * A recognised page, reconstructed from the engine's result rather than trusted.
+ *
+ * The text half keeps the strictness it has always had: a result with no text is not a page.
+ * The geometry half is defensive in the other direction: a block, paragraph, line or word that
+ * does not carry the expected shape is skipped, never fatal, because reconstruction is a pure
+ * function of the lines and an empty list degrades to the flat text — the behaviour every page
+ * had before geometry existed.
+ */
+export function pageFromRecognitionResult(value: unknown): RecognisedPage {
+  const text = textFromRecognitionResult(value);
+  const lines: OcrLineBox[] = [];
+
+  const blocks = property(property(value, "data"), "blocks");
+  if (Array.isArray(blocks)) {
+    for (const block of blocks) {
+      const paragraphs = property(block, "paragraphs");
+      if (!Array.isArray(paragraphs)) continue;
+      for (const paragraph of paragraphs) {
+        const paragraphLines = property(paragraph, "lines");
+        if (!Array.isArray(paragraphLines)) continue;
+        for (const rawLine of paragraphLines) {
+          const line = lineFromRecognition(rawLine);
+          if (line !== null) lines.push(line);
+        }
+      }
+    }
+  }
+
+  return { text, lines };
+}
+
+function finiteNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value;
+}
+
+function lineFromRecognition(value: unknown): OcrLineBox | null {
+  if (typeof value !== "object" || value === null) return null;
+  const text = property(value, "text");
+  if (typeof text !== "string" || text.trim().length === 0) return null;
+
+  const bbox = property(value, "bbox");
+  const x0 = finiteNumber(property(bbox, "x0"));
+  const y0 = finiteNumber(property(bbox, "y0"));
+  const x1 = finiteNumber(property(bbox, "x1"));
+  const y1 = finiteNumber(property(bbox, "y1"));
+  if (x0 === null || y0 === null || x1 === null || y1 === null) return null;
+
+  const words: OcrWordBox[] = [];
+  const rawWords = property(value, "words");
+  if (Array.isArray(rawWords)) {
+    for (const rawWord of rawWords) {
+      if (typeof rawWord !== "object" || rawWord === null) continue;
+      const wordText = property(rawWord, "text");
+      if (typeof wordText !== "string" || wordText.trim().length === 0) continue;
+      const wordBox = property(rawWord, "bbox");
+      const wordX0 = finiteNumber(property(wordBox, "x0"));
+      const wordX1 = finiteNumber(property(wordBox, "x1"));
+      if (wordX0 === null || wordX1 === null) continue;
+      words.push({ text: wordText, x0: wordX0, x1: wordX1 });
+    }
+  }
+
+  return { text, bbox: { x0, y0, x1, y1 }, words };
 }
 
 export interface RecognitionProgress {
@@ -144,9 +262,15 @@ export async function createTesseractRecogniser(options: RecogniserOptions = {})
 
   let worker: Awaited<ReturnType<typeof createWorker>>;
   try {
-    // `OEM.LSTM_ONLY` matches the reader (`src/pdf/ocr.ts:57`) and matches the bundled
-    // `4.0.0_best_int` data, which carries no legacy model.
-    worker = await createWorker("eng", OEM.LSTM_ONLY, tesseractWorkerOptions(options.env ?? process.env, options.onProgress));
+    // `OEM.LSTM_ONLY` matches the contract's profiles and matches the bundled `4.0.0_best_int`
+    // data, which carries no legacy model.
+    worker = await createWorker(
+      "eng",
+      indexEngineValue(OEM),
+      tesseractWorkerOptions(options.env ?? process.env, options.onProgress),
+    );
+    // The index profile's parameters, which select the reading that keeps rows.
+    worker = await configureTesseractWorker(worker, indexRecognitionParameters());
   } catch (error) {
     throw asOcrEngineError(error, "could not be started");
   }
@@ -157,7 +281,11 @@ export async function createTesseractRecogniser(options: RecogniserOptions = {})
     return {
       async recognise(image) {
         try {
-          return textFromRecognitionResult(await worker.recognize(Buffer.from(image)));
+          // `blocks: true` is what makes word geometry cross the worker boundary; without it the
+          // engine returns text alone and reconstruction has nothing to cluster.
+          return pageFromRecognitionResult(
+            await worker.recognize(Buffer.from(image), {}, { blocks: true, text: true }),
+          );
         } catch (error) {
           throw asOcrEngineError(error, "could not read a page");
         }
