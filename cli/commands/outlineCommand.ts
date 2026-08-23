@@ -1,7 +1,5 @@
-import { readDocumentPages } from "../../dist-core/extract/readDocumentPages.js";
-import { findIndexedDocument } from "../../dist-core/index/documentLookup.js";
+import { resolveDocumentPages, type DocumentPages } from "../../dist-core/documents/documentPages.js";
 import type { MarkdownPage } from "../../dist-core/index/markdownBlocks.js";
-import { MARKDOWN_ENGINE_ID, MARKDOWN_VERSION } from "../../dist-core/models.js";
 import { outlineFromPages, type OutlineEntry } from "../../dist-core/outline/documentOutline.js";
 import type { CommandContext } from "../context.js";
 import { createOcrResolver } from "../ocrResolver.js";
@@ -16,64 +14,6 @@ function renderHuman(entries: readonly OutlineEntry[]): string {
     .join("\n")}\n`;
 }
 
-/**
- * The pages this document's headings come from, preferring the ones already stored.
- *
- * The same order as `search`: a document already in the index is answered from the index, so
- * outlining a library you have indexed needs no filesystem permission. Only a miss reads the
- * file, and only that branch can be refused.
- */
-async function pagesFor(
-  context: CommandContext,
-  given: string,
-): Promise<{ pages: MarkdownPage[]; fromIndex: boolean } | { cancelled: true }> {
-  // Read each path at most once. The lookup's fallback branch hashes the file to find it by
-  // content, and extraction below needs the same bytes; without this a granted document that is
-  // not yet indexed would be read off disk twice.
-  const reads = new Map<string, Promise<Uint8Array>>();
-  const readOnce = (path: string): Promise<Uint8Array> => {
-    const started = reads.get(path);
-    if (started !== undefined) return started;
-    const pending = context.readFile(path);
-    reads.set(path, pending);
-    return pending;
-  };
-
-  const lookup = await findIndexedDocument(context.store(), context.allowlist(), {
-    path: given,
-    readFile: readOnce,
-  });
-
-  if (lookup.status === "found") {
-    const cached = context.store().getMarkdown(lookup.document.id, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION);
-    if (cached !== null) {
-      // `source` is recorded per chunk, not per cached page, and heading detection does not
-      // depend on it — a `## Heading` line is one however the text was read.
-      return { pages: cached.map((page) => ({ page: page.page, markdown: page.markdown, source: "pdf" })), fromIndex: true };
-    }
-  }
-
-  const resolved = await context.requireAccess(given, "read");
-  // The same reading as `index` and `convert`: a scanned page is recognised rather than left
-  // blank, so a document has one outline whichever command asks for it.
-  const read = await readDocumentPages({
-    bytes: await readOnce(resolved),
-    resolveOcr: createOcrResolver(context, given),
-    signal: context.signal,
-  });
-  if (read.status === "cancelled") return { cancelled: true };
-  return {
-    pages: read.pages.map((page) => ({
-      page: page.page,
-      markdown: page.markdown,
-      // A page nothing could read has no text, so it contributes no headings either way. `pdf`
-      // is the honest label for "not recognised text".
-      source: page.source === "ocr" ? "ocr" : "pdf",
-    })),
-    fromIndex: false,
-  };
-}
-
 export async function runOutlineCommand(
   context: CommandContext,
   positionals: readonly string[],
@@ -82,17 +22,52 @@ export async function runOutlineCommand(
   const given = positionals[0] ?? "";
   const depth = options.number("depth");
 
-  let source: Awaited<ReturnType<typeof pagesFor>>;
+  // One shared operation, the same one the MCP tools use: index first, filesystem only if it has
+  // to. Written once because the order is a security property — a document already in the index is
+  // answered from the index, and asking about it needs no permission.
+  const resolve = async (): Promise<DocumentPages> =>
+    await resolveDocumentPages(context.store(), context.allowlist(), {
+      path: given,
+      access: "index-first",
+      readFile: context.readFile,
+      resolveOcr: createOcrResolver(context, given),
+      signal: context.signal,
+    });
+
+  let source: DocumentPages;
   try {
-    source = await pagesFor(context, given);
+    source = await resolve();
+    if (source.status === "denied") {
+      // Offering the grant here rather than inside the shared operation keeps core free of
+      // anything that talks to a person.
+      await context.requireAccess(source.path, "read");
+      source = await resolve();
+    }
   } catch (error) {
     const failure = classifyDocumentFailure(error, given);
     context.report.problem(failure);
     return failure.code;
   }
-  if ("cancelled" in source) return EXIT_CODE.interrupted;
 
-  const entries = outlineFromPages(source.pages, depth);
+  if (source.status === "cancelled") return EXIT_CODE.interrupted;
+  if (source.status === "denied") {
+    const failure = classifyDocumentFailure(
+      Object.assign(new Error(`Access denied: not permitted to read ${source.path}.`), { code: "EACCES" }),
+      given,
+    );
+    context.report.problem(failure);
+    return EXIT_CODE.accessDenied;
+  }
+  // `no-recorded-path` cannot arise here — this command always names a file — but it is a state
+  // of the shared resolver, and a surface that quietly failed to handle one would be a surface
+  // that had drifted from it.
+  if (source.status === "not-indexed" || source.status === "no-stored-text" || source.status === "no-recorded-path") {
+    context.report.problem({ code: EXIT_CODE.notFound, message: `No such file: ${given}` });
+    return EXIT_CODE.notFound;
+  }
+
+  const pages: MarkdownPage[] = source.pages;
+  const entries = outlineFromPages(pages, depth);
   if (entries.length === 0) context.report.note(`No headings found in ${given}.`);
 
   context.report.emit(

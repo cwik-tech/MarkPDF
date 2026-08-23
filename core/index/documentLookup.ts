@@ -13,6 +13,15 @@ export interface LookupInput {
   contentHash?: string;
   /** Injected so the tests can prove which branches touch the filesystem and which do not. */
   readFile: (path: string) => Promise<Uint8Array>;
+  /**
+   * Whether a path the index does not know may be read from disk to identify it by content.
+   *
+   * `true` by default, which is what `search --path` and the command line want. Callers that are
+   * index-only by contract — the MCP `read_pages` tool is one — pass `false`, and a miss is
+   * reported as not indexed rather than turning a tool that needs no permission into one that
+   * does.
+   */
+  filesystemFallback?: boolean;
 }
 
 /**
@@ -48,6 +57,8 @@ export async function findIndexedDocument(
     const byPath = store.getDocumentByPath(spelling);
     if (byPath !== null) return { status: "found", document: byPath, usedFilesystem: false };
   }
+
+  if (input.filesystemFallback === false) return { status: "not-indexed" };
 
   // Only now does the filesystem enter, and only now does permission.
   let resolved: string;

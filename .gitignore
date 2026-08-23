@@ -18,3 +18,4 @@ dist-core/
 test-results/
 playwright-report/
 dist-cli/
+dist-mcp/

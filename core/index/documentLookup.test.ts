@@ -105,6 +105,22 @@ describe("looking up a document by path", () => {
     expect(filesystem.reads).toEqual([]);
   });
 
+  it("never reaches for the file when the caller says the index is the only source", async () => {
+    // Some callers are index-only by contract — the MCP `read_pages` tool is one — and for them a
+    // fallback that quietly opened the file would turn a tool that needs no permission into one
+    // that does.
+    const filesystem = spyFilesystem();
+
+    const found = await findIndexedDocument(
+      store,
+      { readRoots: ["/Users/someone/Papers"], writeRoots: [] },
+      { path: "/Users/someone/Papers/moved.pdf", filesystemFallback: false, ...filesystem },
+    );
+
+    expect(found.status).toBe("not-indexed");
+    expect(filesystem.reads).toEqual([]);
+  });
+
   it("reads and hashes only when the path is not in the index", async () => {
     const filesystem = spyFilesystem();
     const elsewhere = "/Users/someone/Papers/moved.pdf";

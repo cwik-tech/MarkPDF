@@ -1,5 +1,13 @@
 /**
- * The most pages `--pages` will expand to.
+ * Which pages of a document a caller asked for.
+ *
+ * In core rather than beside one surface, because both ask the same question in the same words:
+ * `markpdf convert --pages 3-7` and the MCP `read_pages` tool's `pages` argument are one contract,
+ * and a second copy would be a second chance for them to disagree about what `1,4-6` means.
+ */
+
+/**
+ * The most a page selection will expand to.
  *
  * Not a limit on documents — it is a limit on typing. `1-100000` on a 12-page report is a slip,
  * and materialising the list first to discover that would allocate for no reason.

@@ -13,7 +13,7 @@
     "declarationMap": false,
     "sourceMap": false
   },
-  "include": ["core/**/*.ts", "cli/**/*.ts"],
+  "include": ["core/**/*.ts", "cli/**/*.ts", "mcp/**/*.ts"],
   "exclude": [
     // Deliberately spans two module-resolution regimes: it compares core's catalogue against
     // the renderer's copy, and the renderer half is written for Vite's bundler resolution. Only

@@ -4,7 +4,7 @@ Instructions for AI coding agents and humans working in this repository.
 
 ## Repository architecture
 
-MarkPDF is one npm package with three runtime boundaries:
+MarkPDF is one npm package with four runtime boundaries:
 
 - `electron/bootstrap.ts` captures operating-system file-open events before the
   main process finishes loading.
@@ -15,16 +15,31 @@ MarkPDF is one npm package with three runtime boundaries:
   capabilities. Its public TypeScript contract is mirrored in `src/global.d.ts`.
 - `core/` is pure Node.js. It has no imports from `electron`, no DOM types, and runs
   under plain `node`. It owns chunking, embeddings, the SQLite semantic index,
-  search, document reading, OCR, and the consent model. It is compiled by
-  `tsconfig.core.json` to `dist-core/`, and `electron/` and `cli/` are its callers —
-  through `dist-core/`, never through `core/` sources.
+  search, document reading, OCR, the consent model, and the output bounds. It is
+  compiled by `tsconfig.core.json` to `dist-core/`, and `electron/`, `cli/` and `mcp/`
+  are its callers — through `dist-core/`, never through `core/` sources.
 - `cli/` is the `markpdf` command. It parses arguments, calls core, and formats
   output; it holds no document logic. It is compiled by `tsconfig.cli.json` to
   `dist-cli/`, imports core through `dist-core/`, and runs on the Electron binary
   under `ELECTRON_RUN_AS_NODE=1`.
+- `mcp/` is the Model Context Protocol server: four tools over stdio for an agent,
+  built on the official SDK. It validates tool arguments, calls core, and formats
+  JSON replies; like `cli/` it holds no document logic, and it generates its tool
+  schemas from the command table in `cli/spec.ts` rather than describing the same
+  arguments a second time. It is compiled by `tsconfig.mcp.json` to `dist-mcp/`,
+  imports core and the command table through `dist-core/` and `dist-cli/`, and runs
+  the same way the command does. **stdout belongs to the protocol** — every
+  diagnostic goes to stderr, and a refused tool call is an answer inside the
+  protocol, not a message on the error stream.
 - `src/` is the React renderer. `src/App.tsx` coordinates the document UI;
   reusable document, conversion, Markdown, and OCR logic lives in focused modules
   under `src/`.
+
+Anything a tool returns is bounded before it leaves the process, and both bounds live
+in `core/output/budget.ts` rather than in a transport: a content bound on how much
+document text an operation gathers, and a reply bound on the finished JSON. They are
+separate because serialization cost depends on the content — escaping and per-item
+keys — so one cannot stand in for the other.
 
 Keep privileged input/output in `electron/`. Renderer code must use
 `window.pdfReader`; it must not import Electron or Node APIs, and it must not import
@@ -35,13 +50,14 @@ changes, update the handler in `electron/main.ts`, the bridge in
 IPC arguments, files, provider responses, subprocess output, persisted values,
 and model output as external input and validate them at the receiving boundary.
 
-The compiled directories `dist/`, `dist-electron/`, `dist-core/`, and `dist-cli/`
-are build output. Never edit them by hand. `dist-core/` must be built before
-`electron/` or `cli/` typechecks or runs; `npm run build:core`, `npm run build:cli`
-and the `pretest` hook do this.
+The compiled directories `dist/`, `dist-electron/`, `dist-core/`, `dist-cli/`, and
+`dist-mcp/` are build output. Never edit them by hand. `dist-core/` must be built
+before `electron/`, `cli/` or `mcp/` typechecks or runs, and `dist-cli/` before
+`mcp/` does; `npm run build:core`, `npm run build:cli`, `npm run build:mcp` and the
+`pretest` hook do this.
 
-`core/` and `cli/` are directories inside this single npm package, not separate npm
-packages.
+`core/`, `cli/` and `mcp/` are directories inside this single npm package, not separate
+npm packages.
 This repository has no npm workspaces, no separate backend, no UI package, no
 file-parser package, no skill system, and no architecture-check command.
 
@@ -264,6 +280,7 @@ above and still requires inspection of the rendered Electron UI when practical.
 | Renderer TypeScript | `npm run typecheck` |
 | Core TypeScript | `npm run typecheck:core` |
 | Command line TypeScript | `npm run typecheck:cli` |
+| MCP server TypeScript | `npm run typecheck:mcp` |
 | Test-source TypeScript | `npm run typecheck:tests` |
 | Electron main and preload TypeScript | `npx tsc -p tsconfig.electron.json --noEmit` |
 | Renderer and Electron build | `npm run build` |

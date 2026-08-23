@@ -1045,10 +1045,26 @@ reports the bundle valid and satisfying its designated requirement, with the har
 (`flags=0x10000`), and the unpacked native modules verify individually. That retires the
 hardened-runtime question for a `--dir` build.
 
+**Verified in Phase 4, against a signed, unpacked arm64 build on 2026-08-23.** `app.asar` contains
+`dist-mcp/` and `@modelcontextprotocol/sdk`. The official SDK client connects over stdio to
+`<bundle>/Contents/MacOS/MarkPDF <bundle>/Contents/Resources/app.asar/dist-mcp/main.js` with
+`ELECTRON_RUN_AS_NODE=1` — the exact registration the README prints — completes the handshake,
+lists exactly `outline`, `read_pages`, `search`, `to_markdown` with the published `oneOf` identity
+rule, opens `better-sqlite3` from inside the archive, and refuses an ungranted path with the
+runnable `markpdf --allow-read` remedy. `codesign --verify --deep --strict` reports the bundle
+valid and satisfying its designated requirement with the hardened runtime on (`flags=0x10000`).
+That is V15.
+
 **Still not verified.** `index` and `search` inside the packaged application: a packaged build
 refuses the offline test embedder by design, so proving them there needs a 133 MB model download.
 Notarizing a distributable is also unverified — credentials are not set in this worktree, and
 notarization is currently failing on Apple's side for this account.
+
+Phase 4 adds `@modelcontextprotocol/sdk` at roughly 8 MB installed, plus `dist-mcp/`. Its
+seventeen declared dependencies include `express`, `hono`, `jose`, `ajv`, `cors`, `eventsource` and
+`pkce-challenge` — the HTTP and OAuth halves of the SDK. None of them is loaded: the server imports
+`server/index.js`, `server/stdio.js` and `types.js` and nothing else, and the client half appears
+only in a test. They are bytes in the archive, not code on the release path.
 
 Net size: Phase 3 adds roughly 2.9 MB installed — the `4.0.0_best_int` language data at 2.8 MB plus
 `dist-cli`. `tesseract.js-core` already shipped for the reader's own OCR and moves out of the
@@ -1081,6 +1097,10 @@ acceptance test, rather than one long-running failing test around the whole feat
 | V8 | 3 | With the fixture directory removed from the allowlist, `markpdf search --path <fixture>` still returns the hit and exits 0 |
 | V10 | 3 | `markpdf index <scanned fixture>` reads text that exists only as pixels, with the network blocked in the process and its worker threads, and a later search returns it |
 | V11 | 3 | The command line runs from inside a signed, packaged `--dir` build: it starts from `app.asar`, opens SQLite and the extractor, and recognises a scan offline |
+| **V12** | **4** | **The MCP exit criterion: the official SDK client, over a real stdio transport, lists exactly four tools, orients on a document, searches it, and reads the page a hit points at** |
+| V13 | 4 | An indexed document is answered by `search` and `read_pages` with no filesystem permission granted at all, while `to_markdown` on the same document is refused |
+| V14 | 4 | A tool call naming a path outside the allowlist is refused inside the protocol, with the grant command in the refusal, and stdout carries nothing but JSON-RPC |
+| V15 | 4 | The signed, packaged application contains `dist-mcp/main.js` and runs it: a client connects to it from inside `app.asar` and lists its tools |
 
 **V9 is the Phase 1 Electron exit criterion.** The table-aware journey that earlier drafts
 listed here belongs to Phase 2, because it depends on structure-aware chunking that Phase 1
@@ -1325,6 +1345,18 @@ refused, and an `[index]`-class tool succeeds with no filesystem permission gran
 No broader roadmap features attach here — no resources, no prompts, no Streamable HTTP, and
 none of Tier 2 or Tier 3 from the strategy document, until a second consumer exists and has
 complained.
+
+**Delivered.** Verticals V12 to V15, and `docs/adr/2026-08-23-MCP-Server-Adapter.md` records the
+dependency, the low-level `Server`, the access classes, the two output bounds, the concurrency
+limit, and what was deliberately left out.
+
+Two things the phase found that the plan above did not anticipate, both recorded in the ADR. The
+SDK's protocol layer starts every request handler as its frame arrives and never waits for an
+earlier one, so one process had unbounded concurrent work against one SQLite connection and one
+embedding session; `core/index/boundedScheduler.ts` is reused at the call boundary. And a single
+output budget over document text turned out not to bound what a caller receives at all —
+serialization is content dependent, so four thousand two-word headings are a few kilobytes of
+document text and hundreds of kilobytes of reply. There are now two named bounds, both in core.
 
 ---
 

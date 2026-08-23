@@ -7,7 +7,7 @@ import type { CommandContext } from "../context.js";
 import { classifyDocumentFailure } from "../errors.js";
 import { EXIT_CODE, type ExitCode } from "../exit.js";
 import { createOcrResolver } from "../ocrResolver.js";
-import { parsePageSelection } from "../pageRange.js";
+import { parsePageSelection } from "../../dist-core/documents/pageSelection.js";
 import type { ParsedOptions } from "../parse.js";
 
 interface ConvertedReport {

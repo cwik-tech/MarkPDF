@@ -123,6 +123,46 @@ Exit codes: `0` success, including an empty search result. `1` an unexpected fai
 batch failed, `8` a bundled dependency is missing, `9` the index is busy, `69` MarkPDF itself
 could not be found or run, `130` interrupted.
 
+## MCP Server
+
+MarkPDF also speaks the Model Context Protocol, so an assistant that supports MCP can read your
+documents directly instead of shelling out to the command. It is the same index, the same
+extractor and the same permissions — an MCP client is another way in, not another set of rules.
+
+Register it once with your client. For Claude Code:
+
+```
+claude mcp add markpdf -e ELECTRON_RUN_AS_NODE=1 -- \
+  /Applications/MarkPDF.app/Contents/MacOS/MarkPDF \
+  /Applications/MarkPDF.app/Contents/Resources/app.asar/dist-mcp/main.js
+```
+
+`ELECTRON_RUN_AS_NODE=1` is part of the registration, not something to set afterwards: without it
+that binary opens the application window instead of running the server. For a client that reads a
+JSON configuration file, the same three things — that binary as `command`, that script as the only
+entry in `args`, and `ELECTRON_RUN_AS_NODE=1` in `env`. Add `MARKPDF_DATA_DIR` there too if you
+keep your index somewhere other than the default.
+
+Four tools, and no more:
+
+| Tool | What it does | What it needs |
+| --- | --- | --- |
+| `outline` | The heading tree with page numbers, the page count, and whether the document has a text layer | Nothing, if the document is indexed; otherwise permission to read it |
+| `search` | The passages of one indexed document that answer a question, each with its page and headings | Nothing — it reads the index and never opens the file |
+| `read_pages` | The text of specific pages, which is how you get from a search hit to the material around it | Nothing — index only |
+| `to_markdown` | The document as Markdown, or written to a file | Permission to read it, and separately to write, if you give `output_path` |
+
+Each tool names one document, by `path` or by `id` — the content hash another tool returned —
+never both.
+
+**No tool indexes, grants or forgets anything.** Permission is given at a terminal with
+`markpdf --allow-read`, where a person is present; an assistant cannot widen its own access. Index
+your library first, and `search` and `read_pages` then work whether or not the grant is still in
+place, because the answer comes from the index.
+
+Every reply is bounded, and says so: if a document is longer than one answer can carry you are
+told how much was left out rather than handed a shortened one that reads as complete.
+
 ## Development
 
 ```bash

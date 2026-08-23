@@ -1,0 +1,27 @@
+{
+  // The MCP server. A sibling of `cli/`, not a part of it: the two surfaces answer to different
+  // contracts — argv and exit codes on one side, JSON-RPC and tool results on the other — and
+  // keeping them apart is what lets the boundary test say so.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "rootDir": "mcp",
+    "outDir": "dist-mcp",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "skipLibCheck": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["mcp/**/*.ts"],
+  "exclude": ["mcp/**/*.test.ts", "mcp/**/*.test-support.ts"]
+}

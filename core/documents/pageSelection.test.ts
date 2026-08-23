@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePageSelection } from "./pageRange.js";
+import { parsePageSelection } from "./pageSelection.js";
 
 /**
  * `--pages 3-7`, and everything somebody might type instead.

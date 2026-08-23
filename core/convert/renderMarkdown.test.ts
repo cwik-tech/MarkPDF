@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { renderMarkdownDocument } from "./renderMarkdown.js";
+import { renderBoundedMarkdown, renderMarkdownDocument } from "./renderMarkdown.js";
+import { outputBudget } from "../output/budget.js";
 
 /**
  * Turning extracted pages into one Markdown document.
@@ -67,5 +68,31 @@ describe("both modes", () => {
   it("produce nothing at all for a document with no pages", () => {
     expect(renderMarkdownDocument([], "clean")).toBe("");
     expect(renderMarkdownDocument([], "page-preserving")).toBe("");
+  });
+});
+
+describe("rendering within a budget", () => {
+  it("returns the whole document when it fits", () => {
+    const bounded = renderBoundedMarkdown(pages, "clean", outputBudget(10_000));
+
+    expect(bounded.truncated).toBe(false);
+    expect(bounded.text).toBe(renderMarkdownDocument(pages, "clean"));
+  });
+
+  it("says how much it left out rather than shortening quietly", () => {
+    const bounded = renderBoundedMarkdown(pages, "clean", outputBudget(20));
+
+    expect(bounded.truncated).toBe(true);
+    expect(bounded.omittedBytes).toBeGreaterThan(0);
+    expect(Buffer.byteLength(bounded.text, "utf8")).toBeLessThanOrEqual(20);
+  });
+
+  it("measures the budget in bytes, so a document in another script is bounded as promised", () => {
+    const japanese = [{ page: 1, markdown: "第一章 序論 本文 結語 要旨 補遺 付録 索引" }];
+
+    const bounded = renderBoundedMarkdown(japanese, "clean", outputBudget(20));
+
+    expect(bounded.truncated).toBe(true);
+    expect(Buffer.byteLength(bounded.text, "utf8")).toBeLessThanOrEqual(20);
   });
 });
