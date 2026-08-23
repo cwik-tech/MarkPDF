@@ -1,0 +1,19 @@
+{
+  // Type-checks the test sources that no build config covers. `tsconfig.core.json` excludes
+  // them deliberately, because `build:core` emits and test files must never reach `dist-core/`.
+  // This config emits nothing, so it can include them without that risk.
+  "extends": "./tsconfig.core.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["core/**/*.ts"],
+  "exclude": [
+    // Deliberately spans two module-resolution regimes: it compares core's catalogue against
+    // the renderer's copy, and the renderer half is written for Vite's bundler resolution. Only
+    // Vite can resolve both halves, so this one file is checked by running it, not by tsc.
+    "core/modelParity.test.ts"
+  ]
+}

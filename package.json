@@ -13,24 +13,31 @@
   "main": "dist-electron/bootstrap.js",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && npm run electron:dev\"",
-    "electron:dev": "tsc -p tsconfig.electron.json && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
-    "build": "npm run typecheck && tsc -p tsconfig.electron.json && vite build",
+    "electron:dev": "npm run build:core && tsc -p tsconfig.electron.json && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "build": "npm run typecheck && npm run typecheck:core && npm run typecheck:tests && npm run build:core && tsc -p tsconfig.electron.json && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --maxWorkers=2",
-    "test:e2e": "tsc -p tsconfig.electron.json && playwright test",
+    "test:e2e": "npm run build:core && tsc -p tsconfig.electron.json && playwright test",
     "package": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
-    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:mac": "npm run build && electron-builder --mac --arm64",
     "dist:mac:arm64": "npm run build && electron-builder --mac --arm64",
-    "dist:mac:x64": "npm run build && electron-builder --mac --x64",
     "release:mac:arm64": "npm run build && electron-builder --mac --arm64 --publish always",
-    "release:mac:x64": "npm run build && electron-builder --mac --x64 --publish always"
+    "build:core": "tsc -p tsconfig.core.json",
+    "typecheck:core": "tsc -p tsconfig.core.json --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.test.json --noEmit",
+    "pretest": "npm run build:core",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "pretypecheck:core": "npm run build:core",
+    "pretypecheck:tests": "npm run build:core",
+    "pretest:e2e": "npm run build:core"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "@vitejs/plugin-react": "^5.1.1",
+    "better-sqlite3": "13.0.3",
     "electron-store": "^11.0.2",
     "lucide-react": "^0.556.0",
     "mermaid": "11.17.0",
@@ -39,15 +46,14 @@
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "react-resizable-panels": "^4.11.2",
-    "sql.js": "^1.14.1",
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^25.0.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
-    "@types/sql.js": "^1.4.11",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^39.2.7",
@@ -66,10 +72,17 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "dist-core/**/*",
       "build/icon.png",
       "package.json",
       "!node_modules/onnxruntime-node/bin/napi-v6/linux/**/*",
-      "!node_modules/onnxruntime-node/bin/napi-v6/win32/**/*"
+      "!node_modules/onnxruntime-node/bin/napi-v6/win32/**/*",
+      "!node_modules/better-sqlite3/prebuilds/darwin-x64.node",
+      "!node_modules/better-sqlite3/prebuilds/linux-*.node",
+      "!node_modules/better-sqlite3/prebuilds/linuxmusl-*.node",
+      "!node_modules/better-sqlite3/prebuilds/win32-*.node",
+      "!node_modules/better-sqlite3/deps/**/*",
+      "!node_modules/better-sqlite3/src/**/*"
     ],
     "directories": {
       "buildResources": "build"
@@ -77,8 +90,18 @@
     "icon": "build/icon.png",
     "mac": {
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
       ],
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
@@ -155,6 +178,11 @@
       "owner": "cwik-tech",
       "repo": "MarkPDF",
       "releaseType": "release"
-    }
+    },
+    "asarUnpack": [
+      "**/*.node",
+      "node_modules/onnxruntime-node/bin/**",
+      "node_modules/@img/**"
+    ]
   }
 }

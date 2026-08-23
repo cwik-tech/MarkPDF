@@ -90,11 +90,9 @@ import {
   ResizablePanelGroup,
 } from "./components/resizable";
 import type { MarkdownExportSettings, SemanticSearchSettings } from "./global";
-import {
-  downloadSemanticModel,
-  indexSemanticDocument,
-  searchSemanticDocument,
-} from "./semanticIndex";
+import { extractDocumentPages, pdfPageTextReader } from "./pdf/pageText";
+import { semanticProgressToUpdate } from "./semanticProgress";
+import { buildIndexSource } from "./semanticSource";
 import {
   curatedEmbeddingModels,
   defaultSemanticScoreThreshold,
@@ -109,6 +107,8 @@ const legacySignatureStorageKey = "open-pdf-reader-signatures";
 const themeStorageKey = "markpdf-theme";
 const legacyThemeStorageKey = "open-pdf-reader-theme";
 const isE2eRun = import.meta.env.VITE_MARKPDF_E2E === "1";
+/** Identifies the application's own model download, so its progress reaches the banner. */
+const autoModelDownloadJobId = "auto-model-download";
 
 type SignatureAssetKind =
   | "typed-signature"
@@ -483,7 +483,7 @@ export default function App() {
   const autoSearchTimerRef = useRef<number | null>(null);
   const searchRequestIdRef = useRef(0);
   const ocrJobsRef = useRef(new Map<string, { cancelled: boolean }>());
-  const semanticJobsRef = useRef(new Map<string, { cancelled: boolean }>());
+  const semanticJobsRef = useRef(new Map<string, { controller: AbortController }>());
   const semanticStartTimersRef = useRef(new Map<string, number>());
   const tabsRef = useRef<DocumentTab[]>([]);
   const semanticSettingsRef = useRef(semanticSettings);
@@ -643,55 +643,95 @@ export default function App() {
     [updateMarkdownTab, updatePdfTab],
   );
 
+  // Progress now originates in the main process, so the interface only learns about it here.
+  // Without this subscription the status badge and the model-download banner never move.
+  useEffect(() => {
+    const bridge = window.pdfReader;
+    if (!bridge) return;
+    return bridge.onSemanticProgress((event) => {
+      // The lookup is what stops a late event from a job we already cancelled reaching the tab.
+      const update = semanticProgressToUpdate(event, (tabId) => semanticJobsRef.current.get(tabId));
+      if (update === null) return;
+      if (update.kind === "index") {
+        updatePdfTab(update.tabId, update.patch);
+        return;
+      }
+      if (update.jobId === autoModelDownloadJobId) {
+        setSemanticModelDownloadProgress(update.progress);
+      }
+    });
+  }, [updatePdfTab]);
+
+  /**
+   * Stop an index job on both sides of the boundary.
+   *
+   * Flipping the renderer-local flag alone only stops the interface updating: once the request
+   * has crossed IPC the main process keeps embedding and keeps writing. The cancel must reach
+   * the job that is actually doing the work.
+   */
+  const cancelSemanticJob = useCallback((tabId: string) => {
+    const job = semanticJobsRef.current.get(tabId);
+    job?.controller.abort();
+    semanticJobsRef.current.delete(tabId);
+    const timer = semanticStartTimersRef.current.get(tabId);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      semanticStartTimersRef.current.delete(tabId);
+    }
+    void window.pdfReader?.semantic.cancelIndex(tabId);
+  }, []);
+
   const applySemanticSettings = useCallback(
     (nextSettings: SemanticSearchSettings) => {
       const normalizedSettings = normalizeSemanticSettings(nextSettings);
-      setSemanticSettings((previous) => {
-        const requiresReindex =
-          previous.activeModelId !== normalizedSettings.activeModelId ||
-          previous.chunkingProfile !== normalizedSettings.chunkingProfile ||
-          previous.enabled !== normalizedSettings.enabled;
+      // Compare against the ref rather than inside a state updater. Updater functions must be
+      // pure and may be replayed, so cancelling jobs or touching other state from inside one
+      // can fire twice or not at all.
+      const previous = semanticSettingsRef.current;
+      const requiresReindex =
+        previous.activeModelId !== normalizedSettings.activeModelId ||
+        previous.chunkingProfile !== normalizedSettings.chunkingProfile ||
+        previous.enabled !== normalizedSettings.enabled;
 
-        if (requiresReindex) {
-          for (const job of semanticJobsRef.current.values()) {
-            job.cancelled = true;
-          }
-          semanticJobsRef.current.clear();
-          for (const timer of semanticStartTimersRef.current.values()) {
-            window.clearTimeout(timer);
-          }
-          semanticStartTimersRef.current.clear();
-          setTabs((current) =>
-            current.map((tab) =>
-              isPdfTab(tab)
-                ? {
-                    ...tab,
-                    semanticResults: [],
-                    semanticHighlight: null,
-                    semanticIndexStatus: normalizedSettings.enabled
-                      ? "idle"
-                      : "ready",
-                    semanticIndexProgress: {
-                      status: normalizedSettings.enabled ? "idle" : "ready",
-                    },
-                    semanticIndexError: undefined,
-                  }
-                : tab,
-            ),
-          );
+      semanticSettingsRef.current = normalizedSettings;
+      setSemanticSettings(normalizedSettings);
+
+      if (requiresReindex) {
+        for (const tabId of [...semanticJobsRef.current.keys()]) {
+          cancelSemanticJob(tabId);
         }
-
-        return normalizedSettings;
-      });
+        for (const timer of semanticStartTimersRef.current.values()) {
+          window.clearTimeout(timer);
+        }
+        semanticStartTimersRef.current.clear();
+        setTabs((current) =>
+          current.map((tab) =>
+            isPdfTab(tab)
+              ? {
+                  ...tab,
+                  semanticResults: [],
+                  semanticHighlight: null,
+                  semanticIndexStatus: normalizedSettings.enabled ? "idle" : "ready",
+                  semanticIndexProgress: {
+                    status: normalizedSettings.enabled ? "idle" : "ready",
+                  },
+                  semanticIndexError: undefined,
+                }
+              : tab,
+          ),
+        );
+      }
     },
-    [],
+    [cancelSemanticJob],
   );
 
   const resetSemanticTabs = useCallback(() => {
-    for (const job of semanticJobsRef.current.values()) {
-      job.cancelled = true;
+    // This runs after the index has been cleared, so any job still embedding in the main
+    // process would write into the database we just emptied. Flipping local flags would only
+    // stop the interface updating.
+    for (const tabId of [...semanticJobsRef.current.keys()]) {
+      cancelSemanticJob(tabId);
     }
-    semanticJobsRef.current.clear();
     for (const timer of semanticStartTimersRef.current.values()) {
       window.clearTimeout(timer);
     }
@@ -714,7 +754,7 @@ export default function App() {
           : tab,
       ),
     );
-  }, []);
+  }, [cancelSemanticJob]);
 
   const startSemanticIndex = useCallback(
     async (tabId: string) => {
@@ -724,7 +764,11 @@ export default function App() {
       const tab = tabsRef.current.find((item) => item.id === tabId);
       if (!isPdfTab(tab)) return;
 
-      const job = { cancelled: false };
+      // The renderer job owns its controller. Extraction reads the signal between pages, and
+      // the same cancel also reaches the main process through semantic:cancel — an AbortSignal
+      // cannot be structured-cloned over IPC, so each side holds its own and the bridge links
+      // them.
+      const job = { controller: new AbortController() };
       semanticJobsRef.current.set(tabId, job);
       updatePdfTab(tabId, {
         semanticIndexStatus: "checking",
@@ -736,35 +780,69 @@ export default function App() {
       });
 
       try {
-        await indexSemanticDocument({
-          name: tab.name,
-          path: tab.path,
-          bytes: tab.bytes,
-          pdfDoc: tab.pdfDoc,
-          ocrPages: tab.ocrPages,
-          settings,
-          isCancelled: () => job.cancelled,
-          onProgress: (progress) => {
-            if (job.cancelled) return;
-            updatePdfTab(tabId, {
-              semanticIndexStatus: progress.status,
-              semanticIndexProgress: progress,
-              semanticIndexError: undefined,
-            });
+        // Extraction stays here because OCR does: it needs a canvas, and its output already
+        // feeds the on-screen text layer. Everything after this runs in the main process.
+        const extraction = await extractDocumentPages(
+          pdfPageTextReader(tab.pdfDoc),
+          tab.ocrPages,
+          {
+            signal: job.controller.signal,
+            onProgress: (progress) => {
+              updatePdfTab(tabId, {
+                semanticIndexStatus: progress.status,
+                semanticIndexProgress: progress,
+                semanticIndexError: undefined,
+              });
+            },
           },
+        );
+        // Cancellation is an outcome here, not a failure: whoever cancelled has already set the
+        // tab state it wants, so this leaves it alone.
+        if (extraction.status === "cancelled") return;
+        const pages = extraction.pages;
+
+        const result = await window.pdfReader.semantic.indexDocument({
+          jobId: tabId,
+          source: buildIndexSource(tab),
+          name: tab.name,
+          pages,
+          pageCount: tab.pdfDoc.numPages,
+          chunkingProfile: settings.chunkingProfile,
         });
 
-        if (!job.cancelled) {
+        // This window cancelled while the request was in flight — semantic search switched off,
+        // the tab closed, settings changed. Whoever cancelled has already set the tab state it
+        // wants, so write nothing: recording the hash here would attach a result to a tab that
+        // is no longer asking for one.
+        if (job.controller.signal.aborted) return;
+
+        // The main process can cancel a job this window never cancelled — another window
+        // clearing the shared index, for instance. That arrives only in the result, so it must
+        // be handled before recording a hash or claiming the index is ready.
+        if (result.status === "cancelled") {
           updatePdfTab(tabId, {
-            semanticIndexStatus: "ready",
-            semanticIndexProgress: {
-              status: "ready",
-              message: "Semantic index ready",
-            },
+            semanticIndexStatus: "idle",
+            semanticIndexProgress: { status: "idle" },
+            semanticIndexError: undefined,
           });
+          return;
         }
+
+        // Hash and readiness in one update. Main returns the hash of the bytes this window
+        // loaded — the same bytes the page text above came from — so the two always describe one
+        // document. Written separately, a render between them would show a searchable tab whose
+        // hash is not yet set, and the search would silently return nothing.
+        updatePdfTab(tabId, {
+          semanticContentHash: result.contentHash,
+          semanticIndexStatus: "ready",
+          semanticIndexProgress: {
+            status: "ready",
+            message: "Semantic index ready",
+          },
+          semanticIndexError: undefined,
+        });
       } catch (error) {
-        if (!job.cancelled) {
+        if (!job.controller.signal.aborted) {
           updatePdfTab(tabId, {
             semanticIndexStatus: "error",
             semanticIndexError:
@@ -778,7 +856,11 @@ export default function App() {
           });
         }
       } finally {
-        semanticJobsRef.current.delete(tabId);
+        // Only clear our own entry: a tab reopened during this run may already have a newer
+        // job registered under the same id, and removing that would leave it uncancellable.
+        if (semanticJobsRef.current.get(tabId) === job) {
+          semanticJobsRef.current.delete(tabId);
+        }
       }
     },
     [updatePdfTab],
@@ -1229,9 +1311,11 @@ export default function App() {
       message: "Downloading model",
     });
 
-    void downloadSemanticModel(recommendedEmbeddingModelId, (progress) => {
-      setSemanticModelDownloadProgress(progress);
-    })
+    void window.pdfReader.semantic
+      .downloadModel({
+        jobId: autoModelDownloadJobId,
+        modelId: recommendedEmbeddingModelId,
+      })
       .then((settings) => {
         if (settings) applySemanticSettings(settings);
         setSemanticModelDownloadProgress({
@@ -1432,6 +1516,7 @@ export default function App() {
     setTabs((current) => current.filter((item) => item.id !== tabId));
     const ocrJob = ocrJobsRef.current.get(tabId);
     if (ocrJob) ocrJob.cancelled = true;
+    cancelSemanticJob(tabId);
     if (activeTabId === tabId) {
       const remaining = tabs.filter((item) => item.id !== tabId);
       setActiveTabId(remaining.at(-1)?.id ?? null);
@@ -2260,11 +2345,15 @@ export default function App() {
         return;
       }
 
-      const semanticResults = await searchSemanticDocument({
-        bytes: currentTab.bytes,
-        query: normalizedQuery,
-        settings: semanticSettingsRef.current,
-      });
+      const contentHash = currentTab.semanticContentHash;
+      const semanticResults = contentHash && window.pdfReader
+        ? await window.pdfReader.semantic.search({
+            contentHash,
+            query: normalizedQuery,
+            chunkingProfile: semanticSettingsRef.current.chunkingProfile,
+            minScore: semanticSettingsRef.current.minSemanticScore,
+          })
+        : [];
       if (requestId !== searchRequestIdRef.current) return;
       updatePdfTab(tab.id, { semanticResults });
     },

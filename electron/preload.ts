@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { parseSemanticProgressEvent } from "../dist-core/ipc/progress.js";
 
 contextBridge.exposeInMainWorld("pdfReader", {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
@@ -59,15 +60,31 @@ contextBridge.exposeInMainWorld("pdfReader", {
     getSettings: () => ipcRenderer.invoke("semantic:get-settings"),
     saveSettings: (settings: unknown) =>
       ipcRenderer.invoke("semantic:save-settings", settings),
-    markModelDownloaded: (modelId: string) =>
-      ipcRenderer.invoke("semantic:mark-model-downloaded", modelId),
     removeModel: (modelId: string) =>
       ipcRenderer.invoke("semantic:remove-model", modelId),
-    loadDatabase: () => ipcRenderer.invoke("semantic:load-db"),
-    saveDatabase: (bytes: Uint8Array | number[]) =>
-      ipcRenderer.invoke("semantic:save-db", bytes),
+    listModels: () => ipcRenderer.invoke("semantic:list-models"),
+    indexDocument: (request: unknown) =>
+      ipcRenderer.invoke("semantic:index", request),
+    cancelIndex: (jobId: string) => ipcRenderer.invoke("semantic:cancel", jobId),
+    search: (request: unknown) => ipcRenderer.invoke("semantic:search", request),
+    getDocument: (contentHash: string) =>
+      ipcRenderer.invoke("semantic:get-document", contentHash),
+    deleteDocument: (contentHash: string) =>
+      ipcRenderer.invoke("semantic:delete-document", contentHash),
+    downloadModel: (request: unknown) =>
+      ipcRenderer.invoke("semantic:download-model", request),
     clearDatabase: () => ipcRenderer.invoke("semantic:clear-db"),
     databaseInfo: () => ipcRenderer.invoke("semantic:db-info"),
+  },
+  onSemanticProgress: (callback: (event: unknown) => void) => {
+    // Narrow here, using core's parser. The renderer must not import core, and a malformed
+    // event must never reach tab state — it drives the visible status badge.
+    const listener = (_event: unknown, payload: unknown) => {
+      const parsed = parseSemanticProgressEvent(payload);
+      if (parsed !== null) callback(parsed);
+    };
+    ipcRenderer.on("semantic:progress", listener);
+    return () => ipcRenderer.removeListener("semantic:progress", listener);
   },
   markdown: {
     getSettings: () => ipcRenderer.invoke("markdown:get-settings"),

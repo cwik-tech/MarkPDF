@@ -2,9 +2,33 @@
 
 ## [Unreleased]
 
+### Added
+
+- Semantic indexing, embedding and search now run in a pure-Node `core/` layer inside the main process, reachable from the renderer through the preload bridge. This is the groundwork for driving MarkPDF from a terminal.
+- The semantic index is a real SQLite database managed with `better-sqlite3` and write-ahead logging, so a second process can read and write the file safely while the app is open. Coordinating two processes indexing the same document is separate work and is not part of this change.
+
+### Changed
+
+- The index is upgraded in place on first launch. Existing documents and their chunks are preserved; nothing needs re-indexing.
+- Foreign key enforcement is now on, so removing a document genuinely removes its chunks and embeddings rather than leaving them behind.
+- Embedding, chunking and the SQLite index work have moved off the renderer thread into the main process, and progress is reported over IPC. Page-text extraction still runs in the renderer for now, and long stretches of main-process work are still measurable, so this reduces interface stalls rather than eliminating them.
+- Embedding model weights are cached on disk under the application data directory instead of in the browser cache. Existing users download the model once more; afterwards the same copy serves every process.
+- Semantic search no longer fetches its runtime from a content delivery network on first use, so it works offline once the model is present.
+- Two windows holding the same document can no longer index it at the same time. Previously the second run collided with the first on duplicate chunk identifiers and failed.
+- Opening many documents at once now indexes them one at a time instead of all at once. Embedding cannot run in parallel anyway, so overlapping the jobs only made the application less responsive and used more memory.
+- Cancelling an index — by closing a tab, changing a setting, or turning semantic search off — now stops a document that is still waiting its turn, before it reads the file or loads the model.
+- Cancelling also stops the page-by-page text extraction that runs before indexing. Previously a long document kept reading every remaining page after the user had already turned the feature off.
+- The embedding model's download progress now reaches whoever is watching. Previously only the first request to trigger a download saw the percentage, so opening the settings dialog partway through showed a bar that never moved.
+- A model is recorded as downloaded only after either a successful load — an explicit download finishing — or indexing that actually embedded document text, and in both cases only once its files are confirmed on disk. If the model cache is cleared or the data directory moves, the application notices and offers the download again instead of claiming the model is ready.
+
 ### Fixed
 
 - Render Mermaid fenced blocks as theme-aware SVG charts in Markdown previews instead of displaying their source code.
+
+### Removed
+
+- The `sql.js` WebAssembly database. It could only rewrite the whole index file at once, which made it impossible to share the index with another process.
+- Intel macOS support. MarkPDF now requires an Apple Silicon Mac, and existing Intel Macs stop receiving updates at the last release that shipped an `x64` build. The semantic index is now a native SQLite database, and the release no longer carries an Intel build of it; shipping the Intel app without it would produce a download that fails on launch rather than one that merely lacks a feature.
 
 ## 2026-06-07 17:40
 
@@ -171,19 +195,3 @@ Widened the left PDF sidebar so the Pages, Outline, and Bookmarks controls and b
 Hid the generic selection inspector for bookmark overlays so bookmark selections only appear in the Bookmarks list and page-side pin.
 
 Added synthetic Outline generation for PDFs without embedded outline data. MarkPDF now infers headings from real PDF text layout, labels generated outlines in the sidebar, persists them in MarkPDF PDF metadata on save, reloads persisted generated outlines, and covers extraction/persistence with Vitest plus the Electron Playwright flow.
-## 2026-08-22 21:45
-
-A new project plan was created at `golden-wondering-candy.md` to organize the development strategy and approach for the MarkPDF MCP CLI work. This plan document serves as a reference for tracking progress, decisions, and next steps on the project.
-
-## 2026-08-22 21:49
-
-A planning document was created for the MCP CLI project to outline the implementation strategy and approach for upcoming work.
-
-## 2026-08-22 22:04
-
-Drafted a comprehensive implementation plan for extracting MarkPDF's core capabilities—conditional OCR, embeddings, and Markdown conversion—into a reusable Node.js package and exposing them through a CLI and MCP server. The plan settled five key architectural decisions, including choosing `better-sqlite3` v13 for the index store, moving storage out of the Electron renderer to enable safe concurrent access, and scoping the initial work to Phase 0 (core extraction), Phase 1 (Markdown-as-index), and Phase 2a (CLI), with the MCP server deferred. Documented detailed findings about packaging constraints, page anchoring challenges, and dependency availability to ground realistic delivery estimates.
-
-## 2026-08-22 22:11
-
-Created a comprehensive implementation plan in `golden-wondering-candy.md` documenting the MarkPDF MCP and agent integration project, including settled architectural decisions (store engine choice, scope boundaries, semantic pipeline migration, CLI command set, and installation mechanism), verified findings that affect estimates, identified errors in the strategy document requiring correction, and project conventions around TypeScript, validation, ADRs, and testing that implementation work must honor. The plan records five key decisions with detailed rationale and consequences, establishing the framework for extracting MarkPDF's capabilities into reusable Node.js packages and a CLI before the MCP server layer.
-

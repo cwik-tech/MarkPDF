@@ -25,7 +25,6 @@ import type {
   SemanticDatabaseInfo,
   SemanticSearchSettings
 } from "./global";
-import { clearSemanticIndex, downloadSemanticModel } from "./semanticIndex";
 import {
   chunkingPresets,
   curatedEmbeddingModels,
@@ -34,6 +33,7 @@ import {
   recommendedEmbeddingModelId,
   semanticScoreThresholdPresets
 } from "./semanticModels";
+import { semanticProgressToUpdate } from "./semanticProgress";
 
 const providerKindLabels: Record<AIProviderKind, string> = {
   "openai-compatible": "OpenAI Compatible",
@@ -164,7 +164,13 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
   const [localAgents, setLocalAgents] = useState<LocalAgentInfo[]>([]);
   const [semanticSettings, setSemanticSettings] = useState<SemanticSearchSettings>(defaultSemanticSettings);
   const [markdownSettings, setMarkdownSettings] = useState<MarkdownExportSettings>(defaultMarkdownSettings);
-  const [databaseInfo, setDatabaseInfo] = useState<SemanticDatabaseInfo>({ sizeBytes: 0 });
+  const [databaseInfo, setDatabaseInfo] = useState<SemanticDatabaseInfo>({
+    sizeBytes: 0,
+    documentCount: 0,
+    chunkCount: 0,
+    schemaVersion: 0,
+    concurrencyDegraded: false,
+  });
   const [draft, setDraft] = useState<ProviderDraft | null>(null);
   const [loadingProviders, setLoadingProviders] = useState(true);
   const [loadingAgents, setLoadingAgents] = useState(true);
@@ -372,12 +378,19 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
 
   const downloadModel = async (modelId: string) => {
     setBusySemanticModelId(modelId);
+    const jobId = `settings-download-${modelId}`;
+    // Byte progress now arrives from the main process rather than a local callback, so the
+    // percentage the dialog used to show has to be routed back by job identifier.
+    const unsubscribe = window.pdfReader?.onSemanticProgress((event) => {
+      const update = semanticProgressToUpdate(event);
+      if (update === null || update.kind !== "model" || update.jobId !== jobId) return;
+      if (update.percent !== null) showToast(`Downloading model ${update.percent}%`);
+    });
     try {
-      const settings = await downloadSemanticModel(modelId, (progress) => {
-        if (progress.status === "downloading" && progress.current && progress.total) {
-          const percent = Math.round((progress.current / progress.total) * 100);
-          showToast(`Downloading model ${percent}%`);
-        }
+      if (!window.pdfReader?.semantic) return;
+      const settings = await window.pdfReader.semantic.downloadModel({
+        jobId,
+        modelId,
       });
       if (settings) {
         setSemanticSettings(settings);
@@ -387,6 +400,7 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Model download failed.");
     } finally {
+      unsubscribe?.();
       setBusySemanticModelId(null);
       await loadSemanticSettings();
     }
@@ -402,7 +416,8 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
 
   const clearIndex = async () => {
     if (!window.confirm("Clear the local semantic index? PDFs and downloaded models will not be deleted.")) return;
-    await clearSemanticIndex();
+    if (!window.pdfReader?.semantic) return;
+    await window.pdfReader.semantic.clearDatabase();
     await loadSemanticSettings();
     onSemanticIndexCleared?.();
     showToast("Semantic index cleared.");

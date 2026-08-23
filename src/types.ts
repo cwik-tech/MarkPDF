@@ -60,6 +60,8 @@ export interface SemanticSearchResult {
   page: number;
   snippet: string;
   score: number;
+  /** Heading breadcrumb for the chunk. Empty until Phase 2 populates it. */
+  headingPath?: string[];
 }
 
 export interface SemanticHighlightTarget {
@@ -140,6 +142,8 @@ export interface PdfTab {
   searchMatches: SearchMatch[];
   activeSearchMatch: number;
   semanticResults: SemanticSearchResult[];
+  /** Hash main actually indexed. Searches key off this rather than re-hashing per keystroke. */
+  semanticContentHash?: string;
   semanticHighlight?: SemanticHighlightTarget | null;
   semanticIndexStatus?: SemanticIndexStatus;
   semanticIndexProgress?: SemanticIndexProgress;

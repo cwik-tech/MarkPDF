@@ -115,7 +115,6 @@ The public download channel is GitHub Releases:
 
 - Latest release page: https://github.com/cwik-tech/MarkPDF/releases/latest
 - Direct latest Apple Silicon download: https://github.com/cwik-tech/MarkPDF/releases/latest/download/MarkPDF-mac-arm64.dmg
-- Direct latest Intel download: https://github.com/cwik-tech/MarkPDF/releases/latest/download/MarkPDF-mac-x64.dmg
 
 Before publishing macOS releases, add these GitHub Actions secrets:
 
@@ -133,7 +132,7 @@ git tag v0.1.0
 git push origin main --tags
 ```
 
-The release workflow builds separate Apple Silicon and Intel macOS DMGs and ZIPs on native runners, signs and notarizes them, then uploads them to the GitHub Release for the pushed tag.
+The release workflow builds an Apple Silicon macOS DMG and ZIP on a native runner, signs and notarizes them, then uploads them to the GitHub Release for the pushed tag. MarkPDF requires an Apple Silicon Mac.
 
 ## License and Rights
 

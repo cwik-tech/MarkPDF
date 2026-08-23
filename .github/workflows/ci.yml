@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    name: Typecheck, unit tests, build
+    # macOS arm64 is the only supported target, and it is where the native modules we ship
+    # actually load. Testing elsewhere would exercise binaries no user runs.
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Renderer TypeScript
+        run: npm run typecheck
+      - name: Core TypeScript
+        run: npm run typecheck:core
+      - name: Test-source TypeScript
+        run: npm run typecheck:tests
+      - name: Electron main and preload TypeScript
+        run: npx tsc -p tsconfig.electron.json --noEmit
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npm run build
+      # No lint step: this repository has no lint script or checked-in configuration.
+
+  journeys:
+    name: Electron journeys
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # No `playwright install`: every spec launches through `_electron.launch` with
+      # `executablePath` set to the `electron` package's binary, so the journeys drive
+      # Electron's bundled Chromium. No Playwright-managed browser is ever opened.
+      - name: Electron journeys
+        run: npm run test:e2e

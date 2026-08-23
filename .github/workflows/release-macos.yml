@@ -19,9 +19,6 @@ jobs:
           - arch: arm64
             runner: macos-15
             release_script: release:mac:arm64
-          - arch: x64
-            runner: macos-15-intel
-            release_script: release:mac:x64
     env:
       GH_TOKEN: ${{ github.token }}
       MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}

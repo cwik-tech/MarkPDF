@@ -14,3 +14,6 @@ apple-certificates/
 *.key
 work/
 workspace-smoke.png
+dist-core/
+test-results/
+playwright-report/

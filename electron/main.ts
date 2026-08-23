@@ -23,12 +23,25 @@ import {
   type AIStoreSchema,
 } from "./ai.js";
 import {
+  cachedSemanticModels,
+  cancelSemanticJob,
   clearSemanticDatabase,
+  closeSemanticStore,
   defaultSemanticSearchSettings,
+  deleteSemanticDocument,
+  downloadSemanticModel,
   getSemanticDatabaseInfo,
-  loadSemanticDatabase,
-  normalizeSemanticSearchSettings,
-  saveSemanticDatabase,
+  getSemanticDocument,
+  isSemanticModelCached,
+  listCuratedModels,
+  parseCuratedModelId,
+  parseDownloadRequest,
+  parseIndexRequest,
+  parseSearchRequest,
+  parseSemanticSettings,
+  parseSemanticSettingsPatch,
+  runIndexJob,
+  runSearch,
   type SemanticSearchSettings,
 } from "./semantic.js";
 import {
@@ -374,6 +387,12 @@ app.whenReady().then(async () => {
   });
 });
 
+// Checkpoint and release the index before the process goes away, so the WAL sidecars do not
+// outlive us and a later open cannot resurrect uncommitted state.
+app.on("will-quit", () => {
+  closeSemanticStore();
+});
+
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
@@ -573,78 +592,126 @@ ipcMain.handle("recent:remove", async (_event, filePath: string) =>
   removeRecentFile(filePath),
 );
 
-ipcMain.handle("semantic:get-settings", async () =>
-  normalizeSemanticSearchSettings(
-    store.get("semanticSearch", defaultSemanticSearchSettings),
-  ),
-);
+function currentSemanticSettings(): SemanticSearchSettings {
+  return parseSemanticSettings(store.get("semanticSearch", defaultSemanticSearchSettings));
+}
 
-ipcMain.handle(
-  "semantic:save-settings",
-  async (_event, settings: Partial<SemanticSearchSettings>) => {
-    const current = normalizeSemanticSearchSettings(
-      store.get("semanticSearch", defaultSemanticSearchSettings),
-    );
-    const next = normalizeSemanticSearchSettings({
-      ...current,
-      ...settings,
-      downloadedModelIds:
-        settings.downloadedModelIds ?? current.downloadedModelIds,
-    });
-    store.set("semanticSearch", next);
-    return next;
-  },
-);
+/**
+ * Record that a model is downloaded, having confirmed it is on disk.
+ *
+ * Called only where a real embedding has just succeeded, or a warm-up has finished and the
+ * cache check agrees. Recording it anywhere else is how the interface comes to claim a model it
+ * does not have.
+ */
+function rememberDownloadedModel(modelId: string): SemanticSearchSettings {
+  const current = currentSemanticSettings();
+  if (current.downloadedModelIds.includes(modelId)) return current;
+  // Verified at write time as well as read time, so the recorded list only ever names models
+  // that are on disk. Without this a stand-in embedder — or any future backend that embeds
+  // without leaving a cache — would write a claim the next process cannot honour.
+  if (!isSemanticModelCached(modelId)) return current;
+  const next = parseSemanticSettings({
+    ...current,
+    downloadedModelIds: [...current.downloadedModelIds, modelId],
+  });
+  store.set("semanticSearch", next);
+  return next;
+}
 
-ipcMain.handle(
-  "semantic:mark-model-downloaded",
-  async (_event, modelId: string) => {
-    const current = normalizeSemanticSearchSettings(
-      store.get("semanticSearch", defaultSemanticSearchSettings),
-    );
-    const next = normalizeSemanticSearchSettings({
-      ...current,
-      downloadedModelIds: [
-        ...new Set([...current.downloadedModelIds, modelId]),
-      ],
-    });
-    store.set("semanticSearch", next);
-    return next;
-  },
-);
+/**
+ * Settings, with the downloaded-model claims reconciled against what is actually cached.
+ *
+ * The persisted list is a claim, not evidence: the cache can be cleared, the data directory
+ * moved, or a download interrupted. Left unchecked, the renderer sees a model as ready, skips
+ * the download that would have shown progress, and the first index silently fetches 133 MB with
+ * a motionless interface. Correcting the claim on read makes the stale state self-healing.
+ */
+ipcMain.handle("semantic:get-settings", async () => {
+  const current = currentSemanticSettings();
+  const present = cachedSemanticModels(current.downloadedModelIds);
+  if (present.length === current.downloadedModelIds.length) return current;
 
-ipcMain.handle("semantic:remove-model", async (_event, modelId: string) => {
-  const current = normalizeSemanticSearchSettings(
-    store.get("semanticSearch", defaultSemanticSearchSettings),
-  );
-  const downloadedModelIds = current.downloadedModelIds.filter(
-    (id) => id !== modelId,
-  );
-  const next = normalizeSemanticSearchSettings({
+  const reconciled = parseSemanticSettings({ ...current, downloadedModelIds: present });
+  store.set("semanticSearch", reconciled);
+  return reconciled;
+});
+
+ipcMain.handle("semantic:save-settings", async (_event, raw: unknown) => {
+  // The patch is untrusted input and is validated before it can influence stored state.
+  const patch = parseSemanticSettingsPatch(raw);
+  const current = currentSemanticSettings();
+  const next = parseSemanticSettings({ ...current, ...patch });
+  store.set("semanticSearch", next);
+  return next;
+});
+
+ipcMain.handle("semantic:remove-model", async (_event, raw: unknown) => {
+  const modelId = parseCuratedModelId(raw);
+  const current = currentSemanticSettings();
+  const downloadedModelIds = current.downloadedModelIds.filter((id) => id !== modelId);
+  const fallback = downloadedModelIds[0];
+  const next = parseSemanticSettings({
     ...current,
     downloadedModelIds,
     activeModelId:
-      current.activeModelId === modelId && downloadedModelIds[0]
-        ? downloadedModelIds[0]
-        : current.activeModelId,
+      current.activeModelId === modelId && fallback !== undefined ? fallback : current.activeModelId,
   });
   store.set("semanticSearch", next);
   return next;
 });
 
-ipcMain.handle("semantic:load-db", async () => loadSemanticDatabase());
+ipcMain.handle("semantic:list-models", async () => listCuratedModels());
 
-ipcMain.handle(
-  "semantic:save-db",
-  async (_event, bytes: Uint8Array | number[]) => {
-    await saveSemanticDatabase(bytes);
-  },
+ipcMain.handle("semantic:index", async (event, raw: unknown) => {
+  const request = parseIndexRequest(raw);
+  const settings = currentSemanticSettings();
+  const result = await runIndexJob(request, settings, (progress) => {
+    // event.sender, not a captured window: openFileInNewWindow means several may exist.
+    event.sender.send("semantic:progress", {
+      jobId: request.jobId,
+      kind: "index",
+      progress,
+    });
+  });
+
+  // Only "ready" means chunks were actually embedded and written, which is the only outcome
+  // that proves the weights loaded. "reused" and "empty" never touch the model, and recording
+  // a download from either is how a claim outruns the cache.
+  if (result.status === "ready") rememberDownloadedModel(settings.activeModelId);
+  return result;
+});
+
+ipcMain.handle("semantic:cancel", async (_event, jobId: unknown) => cancelSemanticJob(jobId));
+
+ipcMain.handle("semantic:search", async (_event, raw: unknown) =>
+  runSearch(parseSearchRequest(raw), currentSemanticSettings()),
 );
 
-ipcMain.handle("semantic:clear-db", async () => {
-  await clearSemanticDatabase();
-  return getSemanticDatabaseInfo();
+ipcMain.handle("semantic:get-document", async (_event, contentHash: unknown) =>
+  getSemanticDocument(contentHash),
+);
+
+ipcMain.handle("semantic:delete-document", async (_event, contentHash: unknown) =>
+  deleteSemanticDocument(contentHash),
+);
+
+ipcMain.handle("semantic:download-model", async (event, raw: unknown) => {
+  const request = parseDownloadRequest(raw);
+  const modelId = request.modelId ?? currentSemanticSettings().activeModelId;
+  const cached = await downloadSemanticModel(modelId, (loaded, total) => {
+    event.sender.send("semantic:progress", {
+      jobId: request.jobId,
+      kind: "model",
+      progress: { status: "downloading", current: loaded, total, message: "Downloading embedding model" },
+    });
+  });
+  // Recorded only when the weights are demonstrably on disk afterwards. A warm-up that resolves
+  // without leaving a cache — a stand-in embedder, a future backend that streams — must not
+  // make the interface claim a model the next process cannot find.
+  return cached ? rememberDownloadedModel(modelId) : currentSemanticSettings();
 });
+
+ipcMain.handle("semantic:clear-db", async () => clearSemanticDatabase());
 
 ipcMain.handle("semantic:db-info", async () => getSemanticDatabaseInfo());
 

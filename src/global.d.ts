@@ -62,6 +62,76 @@ export interface SemanticSearchSettings {
 
 export interface SemanticDatabaseInfo {
   sizeBytes: number;
+  documentCount: number;
+  chunkCount: number;
+  schemaVersion: number;
+  concurrencyDegraded: boolean;
+}
+
+export interface CuratedEmbeddingModel {
+  id: string;
+  name: string;
+  description: string;
+  dimensions: number;
+  approxSizeMb: number;
+  badge?: string;
+  queryPrefix?: string;
+}
+
+export interface SemanticIndexRequest {
+  jobId: string;
+  source: { kind: "bytes"; bytes: Uint8Array | number[]; path?: string } | { kind: "path"; path: string };
+  name: string;
+  pages: Array<{ page: number; text: string; source: "pdf" | "ocr" }>;
+  pageCount: number;
+  chunkingProfile: SemanticChunkingProfile;
+  force?: boolean;
+}
+
+export interface SemanticIndexedResult {
+  status: "ready" | "reused" | "empty";
+  contentHash: string;
+  documentId: number;
+  pageCount: number;
+  chunkCount: number;
+  textSource: "pdf" | "ocr" | "mixed" | "none";
+}
+
+/**
+ * A cancelled run carries a status and nothing else, because it produced nothing else. Mirrors
+ * the union `core/index/indexDocument.ts` returns, so the renderer cannot read a content hash
+ * from a run that never computed one.
+ */
+export type SemanticIndexResult = SemanticIndexedResult | { status: "cancelled" };
+
+export interface SemanticSearchRequest {
+  contentHash: string;
+  query: string;
+  chunkingProfile: SemanticChunkingProfile;
+  topK?: number;
+  minScore?: number;
+}
+
+export interface SemanticIndexedDocument {
+  id: number;
+  contentHash: string;
+  name: string;
+  filePath: string | null;
+  pageCount: number;
+  textSource: string;
+  createdAt: string;
+  lastOpenedAt: string;
+}
+
+export interface SemanticProgressEvent {
+  jobId: string;
+  kind: "index" | "model";
+  progress: {
+    status: "checking" | "indexing" | "downloading" | "ready";
+    current?: number;
+    total?: number;
+    message?: string;
+  };
 }
 
 export type MarkdownEngineId = "auto" | "builtin-text" | "docling-managed" | "docling-vlm-smoldocling";
@@ -179,12 +249,23 @@ declare global {
         saveSettings: (
           settings: Partial<SemanticSearchSettings>,
         ) => Promise<SemanticSearchSettings>;
-        markModelDownloaded: (
-          modelId: string,
-        ) => Promise<SemanticSearchSettings>;
         removeModel: (modelId: string) => Promise<SemanticSearchSettings>;
-        loadDatabase: () => Promise<number[] | null>;
-        saveDatabase: (bytes: BytePayload) => Promise<void>;
+        listModels: () => Promise<CuratedEmbeddingModel[]>;
+        indexDocument: (
+          request: SemanticIndexRequest,
+        ) => Promise<SemanticIndexResult>;
+        cancelIndex: (jobId: string) => Promise<boolean>;
+        search: (
+          request: SemanticSearchRequest,
+        ) => Promise<import("./types").SemanticSearchResult[]>;
+        getDocument: (
+          contentHash: string,
+        ) => Promise<SemanticIndexedDocument | null>;
+        deleteDocument: (contentHash: string) => Promise<boolean>;
+        downloadModel: (request: {
+          jobId: string;
+          modelId?: string;
+        }) => Promise<SemanticSearchSettings>;
         clearDatabase: () => Promise<SemanticDatabaseInfo>;
         databaseInfo: () => Promise<SemanticDatabaseInfo>;
       };
@@ -206,6 +287,9 @@ declare global {
           warnings: string[];
         }>;
       };
+      onSemanticProgress: (
+        callback: (event: SemanticProgressEvent) => void,
+      ) => () => void;
       onMarkdownInstallProgress: (
         callback: (progress: MarkdownInstallProgress) => void,
       ) => () => void;

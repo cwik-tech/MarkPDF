@@ -13,20 +13,30 @@ MarkPDF is one npm package with three runtime boundaries:
   main-process modules live beside it in `electron/`.
 - `electron/preload.ts` is the renderer's only bridge to privileged Electron
   capabilities. Its public TypeScript contract is mirrored in `src/global.d.ts`.
+- `core/` is pure Node.js. It has no imports from `electron`, no DOM types, and runs
+  under plain `node`. It owns chunking, embeddings, the SQLite semantic index, and
+  search. It is compiled by `tsconfig.core.json` to `dist-core/`, and `electron/` is
+  its only caller today — through `dist-core/`, never through `core/` sources.
 - `src/` is the React renderer. `src/App.tsx` coordinates the document UI;
-  reusable document, conversion, Markdown, OCR, and semantic-search logic lives
-  in focused modules under `src/`.
+  reusable document, conversion, Markdown, and OCR logic lives in focused modules
+  under `src/`.
 
 Keep privileged input/output in `electron/`. Renderer code must use
-`window.pdfReader`; it must not import Electron or Node APIs. When an IPC method
+`window.pdfReader`; it must not import Electron or Node APIs, and it must not import
+`core/` or `dist-core/`. Shared types cross through `src/global.d.ts` like any other
+IPC contract. `core/boundaries.test.ts` enforces both directions. When an IPC method
 changes, update the handler in `electron/main.ts`, the bridge in
 `electron/preload.ts`, and the declaration in `src/global.d.ts` together. Treat
 IPC arguments, files, provider responses, subprocess output, persisted values,
 and model output as external input and validate them at the receiving boundary.
 
-The compiled directories `dist/` and `dist-electron/` are build output. Never
-edit them by hand. This repository has no separate backend, UI package,
-file-parser package, skill system, or architecture-check command.
+The compiled directories `dist/`, `dist-electron/`, and `dist-core/` are build
+output. Never edit them by hand. `dist-core/` must be built before `electron/`
+typechecks or runs; `npm run build:core` and the `pretest` hook do this.
+
+`core/` is a directory inside this single npm package, not a separate npm package.
+This repository has no npm workspaces, no separate backend, no UI package, no
+file-parser package, no skill system, and no architecture-check command.
 
 ## Test-Driven Development policy
 
@@ -118,14 +128,16 @@ of widening the first test indefinitely.
 | Change | Test location |
 |--------|---------------|
 | Pure renderer, document, conversion, or parsing logic | Co-located `src/**/*.test.ts` using Vitest |
+| Pure Node core logic: store, chunking, embeddings, search | Co-located `core/**/*.test.ts` using Vitest |
 | React behavior that can be expressed through an extracted pure rule | Co-located `src/**/*.test.ts` using Vitest |
 | Electron lifecycle, preload/IPC, filesystem, window, or complete UI behavior | `tests/e2e/*.spec.ts` using Playwright's Electron support |
-| Real external provider or managed tool | An explicit opt-in test or manual check that is excluded from the default suite |
+| Real external provider or managed tool | An explicit opt-in test or manual check that is excluded from the default suite. The embedding model is covered by `npm run test:live`; the default suite substitutes a deterministic embedder and the reason is documented in `core/index/embeddings.live.test.ts` |
 
-The Vitest configuration currently includes only `src/**/*.test.ts` and does
-not configure a browser DOM environment. Do not assume a browser component-test
-harness or an Electron integration-test harness exists. Adding a new harness or
-dependency requires approval.
+The Vitest configuration includes `src/**/*.test.ts`, `core/**/*.test.ts`, and
+`cli/**/*.test.ts`, and excludes `**/*.live.test.ts`, which run through `npm run
+test:live`. It does not configure a browser DOM environment. Do not assume a
+browser component-test harness or an Electron integration-test harness exists.
+Adding a new harness or dependency requires approval.
 
 Use the lowest layer that can observe the complete requirement. Add a real
 Electron journey when behavior depends on layout, focus, scrolling, the
@@ -242,6 +254,8 @@ above and still requires inspection of the rendered Electron UI when practical.
 | Focused Vitest file | `npm test -- src/path/to/file.test.ts` |
 | All co-located Vitest tests | `npm test` |
 | Renderer TypeScript | `npm run typecheck` |
+| Core TypeScript | `npm run typecheck:core` |
+| Test-source TypeScript | `npm run typecheck:tests` |
 | Electron main and preload TypeScript | `npx tsc -p tsconfig.electron.json --noEmit` |
 | Renderer and Electron build | `npm run build` |
 | Focused Electron journey | `npx playwright test tests/e2e/name.spec.ts` |
