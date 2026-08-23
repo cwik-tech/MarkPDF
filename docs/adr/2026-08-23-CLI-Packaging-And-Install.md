@@ -70,11 +70,23 @@ the documented "the application is unavailable" code is actually reachable. The 
 looks for the enclosing `.asar` archive rather than the path inside it, because a packaged entry
 point lives inside a *file* and nothing can stat a path within one.
 
-**`PATH` is read from the login shell, or not claimed at all.** An application launched from
+**`PATH` is read from an interactive login shell, or not claimed at all.** An application launched from
 Finder inherits `launchd`'s minimal environment, so `process.env.PATH` cannot say which `markpdf` a
-terminal would run. The login shell is asked with a fixed argument list — nothing built from user
-input — and a three-second timeout. When that fails the status is `path-unknown` and the settings
-screen says so rather than guessing.
+terminal would run. The interactive flag matters for zsh because a fresh Terminal loads `.zshrc`,
+while a non-interactive login shell does not. The shell is asked with a fixed argument list —
+nothing built from user input. On macOS, `/usr/bin/script` supplies a pseudo-terminal because some
+interactive plugins wait indefinitely when started through plain pipes. The shell runs in a
+detached process group with a three-second hard timeout, so the shell and any plugin children are
+killed together if startup still does not finish. When that fails the status is `path-unknown` and
+the settings screen says so rather than guessing.
+
+**Installing into the user-local directory also completes the shell setup.** If that directory is
+missing from `PATH`, or another `markpdf` is found first, MarkPDF adds a marked block to the active
+zsh, bash, or POSIX sh profile. The directory is shell-quoted, the profile is replaced atomically,
+an existing profile symlink remains a symlink, and an edited or partial MarkPDF block is refused.
+Uninstall removes only the exact block MarkPDF generated. A successful profile change opens a new
+macOS Terminal window so the command is immediately available there; the settings state turns
+green and confirms completion with a toast.
 
 **Asked asynchronously, and split across the boundary.** The settings screen asks for the status
 the moment it opens, from the process that draws the window, so `execFileSync` stopped the
@@ -86,11 +98,9 @@ runtime check on its output is a real boundary rather than a restatement of a ty
 the decisions: which shell names are worth asking about, and what an empty, failed or non-string
 answer means. A relative `SHELL` is refused without running anything.
 
-A non-empty answer is kept byte for byte. `printf %s "$PATH"` emits the variable and nothing else,
-so leading and trailing spaces belong to a directory name and trimming would hand back a different
-`PATH` from the one the shell has. An answer carrying a line break is a profile that printed
-something of its own; since its output cannot be separated from the variable's, the answer is
-refused rather than cleaned up into something plausible.
+The fixed command frames `PATH` between markers. Pseudo-terminals and interactive plugins may print
+their own text, so only the framed value is used. Its contents are kept byte for byte; leading and
+trailing spaces belong to a directory name, and trimming would return a different `PATH`.
 
 **The OCR assets are bundled and the engine is pointed at them.** `@tesseract.js-data/eng` pinned
 at `1.0.0`, using the `4.0.0_best_int` variant: 2.8 MB against 10 MB, and the only one the
@@ -124,16 +134,18 @@ So the command installs to `/usr/local/bin` **when this user can already write t
 administrator password prompt and a privileged shell command; that is a security surface worth
 designing on its own rather than adding at the end of a phase.
 
-The consequence is made visible rather than buried: somebody who lands in `~/.local/bin` is told
-the directory is not on their `PATH` and given the exact line to add. Implementing elevation
-remains open, and this is the paragraph to revisit.
+The user-local destination no longer leaves setup to the user. MarkPDF updates the active shell
+profile with its own removable block. If the profile cannot be identified or updated safely, the
+installation reports that failure instead of claiming completion. Implementing elevation remains
+open, but it is no longer required for a one-click installation.
 
 ## Consequences
 
 - Roughly 2.9 MB added to the installed application: the language data plus `dist-cli`.
   `tesseract.js-core` already shipped for the reader's own OCR; it moves out of the archive rather
   than being added.
-- A person on a machine without a writable `/usr/local/bin` has to edit a shell profile once.
+- A person on a machine without a writable `/usr/local/bin` gets a user-local command and a managed
+  shell-profile entry without entering an administrator password.
 - `outline` shows the heading tree of the text as extracted. Native PDF bookmarks are not read, so
   a document whose bookmarks differ from its headings shows the headings. Heading *level* is the
   extractor's judgement from font statistics — measured against the test fixture, it reports both a
@@ -186,16 +198,23 @@ the install path is refused and its target left untouched, a directory is refuse
 is refused unchanged, and no staging file is left behind.
 `core/install/pathLookup.test.ts` covers the `PATH` search order, the empty-entry rule, and
 whether a real file on disk can be executed. `core/install/loginShellPath.test.ts` covers the
-question asked, every way the answer is refused, and — with a runner the test resolves by hand and
-no timers at all — that the call hands back a pending promise rather than blocking until the shell
-replies.
+interactive question asked, every way the answer is refused, and — with a runner the test resolves
+by hand and no timers at all — that the call hands back a pending promise rather than blocking
+until the shell replies. It also covers framed extraction through terminal and plugin chatter.
+`core/install/shellProfile.test.ts` covers marked-block installation and removal, idempotency,
+shell quoting, preservation of existing content and modes, profile symlinks, and unsupported shells
+against real temporary files.
 `src/cliInstallCopy.test.ts` fixes the sentence shown for every state.
 
 **`tests/e2e/cli-install.spec.ts` is the journey that proves the button is wired to all of it**:
-it opens Settings › General, clicks Install, observes the state the screen reports, and then
-**runs the installed command** — `markpdf --version` through the shim, on the real Electron binary
-under `ELECTRON_RUN_AS_NODE=1` — before clicking Remove and observing it gone. An executable bit is
-not a working command, and the difference is exactly what this caught. `npm run test:e2e` and
+it opens Settings › General, clicks Install, observes a green current state and completion toast,
+confirms that no manual profile instruction remains, starts a fresh isolated zsh that resolves the
+command, and then **runs the installed command** — `markpdf --version` through the shim, on the real
+Electron binary under `ELECTRON_RUN_AS_NODE=1` — before clicking Remove and confirming both the
+command and MarkPDF's profile block are gone. An executable bit is not a working command, and the
+difference is exactly what this caught. Its isolated `.zshrc` also reproduces a plugin that waits
+forever without a TTY, proving the status check completes without leaking a shell process.
+`npm run test:e2e` and
 `npm run electron:dev` build `dist-cli` so the entry point the shim names is really there. It runs against the
 real preload bridge and the real IPC handlers. The destination is a temporary directory, chosen
 through a seam that refuses unless the build is unpackaged, opted in by an exact token, and

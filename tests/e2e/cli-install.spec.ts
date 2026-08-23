@@ -1,7 +1,7 @@
 import { expect, test, _electron as electron } from "@playwright/test";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,6 +13,30 @@ const require = createRequire(import.meta.url);
 const electronPath = require("electron") as string;
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const run = promisify(execFile);
+
+async function closeApp(app: ElectronApplication): Promise<void> {
+  const child = app.process();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      (async () => {
+        await app
+          .evaluate(async ({ app: electronApp }) => {
+            electronApp.exit(0);
+          })
+          .catch(() => undefined);
+        await app.close().catch(() => undefined);
+      })(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("graceful close timed out")), 2_000);
+      }),
+    ]);
+  } catch {
+    child.kill("SIGKILL");
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 /**
  * Installing and removing the `markpdf` command from Settings.
@@ -36,10 +60,22 @@ test("installs the markpdf command from settings and removes it again", async ()
   const userDataPath = path.join(workDir, "user-data");
   const binDir = path.join(workDir, "bin");
   const commandPath = path.join(binDir, "markpdf");
+  const shellConfigDir = path.join(workDir, "shell");
+  const shellProfile = path.join(shellConfigDir, ".zshrc");
+  const originalShellProfile = [
+    'if [[ -n "$MARKPDF_E2E_REQUIRE_TTY" && ! -t 0 ]]; then',
+    "  /bin/sleep 61337",
+    "fi",
+    "# Existing shell configuration",
+    "",
+  ].join("\n");
   let app: ElectronApplication | null = null;
   let window: Page | null = null;
 
   try {
+    await mkdir(shellConfigDir, { recursive: true });
+    await writeFile(shellProfile, originalShellProfile, "utf8");
+
     app = await electron.launch({
       executablePath: electronPath,
       // No document: this journey is about the command, and an opened PDF would start indexing
@@ -52,6 +88,15 @@ test("installs the markpdf command from settings and removes it again", async ()
         MARKPDF_DATA_DIR: userDataPath,
         MARKPDF_E2E_CLI_INSTALL: "test-install-directory",
         MARKPDF_TEST_CLI_INSTALL_DIR: binDir,
+        // A real zsh profile, isolated with ZDOTDIR. The install button must make a fresh terminal
+        // resolve the command without touching the developer's actual shell configuration.
+        PATH: "/usr/bin:/bin",
+        SHELL: "/bin/zsh",
+        ZDOTDIR: shellConfigDir,
+        // A real interactive terminal has a TTY. Some shell plugins wait forever when an
+        // application starts an interactive shell through plain pipes, which used to leave this
+        // section on "Checking..." forever.
+        MARKPDF_E2E_REQUIRE_TTY: "1",
         // The renderer is loaded from Playwright's own dev server, which builds with
         // `VITE_MARKPDF_E2E=1`. That flag is what stops the application installing its Markdown
         // conversion environment on first launch — a several-minute job behind a modal that would
@@ -77,12 +122,27 @@ test("installs the markpdf command from settings and removes it again", async ()
 
     await install.click();
 
-    // What the settings screen now says, and the file that is actually there.
+    // One click finishes the installation. It does not leave a gray state plus a shell command for
+    // the person to paste themselves.
     await expect(section.getByRole("button", { name: "Remove command" })).toBeVisible({ timeout: 15_000 });
-    await expect(section).toContainText(binDir);
+    await expect(section).toContainText("installed and up to date");
+    await expect(section.locator(".status-dot")).toHaveClass(/connected/);
+    await expect(section.getByText("Add this line to your shell profile", { exact: false })).toHaveCount(0);
+    await expect(window.getByRole("status")).toContainText("Command line installed");
     expect(existsSync(commandPath)).toBe(true);
     const installed = await stat(commandPath);
     expect(installed.mode & 0o111).toBeGreaterThan(0);
+
+    const profileAfterInstall = await readFile(shellProfile, "utf8");
+    expect(profileAfterInstall).toContain("# >>> MarkPDF command >>>");
+    expect(profileAfterInstall).toContain(binDir);
+    expect(profileAfterInstall).toContain("# Existing shell configuration");
+
+    const foundFromFreshTerminal = await run("/bin/zsh", ["-ilc", "command -v markpdf"], {
+      env: { PATH: "/usr/bin:/bin", SHELL: "/bin/zsh", ZDOTDIR: shellConfigDir },
+      timeout: 20_000,
+    });
+    expect(foundFromFreshTerminal.stdout.trim()).toBe(commandPath);
 
     // An executable bit is not a working command. The shim bakes in a binary and an entry point,
     // and a stale or missing one is exactly the failure this journey exists to catch — so it is
@@ -108,9 +168,9 @@ test("installs the markpdf command from settings and removes it again", async ()
     await expect(section.getByRole("button", { name: "Install command" })).toBeVisible({ timeout: 15_000 });
     await expect(section).toContainText("is not installed");
     expect(existsSync(commandPath)).toBe(false);
+    expect(await readFile(shellProfile, "utf8")).toBe(originalShellProfile);
   } finally {
-    await window?.close().catch(() => undefined);
-    await app?.close().catch(() => undefined);
+    if (app) await closeApp(app);
     // Retried: the application sets up a Markdown conversion environment in its data directory in
     // the background, so a directory can still be growing as this runs.
     await rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 }).catch(() => undefined);

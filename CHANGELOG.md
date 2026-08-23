@@ -21,7 +21,7 @@
 
 ### Changed
 
-- Settings › General gained a Command Line section that says what the `markpdf` command on your machine is: not installed, installed and current, out of date, pointing at a different copy of MarkPDF, or shadowed by another program of the same name. If it is installed somewhere your shell does not look, it tells you and gives you the line to add.
+- Settings › General gained a Command Line section that says what the `markpdf` command on your machine is: not installed, installed and current, out of date, pointing at a different copy of MarkPDF, or shadowed by another program of the same name. Installation now puts the user-local directory on the active shell's PATH when needed.
 - The index file is upgraded in place on first launch, preserving every document and chunk already stored. Passages are then re-split as each document is opened, because how text is divided has changed. Nothing is lost and no action is needed.
 - Reading a document now happens in the main process rather than in the window, using the native extractor. Embedding, chunking and index writes moved there too, and progress is reported back to the window. Long stretches of that work are still measurable, so this reduces interface stalls rather than eliminating them.
 - Foreign key enforcement is now on, so removing a document genuinely removes its chunks and embeddings rather than leaving them behind.
@@ -36,6 +36,8 @@
 
 ### Fixed
 
+- Command Line status no longer stays on “Checking...” when an interactive zsh plugin requires a real terminal; the PATH probe now uses a bounded pseudo-terminal and cleans up the whole shell process group on timeout.
+- Installing the `markpdf` command now completes user-local PATH setup itself, opens a fresh Terminal when the shell profile changed, turns the status green, removes the obsolete copy-paste instruction, and shows a completion toast.
 - Large tables are no longer lost past their first rows. Text handed to the embedding model was silently cut at the model's limit, and a long table exceeded it many times over — measured on a 400-row table, 287 rows reached the model and 113 did not. Every row is now reachable. A table too long for one passage is split between whole rows wherever it can be, and where a single row or cell is itself too long it is carried across passages in consecutive parts, keeping every character.
 - Render Mermaid fenced blocks as theme-aware SVG charts in Markdown previews instead of displaying their source code.
 

@@ -1,5 +1,5 @@
 import { app } from "electron";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
@@ -16,6 +16,7 @@ import { classifyShimOccupant, installShimFile, removeShimFile } from "../dist-c
 import { loginShellPath, LOGIN_SHELL_ARGS } from "../dist-core/install/loginShellPath.js";
 import { testInstallDirectory } from "../dist-core/install/installDirectorySelection.js";
 import { directoryIsOnPath, findOnPath, isExecutableFile } from "../dist-core/install/pathLookup.js";
+import { installShellPath, removeShellPath } from "../dist-core/install/shellProfile.js";
 import { resolveDataDir } from "../dist-core/paths.js";
 import { shellQuote } from "../dist-core/shellQuote.js";
 
@@ -70,12 +71,10 @@ function isWritableDirectory(path: string): boolean {
  * and the command then simply works. Otherwise `~/.local/bin`, which needs no elevation but is
  * usually not on `PATH` yet.
  *
- * **Elevation is deliberately not implemented**, and that is a departure from the plan rather
- * than an omission: writing to a root-owned directory from a document reader means an
- * administrator password prompt and a privileged shell command, which is a security surface worth
- * designing on its own rather than adding at the end of a phase. The consequence is visible
- * instead of hidden — a person who lands in `~/.local/bin` is told the directory is not on their
- * `PATH` and given the line to add. Recorded in the CLI packaging ADR with this evidence.
+ * **Elevation is deliberately not implemented.** Writing to a root-owned directory from a
+ * document reader means an administrator password prompt and a privileged shell command. When
+ * the user-local directory is not already reachable, installation adds a small marked block to
+ * the active shell profile instead. That decision is recorded in the CLI packaging ADR.
  */
 export function cliInstallDirectory(): string {
   // Only reachable from an unpackaged build that has opted in by exact token and is already
@@ -137,6 +136,23 @@ const runCommand = promisify(execFile);
 
 /** How long a shell profile may take before the question is abandoned. */
 const SHELL_TIMEOUT_MS = 3000;
+const SHELL_MAX_OUTPUT_BYTES = 1024 * 1024;
+
+function killShellProcess(child: ChildProcess): void {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  if (process.platform !== "win32") {
+    try {
+      // The shell and anything its profile launched belong to the detached process group. Killing
+      // only the first process left plugin children holding stdout open after the timeout.
+      process.kill(-pid, "SIGKILL");
+      return;
+    } catch {
+      // Fall back to the child itself if it exited between the PID check and the group signal.
+    }
+  }
+  child.kill("SIGKILL");
+}
 
 /**
  * Run the login shell and hand back what it printed.
@@ -151,13 +167,78 @@ const SHELL_TIMEOUT_MS = 3000;
  * included — for as long as somebody's shell profile took, and plenty take a second.
  * `electron/defaultApp.ts` reached the same conclusion about `osascript`.
  */
-async function runLoginShell(shell: string, args: readonly string[]): Promise<string> {
-  const { stdout } = await runCommand(shell, [...args], {
-    encoding: "utf8",
-    timeout: SHELL_TIMEOUT_MS,
-    windowsHide: true,
+function runLoginShell(shell: string, args: readonly string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // macOS `script` supplies the pseudo-terminal that interactive shell plugins expect. Without
+    // it, Forge's zsh plugin waits indefinitely during startup even though a real Terminal opens
+    // immediately. Other platforms keep the direct process path.
+    const executable = process.platform === "darwin" ? "/usr/bin/script" : shell;
+    const commandArgs = process.platform === "darwin" ? ["-q", "/dev/null", shell, ...args] : [...args];
+    const child = spawn(executable, commandArgs, {
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stdoutBytes = 0;
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      reject(error);
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      resolve(stdout);
+    };
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: unknown) => {
+      if (typeof chunk !== "string") {
+        killShellProcess(child);
+        fail(new Error("The login shell returned non-text output."));
+        return;
+      }
+      stdoutBytes += Buffer.byteLength(chunk, "utf8");
+      if (stdoutBytes > SHELL_MAX_OUTPUT_BYTES) {
+        killShellProcess(child);
+        fail(new Error("The login shell returned too much output."));
+        return;
+      }
+      stdout += chunk;
+    });
+    child.once("error", (error) => fail(error));
+    child.once("close", (code, signal) => {
+      if (code === 0) succeed();
+      else fail(new Error(`The login shell exited with ${code === null ? signal ?? "no status" : String(code)}.`));
+    });
+    timer = setTimeout(() => {
+      killShellProcess(child);
+      fail(new Error(`The login shell did not finish within ${SHELL_TIMEOUT_MS} ms.`));
+    }, SHELL_TIMEOUT_MS);
   });
-  return stdout;
+}
+
+function shellPathInput(installDirectory: string) {
+  return { env: process.env, homeDirectory: homedir(), installDirectory };
+}
+
+async function openFreshTerminal(): Promise<void> {
+  if (process.platform !== "darwin" || !app.isPackaged) return;
+  try {
+    await runCommand("/usr/bin/open", ["-na", "Terminal", homedir()], {
+      timeout: SHELL_TIMEOUT_MS,
+      windowsHide: true,
+    });
+  } catch {
+    // The profile has already been updated and a fresh terminal will load it. Failing to open a
+    // convenience window must not turn a completed installation into a false failure.
+  }
 }
 
 export function shimIdentity(): ShimIdentity {
@@ -218,14 +299,47 @@ export async function installCli(): Promise<CliInstallResult> {
   const before = await getCliInstallStatus();
   if (!before.supported) return { ok: false, reason: before.reason ?? "Not supported here.", status: before };
 
+  let profileChanged = false;
+  if (!before.onDefaultPath) {
+    const currentShellPath = await loginShellPath(process.env, runLoginShell);
+    const found = currentShellPath === null ? [] : findOnPath(currentShellPath, CLI_COMMAND_NAME, isExecutableFile);
+    const needsProfile =
+      currentShellPath === null ||
+      !directoryIsOnPath(currentShellPath, before.installDirectory) ||
+      (found.length > 0 && found[0] !== before.installPath);
+    if (needsProfile) {
+      const profile = installShellPath(shellPathInput(before.installDirectory));
+      if (!profile.ok) return { ok: false, reason: profile.reason, status: before };
+      profileChanged = profile.changed;
+    }
+  }
+
   const outcome = installShimFile(before.installPath, renderShim(shimIdentity()));
-  if (!outcome.ok) return { ok: false, reason: outcome.reason, status: await getCliInstallStatus() };
-  return { ok: true, status: await getCliInstallStatus() };
+  if (!outcome.ok) {
+    if (profileChanged) removeShellPath(shellPathInput(before.installDirectory));
+    return { ok: false, reason: outcome.reason, status: await getCliInstallStatus() };
+  }
+
+  const status = await getCliInstallStatus();
+  if (status.state.state !== "current") {
+    return {
+      ok: false,
+      reason: `The command was written, but MarkPDF could not confirm that ${CLI_COMMAND_NAME} resolves to it in a fresh terminal.`,
+      status,
+    };
+  }
+  if (profileChanged) await openFreshTerminal();
+  return { ok: true, status };
 }
 
-/** Remove the shim, and only ever the shim. */
+/** Remove the shim and the exact shell-profile block MarkPDF added, if there is one. */
 export async function uninstallCli(): Promise<CliInstallResult> {
-  const outcome = removeShimFile(cliInstallPath());
+  const installDirectory = cliInstallDirectory();
+  const outcome = removeShimFile(join(installDirectory, CLI_COMMAND_NAME));
   if (!outcome.ok) return { ok: false, reason: outcome.reason, status: await getCliInstallStatus() };
+  if (installDirectory !== STANDARD_DIRECTORY) {
+    const profile = removeShellPath(shellPathInput(installDirectory));
+    if (!profile.ok) return { ok: false, reason: profile.reason, status: await getCliInstallStatus() };
+  }
   return { ok: true, status: await getCliInstallStatus() };
 }

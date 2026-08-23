@@ -13,6 +13,10 @@ import { loginShellPath, LOGIN_SHELL_ARGS, type ShellRunner } from "./loginShell
  */
 
 const answering = (printed: unknown): ShellRunner => async () => printed;
+const PATH_START = "__MARKPDF_PATH_START__";
+const PATH_END = "__MARKPDF_PATH_END__";
+const pathAnswer = (path: string, before = "", after = ""): ShellRunner =>
+  answering(`${before}${PATH_START}${path}${PATH_END}${after}`);
 
 /** Resolves only when the test says so, standing in for a shell profile that takes its time. */
 function deferred(): { promise: Promise<string>; resolve: (value: string) => void } {
@@ -42,7 +46,7 @@ describe("while the shell is answering", () => {
     done.push("the caller kept going");
     expect(done).toEqual(["the caller kept going"]);
 
-    shell.resolve("/a:/b");
+    shell.resolve(`${PATH_START}/a:/b${PATH_END}`);
 
     expect(await pending).toBe("/a:/b");
   });
@@ -50,7 +54,7 @@ describe("while the shell is answering", () => {
   it("is settled once the shell has answered", async () => {
     const shell = deferred();
     const pending = loginShellPath({ SHELL: "/bin/zsh" }, () => shell.promise);
-    shell.resolve("/a");
+    shell.resolve(`${PATH_START}/a${PATH_END}`);
 
     await pending;
 
@@ -59,11 +63,20 @@ describe("while the shell is answering", () => {
 });
 
 describe("what it asks", () => {
+  it("loads the interactive profile used by a fresh terminal", () => {
+    expect(LOGIN_SHELL_ARGS).toEqual([
+      "-i",
+      "-l",
+      "-c",
+      'printf "\\n__MARKPDF_PATH_START__%s__MARKPDF_PATH_END__\\n" "$PATH"',
+    ]);
+  });
+
   it("always asks the same fixed question", async () => {
     let asked: readonly string[] = [];
     await loginShellPath({ SHELL: "/bin/zsh" }, async (_shell, args) => {
       asked = args;
-      return "/a";
+      return `${PATH_START}/a${PATH_END}`;
     });
 
     expect(asked).toEqual(LOGIN_SHELL_ARGS);
@@ -73,7 +86,7 @@ describe("what it asks", () => {
     let asked = "";
     await loginShellPath({ SHELL: "/opt/homebrew/bin/fish" }, async (shell) => {
       asked = shell;
-      return "/a";
+      return `${PATH_START}/a${PATH_END}`;
     });
 
     expect(asked).toBe("/opt/homebrew/bin/fish");
@@ -82,7 +95,7 @@ describe("what it asks", () => {
 
 describe("what it answers", () => {
   it("returns the PATH the shell printed, byte for byte", async () => {
-    expect(await loginShellPath({ SHELL: "/bin/zsh" }, answering("/opt/bin:/usr/bin"))).toBe("/opt/bin:/usr/bin");
+    expect(await loginShellPath({ SHELL: "/bin/zsh" }, pathAnswer("/opt/bin:/usr/bin"))).toBe("/opt/bin:/usr/bin");
   });
 
   it("keeps whitespace at the very edges of the answer, which belongs to a directory name", async () => {
@@ -92,14 +105,24 @@ describe("what it answers", () => {
     // a different PATH from the one the shell has. Interior spaces would survive trimming, so the
     // whitespace has to be at the edges for this to test anything.
     const withEdgeSpaces = " relative/dir:/usr/bin:/Users/me/staging ";
-    expect(await loginShellPath({ SHELL: "/bin/zsh" }, answering(withEdgeSpaces))).toBe(withEdgeSpaces);
+    expect(await loginShellPath({ SHELL: "/bin/zsh" }, pathAnswer(withEdgeSpaces))).toBe(withEdgeSpaces);
   });
 
-  it("refuses an answer carrying a line break, because a profile printed into it", async () => {
-    // Its output cannot be separated from the variable's, so the answer is unknown rather than
-    // cleaned up into something plausible.
-    for (const chatter of ["nvm loaded\n/usr/bin", "/usr/bin\n", "/usr/bin\r\n"]) {
-      expect(await loginShellPath({ SHELL: "/bin/zsh" }, answering(chatter))).toBeNull();
+  it("extracts PATH from terminal and plugin chatter", async () => {
+    const answer = pathAnswer("/opt/bin:/usr/bin", "^D\b\b\r\nforge ready\r\n", "\r\n% ");
+
+    expect(await loginShellPath({ SHELL: "/bin/zsh" }, answer)).toBe("/opt/bin:/usr/bin");
+  });
+
+  it("refuses output without one complete framed PATH", async () => {
+    for (const malformed of [
+      "",
+      "/usr/bin",
+      `${PATH_START}/usr/bin`,
+      `/usr/bin${PATH_END}`,
+      `${PATH_END}/usr/bin${PATH_START}`,
+    ]) {
+      expect(await loginShellPath({ SHELL: "/bin/zsh" }, answering(malformed))).toBeNull();
     }
   });
 
@@ -110,7 +133,7 @@ describe("what it answers", () => {
   });
 
   it("answers nothing when there is no shell to ask", async () => {
-    expect(await loginShellPath({}, answering("/a"))).toBeNull();
+    expect(await loginShellPath({}, pathAnswer("/a"))).toBeNull();
   });
 
   it("refuses a relative shell name without running anything", async () => {
@@ -118,7 +141,7 @@ describe("what it answers", () => {
     let ran = false;
     const answer = await loginShellPath({ SHELL: "sh" }, async () => {
       ran = true;
-      return "/a";
+      return `${PATH_START}/a${PATH_END}`;
     });
 
     expect(answer).toBeNull();

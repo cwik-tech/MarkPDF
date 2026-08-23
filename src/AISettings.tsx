@@ -35,7 +35,7 @@ import {
   semanticScoreThresholdPresets
 } from "./semanticModels";
 import { semanticProgressToUpdate } from "./semanticProgress";
-import { describeCliInstall } from "./cliInstallCopy";
+import { describeCliInstall, type CliInstallAction } from "./cliInstallCopy";
 
 const providerKindLabels: Record<AIProviderKind, string> = {
   "openai-compatible": "OpenAI Compatible",
@@ -526,7 +526,7 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
                 onRefresh={() => void loadDefaultAppStatus()}
                 onSetDefault={(fileTypeIds, busyKey) => void setAsDefaultApp(fileTypeIds, busyKey)}
               />
-              <CommandLineSection />
+              <CommandLineSection onToast={showToast} />
             </>
           )}
 
@@ -740,7 +740,7 @@ function GeneralSettingsPage({
  * on this page depends on it. Every sentence it shows comes from `describeCliInstall`, which is
  * a pure rule with its own tests — this component only decides where the words go.
  */
-function CommandLineSection() {
+function CommandLineSection({ onToast }: { onToast: (message: string) => void }) {
   const [status, setStatus] = useState<CliInstallStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -765,17 +765,28 @@ function CommandLineSection() {
     void refresh();
   }, []);
 
-  const run = async (kind: "install" | "remove") => {
+  const run = async (action: Exclude<CliInstallAction, "none">) => {
     if (!window.pdfReader?.cliInstall) return;
     setBusy(true);
     setProblem(null);
     try {
       const result =
-        kind === "remove"
+        action === "remove"
           ? await window.pdfReader.cliInstall.uninstall()
           : await window.pdfReader.cliInstall.install();
       setStatus(result.status);
       setProblem(result.ok ? null : result.reason ?? "That did not work.");
+      if (result.ok) {
+        const message =
+          action === "remove"
+            ? "Command line removed."
+            : action === "update"
+              ? "Command line updated."
+              : action === "reinstall"
+                ? "Command line repaired."
+                : "Command line installed.";
+        onToast(message);
+      }
     } catch (error) {
       setProblem(error instanceof Error ? error.message : String(error));
     } finally {
@@ -816,7 +827,7 @@ function CommandLineSection() {
                 className={copy.action === "remove" ? "secondary-button" : "primary-button"}
                 disabled={busy}
                 // Fire and forget: `run` handles its own failure and reports it through state.
-                onClick={() => void run(copy.action === "remove" ? "remove" : "install")}
+                onClick={() => copy.action !== "none" && void run(copy.action)}
               >
                 {busy ? "Working..." : copy.actionLabel}
               </button>
