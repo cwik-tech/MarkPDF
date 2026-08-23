@@ -4,6 +4,8 @@
 
 ### Added
 
+- `markpdf mcp` starts the MCP server through the installed command, so registering MarkPDF with an MCP client is one line — `claude mcp add markpdf -- markpdf mcp` — instead of a path into the application bundle. Settings › CLI & MCP shows this command and the equivalent JSON configuration with copy buttons.
+
 - MarkPDF now speaks the Model Context Protocol, so an assistant that supports MCP can read your documents directly. Four tools: show a document's heading structure, search one by meaning, read specific pages, and convert one to Markdown. It is the same index, the same extractor and the same permissions the app and the `markpdf` command use — an assistant is another way in, not another set of rules. Register it once with your client; see the MCP Server section of the README.
 - No MCP tool indexes, grants or forgets anything. Permission is still given at a terminal, where a person is present, and an assistant cannot widen its own access. Searching and reading pages of a document you have already indexed need no file permission at all, so an assistant can work through a library whose folder you have taken back.
 - Every MCP reply is bounded and says so. A document longer than one answer can carry comes back with the amount that was left out, rather than shortened in a way that reads as complete. There are two limits: how much document text is gathered, and how much finished text is handed back — the second is measured on the reply itself, because what JSON costs depends on what is in it.
@@ -20,6 +22,8 @@
 - The extracted text of each document is now kept alongside the index, page by page. `markpdf outline` reads it back, which is why showing the structure of a document you have already indexed needs no file permission; indexing itself still re-reads the document each time.
 
 ### Changed
+
+- The Command Line section moved from Settings › General to its own Settings › CLI & MCP page, alongside the new MCP Server instructions.
 
 - Settings › General gained a Command Line section that says what the `markpdf` command on your machine is: not installed, installed and current, out of date, pointing at a different copy of MarkPDF, or shadowed by another program of the same name. Installation now puts the user-local directory on the active shell's PATH when needed.
 - The index file is upgraded in place on first launch, preserving every document and chunk already stored. Passages are then re-split as each document is opened, because how text is divided has changed. Nothing is lost and no action is needed.
@@ -211,3 +215,7 @@ Widened the left PDF sidebar so the Pages, Outline, and Bookmarks controls and b
 Hid the generic selection inspector for bookmark overlays so bookmark selections only appear in the Bookmarks list and page-side pin.
 
 Added synthetic Outline generation for PDFs without embedded outline data. MarkPDF now infers headings from real PDF text layout, labels generated outlines in the sidebar, persists them in MarkPDF PDF metadata on save, reloads persisted generated outlines, and covers extraction/persistence with Vitest plus the Electron Playwright flow.
+## 2026-08-23 11:29
+
+Created a planning document for open-document-awareness capabilities in the MCP CLI project (`open-document-awareness-plan.md`). The document outlines the implementation strategy and design considerations for enabling document awareness features within the CLI context.
+

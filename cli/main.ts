@@ -52,27 +52,41 @@ function endWith(error: unknown): void {
 process.on("uncaughtException", endWith);
 process.on("unhandledRejection", endWith);
 
-const controller = new AbortController();
-// Interrupted work is an outcome, not a crash: the handler aborts, the run unwinds through its
-// own cancellation checks, and nothing half-written is committed.
-process.on("SIGINT", () => controller.abort());
-process.on("SIGTERM", () => controller.abort());
+if (process.argv[2] === "mcp") {
+  // Not one of the document commands in `cli/spec.ts`: this starts the MCP server, which is
+  // compiled against this command line and so cannot be imported by it. It is intercepted here,
+  // before argument parsing, because the server's stdio is the protocol and must not pass through
+  // the command line's renderers.
+  const { runMcpServer } = await import("./mcp.js");
+  process.exitCode = await runMcpServer({
+    cliModulePath: here,
+    runtimePath: process.execPath,
+    env: process.env,
+    stderr: (text) => process.stderr.write(text),
+  });
+} else {
+  const controller = new AbortController();
+  // Interrupted work is an outcome, not a crash: the handler aborts, the run unwinds through its
+  // own cancellation checks, and nothing half-written is committed.
+  process.on("SIGINT", () => controller.abort());
+  process.on("SIGTERM", () => controller.abort());
 
-const interactive = process.stdin.isTTY === true && process.stderr.isTTY === true;
+  const interactive = process.stdin.isTTY === true && process.stderr.isTTY === true;
 
-const code = await runCli({
-  argv: process.argv.slice(2),
-  env: process.env,
-  stdout: (text) => process.stdout.write(text),
-  stderr: (text) => process.stderr.write(text),
-  version: readVersion(),
-  isPackaged: isPackagedModulePath(here),
-  confirmGrant: interactive
-    ? createTerminalConfirm(process.stdin, (text) => process.stderr.write(text), () => controller.abort())
-    : undefined,
-  signal: controller.signal,
-});
+  const code = await runCli({
+    argv: process.argv.slice(2),
+    env: process.env,
+    stdout: (text) => process.stdout.write(text),
+    stderr: (text) => process.stderr.write(text),
+    version: readVersion(),
+    isPackaged: isPackagedModulePath(here),
+    confirmGrant: interactive
+      ? createTerminalConfirm(process.stdin, (text) => process.stderr.write(text), () => controller.abort())
+      : undefined,
+    signal: controller.signal,
+  });
 
-// `exitCode` rather than `exit()`, so buffered stdout is flushed before the process ends. A
-// piped stdout is not synchronous, and exiting outright can truncate the result.
-process.exitCode = controller.signal.aborted ? EXIT_CODE.interrupted : code;
+  // `exitCode` rather than `exit()`, so buffered stdout is flushed before the process ends. A
+  // piped stdout is not synchronous, and exiting outright can truncate the result.
+  process.exitCode = controller.signal.aborted ? EXIT_CODE.interrupted : code;
+}

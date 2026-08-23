@@ -1,6 +1,7 @@
 import {
   Bot,
   CheckCircle2,
+  Copy,
   Eye,
   FileText,
   KeyRound,
@@ -9,6 +10,7 @@ import {
   Search,
   Settings,
   SlidersHorizontal,
+  Terminal,
   Trash2,
   XCircle
 } from "lucide-react";
@@ -61,7 +63,15 @@ interface AISettingsDialogProps {
   onSemanticIndexCleared?: () => void;
 }
 
-type SettingsPage = "general" | "providers" | "semantic" | "markdown";
+type SettingsPage = "general" | "providers" | "cli-mcp" | "semantic" | "markdown";
+
+const pageMeta: Record<SettingsPage, { title: string; description: string }> = {
+  general: { title: "General", description: "Choose which files macOS opens with MarkPDF." },
+  providers: { title: "AI Providers", description: "Manage model providers, local servers, and detected CLI agents." },
+  "cli-mcp": { title: "CLI & MCP", description: "Install the markpdf command and connect an MCP client." },
+  semantic: { title: "Semantic Search", description: "Manage local embedding models and the private document index." },
+  markdown: { title: "Markdown", description: "Manage Markdown export behavior and conversion defaults." }
+};
 
 const emptyDefaultAppStatus: DefaultAppStatus = {
   supported: false,
@@ -449,6 +459,10 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
             <Bot size={16} />
             <span>AI Providers</span>
           </button>
+          <button className={`settings-nav-item ${page === "cli-mcp" ? "active" : ""}`} onClick={() => setPage("cli-mcp")}>
+            <Terminal size={16} />
+            <span>CLI &amp; MCP</span>
+          </button>
           <button className={`settings-nav-item ${page === "semantic" ? "active" : ""}`} onClick={() => setPage("semantic")}>
             <Search size={16} />
             <span>Semantic Search</span>
@@ -462,24 +476,8 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
         <div className="settings-content">
           <header className="settings-header">
             <div>
-              <h2 id="settings-title">
-                {page === "general"
-                  ? "General"
-                  : page === "providers"
-                    ? "AI Providers"
-                    : page === "semantic"
-                      ? "Semantic Search"
-                      : "Markdown"}
-              </h2>
-              <p>
-                {page === "general"
-                  ? "Choose which files macOS opens with MarkPDF."
-                  : page === "providers"
-                    ? "Manage model providers, local servers, and detected CLI agents."
-                    : page === "semantic"
-                      ? "Manage local embedding models and the private document index."
-                      : "Manage Markdown export behavior and conversion defaults."}
-              </p>
+              <h2 id="settings-title">{pageMeta[page].title}</h2>
+              <p>{pageMeta[page].description}</p>
             </div>
             <button className="icon-button" title="Close settings" onClick={onClose}>
               <XCircle size={18} />
@@ -510,23 +508,27 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
               <span>{semanticSettings.downloadedModelIds.length} models downloaded</span>
               <span>{formatBytes(databaseInfo.sizeBytes)} index</span>
             </div>
-          ) : (
+          ) : page === "markdown" ? (
             <div className="settings-summary">
               <span>{markdownSettings.exportMode === "readable" ? "Readable" : "Page preserving"}</span>
               <span>{markdownSettings.useOcrFallback ? "OCR fallback" : "PDF text only"}</span>
               <span>{markdownSettings.includeAnnotations ? "Annotations included" : "Annotations off"}</span>
             </div>
-          )}
+          ) : null}
 
           {page === "general" && (
+            <GeneralSettingsPage
+              status={defaultAppStatus}
+              busyFileTypeId={busyDefaultAppFileTypeId}
+              onRefresh={() => void loadDefaultAppStatus()}
+              onSetDefault={(fileTypeIds, busyKey) => void setAsDefaultApp(fileTypeIds, busyKey)}
+            />
+          )}
+
+          {page === "cli-mcp" && (
             <>
-              <GeneralSettingsPage
-                status={defaultAppStatus}
-                busyFileTypeId={busyDefaultAppFileTypeId}
-                onRefresh={() => void loadDefaultAppStatus()}
-                onSetDefault={(fileTypeIds, busyKey) => void setAsDefaultApp(fileTypeIds, busyKey)}
-              />
               <CommandLineSection onToast={showToast} />
+              <McpServerSection onToast={showToast} />
             </>
           )}
 
@@ -838,6 +840,73 @@ function CommandLineSection({ onToast }: { onToast: (message: string) => void })
 
       {copy?.instruction && <p className="settings-note">{copy.instruction}</p>}
       {problem && <p className="settings-note">{problem}</p>}
+    </section>
+  );
+}
+
+const MCP_CLAUDE_CODE_COMMAND = "claude mcp add markpdf -- markpdf mcp";
+
+const MCP_CLIENT_CONFIG = JSON.stringify(
+  { mcpServers: { markpdf: { command: "markpdf", args: ["mcp"] } } },
+  null,
+  2
+);
+
+/**
+ * How to reach the MCP server from an agent.
+ *
+ * Static copy, deliberately: the instructions are the installed `markpdf` command plus one
+ * argument, so there is nothing here to ask the main process for. The prerequisite is the section
+ * above this one — a client spawns the server through the command line, so the command has to be
+ * installed first.
+ */
+function McpServerSection({ onToast }: { onToast: (message: string) => void }) {
+  const copySnippet = async (snippet: string) => {
+    try {
+      await navigator.clipboard.writeText(snippet);
+      onToast("Copied to clipboard.");
+    } catch {
+      onToast("Copying failed — select the text and copy it manually.");
+    }
+  };
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-heading">
+        <div>
+          <h3>MCP Server</h3>
+          <p>Let an MCP client — Claude Code, Cursor, or another agent — outline, search, and read your indexed documents.</p>
+        </div>
+      </div>
+
+      <div className="settings-subsection">
+        <h4>Claude Code</h4>
+        <p>Run this once to register the server:</p>
+        <div className="settings-code-block">
+          <code>{MCP_CLAUDE_CODE_COMMAND}</code>
+          <button className="secondary-button" onClick={() => void copySnippet(MCP_CLAUDE_CODE_COMMAND)}>
+            <Copy size={14} />
+            Copy
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-subsection">
+        <h4>Other clients</h4>
+        <p>Add this to the client&rsquo;s MCP configuration, such as Claude Desktop&rsquo;s claude_desktop_config.json or Cursor&rsquo;s mcp.json:</p>
+        <div className="settings-code-block">
+          <pre>{MCP_CLIENT_CONFIG}</pre>
+          <button className="secondary-button" onClick={() => void copySnippet(MCP_CLIENT_CONFIG)}>
+            <Copy size={14} />
+            Copy
+          </button>
+        </div>
+      </div>
+
+      <p className="settings-note">
+        Requires the markpdf command above. The server reads only what you have granted and indexed: grant a folder with
+        markpdf --allow-read &lt;folder&gt;, then index documents with markpdf index &lt;path&gt;.
+      </p>
     </section>
   );
 }

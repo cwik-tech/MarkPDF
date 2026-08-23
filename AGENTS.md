@@ -28,7 +28,10 @@ MarkPDF is one npm package with four runtime boundaries:
   schemas from the command table in `cli/spec.ts` rather than describing the same
   arguments a second time. It is compiled by `tsconfig.mcp.json` to `dist-mcp/`,
   imports core and the command table through `dist-core/` and `dist-cli/`, and runs
-  the same way the command does. **stdout belongs to the protocol** — every
+  the same way the command does. Clients reach it through `markpdf mcp`, which
+  `cli/main.ts` intercepts and re-execs onto `dist-mcp/main.js` rather than importing
+  it, because the build dependency runs the other way. **stdout belongs to the
+  protocol** — every
   diagnostic goes to stderr, and a refused tool call is an answer inside the
   protocol, not a message on the error stream.
 - `src/` is the React renderer. `src/App.tsx` coordinates the document UI;

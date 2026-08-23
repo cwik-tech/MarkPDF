@@ -91,7 +91,7 @@ and anything else you think we should implement to make it awesome.
 ## Command Line
 
 MarkPDF ships a `markpdf` command that runs the same index, the same extractor and the same
-embedding model as the application. Install it from **Settings › General › Command Line**.
+embedding model as the application. Install it from **Settings › CLI & MCP › Command Line**.
 
 ```
 markpdf index   <path...>  [--recursive] [--force]
@@ -129,19 +129,25 @@ MarkPDF also speaks the Model Context Protocol, so an assistant that supports MC
 documents directly instead of shelling out to the command. It is the same index, the same
 extractor and the same permissions — an MCP client is another way in, not another set of rules.
 
-Register it once with your client. For Claude Code:
+Register it once with your client — the server runs through the installed `markpdf` command, so
+install that first from **Settings › CLI & MCP**. For Claude Code:
 
 ```
-claude mcp add markpdf -e ELECTRON_RUN_AS_NODE=1 -- \
-  /Applications/MarkPDF.app/Contents/MacOS/MarkPDF \
-  /Applications/MarkPDF.app/Contents/Resources/app.asar/dist-mcp/main.js
+claude mcp add markpdf -- markpdf mcp
 ```
 
-`ELECTRON_RUN_AS_NODE=1` is part of the registration, not something to set afterwards: without it
-that binary opens the application window instead of running the server. For a client that reads a
-JSON configuration file, the same three things — that binary as `command`, that script as the only
-entry in `args`, and `ELECTRON_RUN_AS_NODE=1` in `env`. Add `MARKPDF_DATA_DIR` there too if you
-keep your index somewhere other than the default.
+For a client that reads a JSON configuration file, the same thing as entries in its server map —
+`markpdf` as `command` and `["mcp"]` as `args`:
+
+```json
+{
+  "mcpServers": {
+    "markpdf": { "command": "markpdf", "args": ["mcp"] }
+  }
+}
+```
+
+Add `MARKPDF_DATA_DIR` in `env` if you keep your index somewhere other than the default.
 
 Four tools, and no more:
 

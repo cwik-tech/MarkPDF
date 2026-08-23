@@ -109,7 +109,13 @@ test("installs the markpdf command from settings and removes it again", async ()
     await window.waitForLoadState("domcontentloaded");
 
     await window.getByTitle("Settings").click();
-    await window.getByRole("button", { name: "General" }).click();
+    await window.getByRole("button", { name: "CLI & MCP" }).click();
+
+    // The other half of the page: the MCP client configuration, which needs no state of its own.
+    const mcpSection = window.locator(".settings-section", { hasText: "MCP Server" });
+    await expect(mcpSection).toBeVisible({ timeout: 15_000 });
+    await expect(mcpSection).toContainText("claude mcp add markpdf -- markpdf mcp");
+    await expect(mcpSection).toContainText('"command": "markpdf"');
 
     const section = window.locator(".settings-section", { hasText: "Command Line" });
     await expect(section).toBeVisible({ timeout: 15_000 });
