@@ -31,6 +31,7 @@ import {
   saveSemanticDatabase,
   type SemanticSearchSettings,
 } from "./semantic.js";
+import { startDockPageTurn } from "./dockIcon.js";
 import {
   getDefaultAppStatus,
   setAsDefaultApp,
@@ -363,6 +364,8 @@ if (!isTestRun) {
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
   setDockIcon();
+  const stopDockPageTurn = startDockPageTurn(appIconPath);
+  app.once("will-quit", stopDockPageTurn);
   const initialOpenPaths = pendingOpenPaths;
   pendingOpenPaths = [];
   await createWindow(initialOpenPaths);
