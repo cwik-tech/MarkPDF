@@ -71,7 +71,6 @@ import type {
   FormFieldState,
   ImagePdfSource,
   DocumentTab,
-  MarkdownSearchMatch,
   MarkdownTab,
   OcrPageText,
   OverlayItem,
@@ -84,6 +83,7 @@ import type {
 } from "./types";
 import { AISettingsDialog } from "./AISettings";
 import { MarkdownPreview } from "./markdown/MarkdownPreview";
+import { findMarkdownMatches } from "./markdown/markdownSearch";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -231,40 +231,6 @@ function isMarkdownTab(
   tab: DocumentTab | null | undefined,
 ): tab is MarkdownTab {
   return tab?.kind === "markdown";
-}
-
-function findMarkdownMatches(
-  markdown: string,
-  query: string,
-): MarkdownSearchMatch[] {
-  const normalizedQuery = query.trim();
-  if (!normalizedQuery) return [];
-
-  const lowerMarkdown = markdown.toLocaleLowerCase();
-  const lowerQuery = normalizedQuery.toLocaleLowerCase();
-  const matches: MarkdownSearchMatch[] = [];
-  let cursor = 0;
-
-  for (;;) {
-    const index = lowerMarkdown.indexOf(lowerQuery, cursor);
-    if (index === -1) break;
-    const snippetStart = Math.max(0, index - 56);
-    const snippetEnd = Math.min(
-      markdown.length,
-      index + normalizedQuery.length + 56,
-    );
-    const prefix = snippetStart > 0 ? "..." : "";
-    const suffix = snippetEnd < markdown.length ? "..." : "";
-    matches.push({
-      id: `markdown-match-${index}`,
-      index,
-      length: normalizedQuery.length,
-      snippet: `${prefix}${markdown.slice(snippetStart, snippetEnd).replace(/\s+/g, " ").trim()}${suffix}`,
-    });
-    cursor = index + normalizedQuery.length;
-  }
-
-  return matches;
 }
 
 function mimeTypeFromImageName(name: string) {
@@ -4008,12 +3974,30 @@ function MarkdownDocumentView({
   tab: MarkdownTab;
   theme: ThemeMode;
 }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const matchCount = tab.searchMatches.length;
+
+  // Bring the current match into view whenever the reader steps through the
+  // results or starts a new search.
+  useEffect(() => {
+    const scrollPane = scrollRef.current;
+    if (!scrollPane) return;
+    const marker = scrollPane.querySelector('[data-active-search-match="true"]');
+    if (!marker) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      scrollSearchMarkerIntoDocumentPane(marker);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [tab.id, tab.searchQuery, tab.activeSearchMatch, matchCount]);
+
   return (
-    <div className="markdown-document-scroll">
+    <div className="markdown-document-scroll" ref={scrollRef}>
       <MarkdownPreview
         markdown={tab.markdown}
         theme={theme}
         searchQuery={tab.searchQuery}
+        activeMatchIndex={tab.activeSearchMatch}
         baseUrl={tab.baseUrl}
       />
     </div>
@@ -4625,7 +4609,9 @@ function spanMatchesWholeText(start: number, end: number, textLength: number) {
 }
 
 function scrollSearchMarkerIntoDocumentPane(marker: Element) {
-  const documentPane = marker.closest(".document-scroll");
+  const documentPane = marker.closest(
+    ".document-scroll, .markdown-document-scroll",
+  );
   if (!(documentPane instanceof HTMLElement)) return;
 
   const markerRect = marker.getBoundingClientRect();

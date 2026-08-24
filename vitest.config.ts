@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     include: [
       "src/**/*.test.ts",
+      "src/**/*.test.tsx",
       "core/**/*.test.ts",
       "cli/**/*.test.ts",
       "mcp/**/*.test.ts",

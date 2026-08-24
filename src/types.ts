@@ -41,8 +41,8 @@ export interface SearchMatch {
 
 export interface MarkdownSearchMatch {
   id: string;
-  index: number;
-  length: number;
+  /** Position of the match among the preview's highlights, top to bottom. */
+  ordinal: number;
   snippet: string;
 }
 
