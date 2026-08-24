@@ -62,7 +62,10 @@ export interface ToolDefinition {
 
 function toProperty(option: OptionSpec): SchemaProperty {
   const kind = option.type;
-  const withDefault = option.default === undefined ? {} : { default: option.default };
+  // No published default where the application's settings supply the fallback: a default here
+  // would freeze one reading of the setting into every client's validation at listing time,
+  // while the server honours the setting as it is when the call arrives. Absence says that.
+  const withDefault = option.default === undefined || option.settingsDefault !== undefined ? {} : { default: option.default };
   switch (kind.kind) {
     case "integer":
       return { type: "integer", minimum: kind.minimum, maximum: kind.maximum, description: option.description, ...withDefault };

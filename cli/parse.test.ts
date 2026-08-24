@@ -51,6 +51,29 @@ describe("choosing a command", () => {
   });
 });
 
+describe("reading an option whose fallback lives in the application settings", () => {
+  it("reports absence when the option was not given and the table declares no default", () => {
+    // The fallback for --min-score is the application's setting, read where the command runs —
+    // so the parser must say "not given", not fill in a constant that could disagree with it.
+    const { options } = expectRun(["search", "revenue", "--path", "a.pdf"]);
+    expect(options.optionalNumber("min-score")).toBeUndefined();
+  });
+
+  it("returns the value when the option was given", () => {
+    const { options } = expectRun(["search", "revenue", "--path", "a.pdf", "--min-score", "0.2"]);
+    expect(options.optionalNumber("min-score")).toBe(0.2);
+  });
+
+  it("still refuses an out-of-range value", () => {
+    expect(expectUsageError(["search", "revenue", "--path", "a.pdf", "--min-score", "3"])).toContain("--min-score");
+  });
+
+  it("keeps the strict accessor strict: absent and no default is an error, not a silent value", () => {
+    const { options } = expectRun(["search", "revenue", "--path", "a.pdf"]);
+    expect(() => options.number("min-score")).toThrow(/min-score/);
+  });
+});
+
 describe("positionals", () => {
   it("refuses a command that requires a path when none is given", () => {
     expect(expectUsageError(["index"])).toContain("<path>");

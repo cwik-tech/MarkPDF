@@ -8,7 +8,7 @@
 export interface PageText {
   page: number;
   text: string;
-  source: "pdf" | "ocr";
+  source: "pdf" | "ocr" | "mixed";
 }
 
 /** Collapse runs of whitespace so counting and snippets are stable. */

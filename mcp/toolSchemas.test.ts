@@ -24,7 +24,16 @@ describe("turning a command option into a schema property", () => {
     const property = propertyFromOption("search", "min-score");
 
     expect(property.type).toBe("number");
-    expect(property).toMatchObject({ minimum: 0, maximum: 1, default: 0.3 });
+    expect(property).toMatchObject({ minimum: 0, maximum: 1 });
+  });
+
+  it("publishes no default where the application's settings supply the fallback", () => {
+    // A published default would freeze the setting's value into every client's validation at
+    // listing time; the server would then honour a setting the schema never advertised. Absence
+    // says what is true: the fallback lives in the application's settings, read per call.
+    const property = propertyFromOption("search", "min-score");
+
+    expect(property.default).toBeUndefined();
   });
 
   it("turns a choice into an enum a client can check", () => {

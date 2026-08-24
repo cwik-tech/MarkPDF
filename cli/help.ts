@@ -10,6 +10,7 @@ import { commandSpecs, globalOptions, renderOptionUsage, type CommandSpec, type 
 const INDENT = "  ";
 
 function describeDefault(option: OptionSpec): string {
+  if (option.settingsDefault !== undefined) return " (default: the application setting)";
   return option.default === undefined ? "" : ` (default ${option.default})`;
 }
 

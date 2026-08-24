@@ -51,6 +51,12 @@ describe("a command's help", () => {
     expect(renderCommandHelp(findCommand("search")!)).toContain("default 12");
   });
 
+  it("says a settings-backed option falls back to the application setting, not a constant", () => {
+    // --min-score has no fixed default: the application's setting supplies it per run, and the
+    // help must say so rather than advertising a number that could disagree with the setting.
+    expect(renderCommandHelp(findCommand("search")!)).toContain("application setting");
+  });
+
   it("lists the allowed values of a choice", () => {
     const text = renderCommandHelp(findCommand("convert")!);
     expect(text).toContain("page-preserving, clean");

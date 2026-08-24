@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { LEGACY_V1_DDL } from "./legacySchema.js";
+import { parseHeadingEntries } from "./rows.js";
 import { openSemanticStore, SchemaTooNewError, CURRENT_SCHEMA_VERSION, type ChunkScope, type SemanticStore } from "./index.js";
 import { OCR_EXTRACTION_VERSION, TEXT_EXTRACTION_VERSION } from "../models.js";
 import { semanticIndexPath } from "../paths.js";
@@ -33,7 +34,7 @@ function scopeFor(documentId: number): ChunkScope {
 }
 
 function chunk(id: string, page: number, index: number, text: string) {
-  return { id, page, index, text, headingPath: ["Section"], vector: Float32Array.from([1, 0]) };
+  return { id, page, index, text, headingPath: [{ title: "Section", page }], vector: Float32Array.from([1, 0]) };
 }
 
 /** A database in exactly the shape the sql.js build leaves behind: v1 DDL, user_version 0. */
@@ -385,5 +386,40 @@ describe("a second operating-system process", () => {
 
     expect(store.getDocument("child")).not.toBeNull();
     expect(store.getDocument("parent")).not.toBeNull();
+  });
+});
+
+describe("reading a heading breadcrumb the index stored", () => {
+  it("reads the provenance shape with each heading's page", () => {
+    const raw = JSON.stringify([{ title: "Operating Plan", page: 9 }, { title: "Appendix A", page: 11 }]);
+
+    expect(parseHeadingEntries(raw)).toEqual([
+      { title: "Operating Plan", page: 9 },
+      { title: "Appendix A", page: 11 },
+    ]);
+  });
+
+  it("reads a legacy breadcrumb of bare titles as headings with no known page", () => {
+    // Rows written before provenance existed store `["A","B"]`. Their pages are genuinely
+    // unknown, and saying so is what stops a reader inventing one.
+    expect(parseHeadingEntries(JSON.stringify(["Revenue", "Costs"]))).toEqual([
+      { title: "Revenue", page: null },
+      { title: "Costs", page: null },
+    ]);
+  });
+
+  it("degrades an unreadable breadcrumb to empty rather than failing a search", () => {
+    for (const raw of [null, 42, "{", JSON.stringify({ title: "not a list" }), JSON.stringify([42, null])]) {
+      expect(parseHeadingEntries(raw)).toEqual([]);
+    }
+  });
+
+  it("keeps the valid entries of a mixed breadcrumb and drops the rest", () => {
+    const raw = JSON.stringify([{ title: "Kept", page: 3 }, "Legacy title", { title: 7, page: "x" }]);
+
+    expect(parseHeadingEntries(raw)).toEqual([
+      { title: "Kept", page: 3 },
+      { title: "Legacy title", page: null },
+    ]);
   });
 });

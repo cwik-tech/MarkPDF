@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { dirname, join, sep } from "node:path";
+import type { PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -18,6 +19,12 @@ export interface RasteriseOptions {
   /** Render resolution. 200 is comfortably above what the recogniser needs for body text. */
   dpi?: number;
   signal?: AbortSignal;
+  /**
+   * An already-open pdf.js document over these bytes, so the 35 ms open is paid once when the
+   * caller holds one — a region walk that found something, for instance. The caller keeps
+   * ownership: rendering borrows the handle and does not release it.
+   */
+  document?: PdfjsDocumentHandle;
 }
 
 /**
@@ -45,6 +52,37 @@ export class RasterisationCancelled extends Error {
 }
 
 /**
+ * An opened pdf.js document and the right to close it.
+ *
+ * Reading a document costs one open — measured at 35 ms — which is why more than one reader of
+ * the same bytes may share a handle. Whoever opened it is the only one entitled to release it:
+ * a borrower that destroyed a handle still in use would fail every later reader of it.
+ */
+export interface PdfjsDocumentHandle {
+  pdf: PDFDocumentProxy;
+  release: () => Promise<void>;
+}
+
+/**
+ * Open a PDF for pdf.js inspection, lazily loading the library the way rendering does.
+ *
+ * Callers that already hold a handle pass it on instead of calling this again; the 35 ms open
+ * is paid once per document, not once per reader.
+ */
+export async function openPdfDocument(bytes: Uint8Array): Promise<PdfjsDocumentHandle> {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loading = pdfjs.getDocument({
+    // Copied, because pdf.js takes ownership of the buffer it is given and the caller still
+    // needs these bytes to hash and to extract from.
+    data: new Uint8Array(bytes),
+    ...pdfjsAssetPaths(),
+    cMapPacked: true,
+  });
+  const pdf = await loading.promise;
+  return { pdf, release: () => pdf.destroy() };
+}
+
+/**
  * Render selected pages of a PDF to PNG images, in plain Node.
  *
  * pdf.js needs no worker configuration here: `pdf.mjs:22311-22314` disables the worker and
@@ -57,18 +95,12 @@ export class RasterisationCancelled extends Error {
 export async function rasterisePdfPages(bytes: Uint8Array, options: RasteriseOptions): Promise<PageImage[]> {
   if (options.pages.length === 0) return [];
   const { createCanvas } = await import("@napi-rs/canvas");
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
   const scale = (options.dpi ?? 200) / 72;
-  const loading = pdfjs.getDocument({
-    // Copied, because pdf.js takes ownership of the buffer it is given and the caller still
-    // needs these bytes to hash and to extract from.
-    data: new Uint8Array(bytes),
-    ...pdfjsAssetPaths(),
-    cMapPacked: true,
-  });
-
-  const pdf = await loading.promise;
+  // A supplied handle is borrowed, never released; only what this function opens does it close.
+  const handle = options.document ?? (await openPdfDocument(bytes));
+  const ownsHandle = options.document === undefined;
+  const pdf = handle.pdf;
   try {
     const images: PageImage[] = [];
     for (const page of [...options.pages].sort((a, b) => a - b)) {
@@ -89,6 +121,6 @@ export async function rasterisePdfPages(bytes: Uint8Array, options: RasteriseOpt
     }
     return images;
   } finally {
-    await pdf.destroy();
+    if (ownsHandle) await handle.release();
   }
 }

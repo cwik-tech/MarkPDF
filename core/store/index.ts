@@ -16,9 +16,12 @@ import {
 // records the same vocabulary rather than inventing a parallel one that could drift.
 import type { PageStatus } from "../extract/readDocumentPages.js";
 import {
-  asRow, countFrom, parseHeadingPath, pragmaInteger, pragmaText,
+  asRow, countFrom, parseHeadingEntries, pragmaInteger, pragmaText,
   requireBlob, requireInteger, requireNullableString, requireString,
 } from "./rows.js";
+import type { HeadingEntry } from "./rows.js";
+
+export type { HeadingEntry } from "./rows.js";
 
 export { SchemaTooNewError, StoreDataError, CURRENT_SCHEMA_VERSION };
 export type { MigrationReport };
@@ -102,7 +105,8 @@ export interface ChunkInsert {
   page: number;
   index: number;
   text: string;
-  headingPath: string[];
+  /** Stored as free-form JSON; the reader accepts this shape and the legacy list of titles. */
+  headingPath: readonly HeadingEntry[];
   vector: Float32Array;
 }
 
@@ -111,7 +115,10 @@ export interface ScoredChunk {
   page: number;
   snippet: string;
   score: number;
+  /** Titles only, in the breadcrumb's order — the shape every caller had before provenance. */
   headingPath: string[];
+  /** The same breadcrumb with each heading's page, or `null` for rows that predate it. */
+  headings: HeadingEntry[];
 }
 
 export interface StoreInfo {
@@ -633,12 +640,14 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
         const vector = blobToVector(requireBlob(row, "vector", context), scope.dimensions);
         const score = cosineSimilarity(queryVector, vector);
         if (score < minScore) continue;
+        const headings = parseHeadingEntries(row.heading_path);
         hits.push({
           id: requireString(row, "id", context),
           page: requireInteger(row, "page_number", context),
           snippet: requireString(row, "text", context),
           score,
-          headingPath: parseHeadingPath(row.heading_path),
+          headingPath: headings.map((heading) => heading.title),
+          headings,
         });
       }
 

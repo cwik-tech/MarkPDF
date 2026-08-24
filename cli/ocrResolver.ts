@@ -1,9 +1,11 @@
 import { ocrPages } from "../dist-core/ocr/ocrPages.js";
-import type { OcrPageCandidate } from "../dist-core/extract/readDocumentPages.js";
+import type { OcrPageCandidate, ResolveOcrRequest } from "../dist-core/extract/readDocumentPages.js";
+import { recordingRasteriser, shouldRecordRasterisation } from "../dist-core/ocr/rasterisationRecord.js";
 import type { CommandContext } from "./context.js";
 
 /**
- * How every command in this surface reads a page the structural extractor could not.
+ * How every command in this surface reads a page the structural extractor could not, and the
+ * qualifying pictures on pages it could.
  *
  * One resolver, shared by `index`, `outline` and `convert`, because the alternative is a document
  * whose scanned pages are readable through one command and silently blank through another.
@@ -15,9 +17,12 @@ import type { CommandContext } from "./context.js";
 export function createOcrResolver(
   context: CommandContext,
   label: string,
-): (request: { bytes: Uint8Array; pages: readonly number[]; signal?: AbortSignal }) => Promise<readonly OcrPageCandidate[]> {
+): (request: ResolveOcrRequest) => Promise<readonly OcrPageCandidate[]> {
+  const dependencies = shouldRecordRasterisation({ isPackaged: context.isPackaged, env: context.env })
+    ? { rasterise: recordingRasteriser(context.dataDir) }
+    : {};
   return (request) => {
     context.report.progress(`${label}: reading ${request.pages.length} page${request.pages.length === 1 ? "" : "s"} with OCR`);
-    return ocrPages(request, {});
+    return ocrPages(request, dependencies);
   };
 }

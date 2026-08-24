@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createCanvas } from "@napi-rs/canvas";
 import { PDFDocument, StandardFonts } from "pdf-lib";
-import { pageNeedsRecognition, readDocumentPages, type ReadDocument } from "./readDocumentPages.js";
+import { pageNeedsRecognition, readDocumentPages, type ReadDocument, type ResolveOcrRequest } from "./readDocumentPages.js";
 import { outlineFromPages } from "../outline/documentOutline.js";
 
 /**
@@ -281,5 +281,210 @@ describe("what the outline is derived from", () => {
     );
 
     expect(outline).toContainEqual({ level: 2, title: "Appendix C", page: 2 });
+  }, 60_000);
+});
+
+/**
+ * A page the extractor reads perfectly well, carrying a figure large enough to qualify for
+ * region recognition. Page 1 is ordinary text; page 3 is a full-page raster, for the case where
+ * both paths run in one document.
+ */
+async function buildFigurePdf(): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+
+  const first = pdf.addPage([612, 792]);
+  first.drawText("Opening page with an ordinary and complete text layer.", { x: 60, y: 720, size: 11, font });
+
+  const second = pdf.addPage([612, 792]);
+  second.drawText("Rebates are accrued monthly and settled once the partner has met both.", {
+    x: 60,
+    y: 720,
+    size: 11,
+    font,
+  });
+  second.drawText("The volume threshold and the certification requirement for the period.", {
+    x: 60,
+    y: 700,
+    size: 11,
+    font,
+  });
+  const canvas = createCanvas(640, 320);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#000000";
+  context.font = "32px Helvetica";
+  context.fillText("Incentive schedule", 40, 140);
+  const figure = await pdf.embedPng(canvas.toBuffer("image/png"));
+  second.drawImage(figure, { x: 60, y: 300, width: 320, height: 160 });
+
+  const rasterCanvas = createCanvas(1224, 1584);
+  const rasterContext = rasterCanvas.getContext("2d");
+  rasterContext.fillStyle = "#ffffff";
+  rasterContext.fillRect(0, 0, rasterCanvas.width, rasterCanvas.height);
+  rasterContext.fillStyle = "#000000";
+  rasterContext.font = "40px Helvetica";
+  rasterContext.fillText("Scanned page with no text layer at all.", 90, 300);
+  const raster = await pdf.embedPng(rasterCanvas.toBuffer("image/png"));
+  pdf.addPage([612, 792]).drawImage(raster, { x: 0, y: 0, width: 612, height: 792 });
+
+  return await pdf.save();
+}
+
+describe("a text-bearing page carrying a qualifying figure", () => {
+  it("comes back mixed: the native text, then a blank line, then the region's reading", async () => {
+    const read = expectRead(
+      await readDocumentPages({
+        bytes: await buildFigurePdf(),
+        resolveOcr: async () => [{ page: 2, text: "Incentive schedule\nChannel rebate 6420" }],
+      }),
+    );
+
+    const page = read.pages[1];
+    expect(page?.source).toBe("mixed");
+    expect(page?.status).toBe("read");
+    const native = page?.markdown ?? "";
+    expect(native.startsWith("Rebates are accrued monthly")).toBe(true);
+    expect(native).toContain("\n\nIncentive schedule\nChannel rebate 6420");
+    expect(native.endsWith("Channel rebate 6420")).toBe(true);
+  }, 60_000);
+
+  it("asks for the region page with the region it found, so nothing renders twice", async () => {
+    const received: ResolveOcrRequest[] = [];
+    await readDocumentPages({
+      bytes: await buildFigurePdf(),
+      resolveOcr: async (request) => {
+        received.push(request);
+        return [{ page: 2, text: "region words" }];
+      },
+    });
+
+    const request = received[0];
+    if (request === undefined) throw new Error("The resolver was never asked.");
+    // Page 2 by its region, page 3 because nothing else could read it — one request, ascending.
+    expect(request.pages).toEqual([2, 3]);
+    const regions = request.imageRegions ?? [];
+    expect(regions).toHaveLength(1);
+    expect(regions[0]?.page).toBe(2);
+    const box = regions[0]?.boxes[0];
+    expect(box?.x).toBeCloseTo(60, 0);
+    expect(box?.y).toBeCloseTo(300, 0);
+    expect(box?.width).toBeCloseTo(320, 0);
+    expect(box?.height).toBeCloseTo(160, 0);
+  }, 60_000);
+
+  it("records the region it read, so the position is not lost by appending", async () => {
+    const read = expectRead(
+      await readDocumentPages({
+        bytes: await buildFigurePdf(),
+        resolveOcr: async () => [{ page: 2, text: "region words" }],
+      }),
+    );
+
+    const regions = read.pages[1]?.imageRegions ?? [];
+    expect(regions).toHaveLength(1);
+    expect(regions[0]?.status).toBe("read");
+    expect(regions[0]?.box.width).toBeCloseTo(320, 0);
+  }, 60_000);
+
+  it("drops a region line the native text already says, rather than indexing it twice", async () => {
+    // The first line of the region's reading repeats a sentence of the native text. It must
+    // appear exactly once in the merged page.
+    const read = expectRead(
+      await readDocumentPages({
+        bytes: await buildFigurePdf(),
+        resolveOcr: async () => [
+          { page: 2, text: "Rebates are accrued monthly and settled once the partner has met both.\nChannel rebate 6420" },
+        ],
+      }),
+    );
+
+    const merged = read.pages[1]?.markdown ?? "";
+    const occurrences = merged.split("Rebates are accrued monthly and settled once the partner has met both.").length - 1;
+    expect(occurrences).toBe(1);
+    expect(merged).toContain("Channel rebate 6420");
+    expect(read.pages[1]?.source).toBe("mixed");
+  }, 60_000);
+
+  it("keeps the native text and records an empty region when recognition finds nothing", async () => {
+    const read = expectRead(
+      await readDocumentPages({
+        bytes: await buildFigurePdf(),
+        resolveOcr: async () => [],
+      }),
+    );
+
+    const page = read.pages[1];
+    expect(page?.source).toBe("pdf");
+    expect(page?.markdown.startsWith("Rebates are accrued monthly")).toBe(true);
+    expect(page?.markdown).not.toContain("\n\n\n");
+    const regions = page?.imageRegions ?? [];
+    expect(regions).toHaveLength(1);
+    expect(regions[0]?.status).toBe("empty");
+    expect(read.unresolvedPages).toEqual([]);
+  }, 60_000);
+
+  it("reads flagged pages and region pages in one request, each through its own path", async () => {
+    const received: ResolveOcrRequest[] = [];
+    const read = expectRead(
+      await readDocumentPages({
+        bytes: await buildFigurePdf(),
+        resolveOcr: async (request) => {
+          received.push(request);
+          return [
+            { page: 2, text: "region words" },
+            { page: 3, text: "Recognised scan." },
+          ];
+        },
+      }),
+    );
+
+    const request = received[0];
+    if (request === undefined) throw new Error("The resolver was never asked.");
+    expect(request.pages).toEqual([2, 3]);
+    expect((request.imageRegions ?? []).map((region) => region.page)).toEqual([2]);
+    expect(read.pages[1]?.source).toBe("mixed");
+    expect(read.pages[2]?.source).toBe("ocr");
+  }, 60_000);
+
+  it("does not scan for regions on pages a selection has already ruled out", async () => {
+    let asked = false;
+    await readDocumentPages({
+      bytes: await buildFigurePdf(),
+      ocrOnlyPages: [1],
+      resolveOcr: async () => {
+        asked = true;
+        return [];
+      },
+    });
+
+    expect(asked).toBe(false);
+  }, 60_000);
+
+  it("opens the document once and hands the same open handle to the recognition seam", async () => {
+    // The detection walk and the render pass must share one open: the read opens the handle,
+    // asks for the regions through it, and passes it on to whoever reads them. Proved three
+    // ways: the resolver receives a live handle for this very document, still live when asked,
+    // and released exactly once afterwards — by the read that opened it.
+    const received: ResolveOcrRequest[] = [];
+    let liveDuringSeam = false;
+    await readDocumentPages({
+      bytes: await buildFigurePdf(),
+      resolveOcr: async (request) => {
+        received.push(request);
+        liveDuringSeam = request.document !== undefined && request.document.pdf.loadingTask.destroyed === false;
+        return [{ page: 2, text: "region words" }, { page: 3, text: "Recognised scan." }];
+      },
+    });
+
+    const request = received[0];
+    if (request === undefined) throw new Error("The resolver was never asked.");
+    const handle = request.document;
+    if (handle === undefined) throw new Error("No open document was handed to the recognition seam.");
+    expect(handle.pdf.numPages).toBe(3);
+    // Live while the seam borrows it, released afterwards by the read that opened it.
+    expect(liveDuringSeam).toBe(true);
+    expect(handle.pdf.loadingTask.destroyed).toBe(true);
   }, 60_000);
 });

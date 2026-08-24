@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { chunkStructuredPages, toPlainText, BREADCRUMB_SEPARATOR } from "./structuredChunking.js";
+import { splitIntoBlocks } from "./markdownBlocks.js";
 import { BREADCRUMB_TOKEN_SHARE } from "../tokenize/budget.js";
 import { createTruncatingEmbedder } from "./truncatingEmbedder.js";
 import { EXPECTED_PAGE_10_MARKDOWN } from "../ocr/recordedRecognition.test-support.js";
@@ -262,5 +263,97 @@ describe("a page that recognition rebuilt as a table", () => {
     expect(answer?.text, "the header is not stored with the rows").not.toContain("Approved 2026");
     expect(answer?.embedText, "the header is embedded before the rows").toContain("Approved 2026");
     expect(answer?.embedText).toContain("5170");
+  });
+});
+
+describe("where a chunk's headings come from", () => {
+  it("records each heading's page, so an inherited heading names the page it closed", () => {
+    // The heading closes page 1; the table opens page 2 with no heading of its own. The chunk
+    // must say the heading came from page 1 — the breadcrumb alone cannot.
+    const chunks = chunkStructuredPages(
+      pages("The plan's preamble.\n\n## Operating Plan", "|Line item|2028|\n|---|---|\n|Sales|5170|"),
+      { budget: 400, count },
+    );
+
+    const tableChunk = chunks.find((chunk) => chunk.text.includes("5170"));
+    expect(tableChunk?.page).toBe(2);
+    expect(tableChunk?.headings).toEqual([{ title: "Operating Plan", page: 1 }]);
+    expect(tableChunk?.localHeadings).toEqual([]);
+    // The breadcrumb is unchanged: titles only, exactly as before.
+    expect(tableChunk?.headingPath).toEqual(["Operating Plan"]);
+    expect(tableChunk?.embedText.startsWith(`Operating Plan${BREADCRUMB_SEPARATOR}`)).toBe(true);
+  });
+
+  it("records a heading on the chunk's own page as coming from that page", () => {
+    const chunks = chunkStructuredPages(pages("## Appendix A\n\nThe appendix body."), { budget: 400, count });
+    const body = chunks.find((chunk) => chunk.text === "The appendix body.");
+    expect(body?.headings).toEqual([{ title: "Appendix A", page: 1 }]);
+  });
+});
+
+describe("low-signal text: retrieval context, never lost", () => {
+  const FOOTER = "MarkPDF planning pack - confidential draft";
+
+  it("a label with a following chunk stops being a chunk and becomes that chunk's context", () => {
+    const chunks = chunkStructuredPages(pages("# Report\n\n**T R A C T I O N**\n\nThe body that follows the label."), {
+      budget: 400,
+      count,
+    });
+
+    expect(chunks.some((chunk) => chunk.text.includes("T R A C T I O N")), "no standalone label chunk").toBe(false);
+    const body = chunks.find((chunk) => chunk.text === "The body that follows the label.");
+    expect(body?.localHeadings).toEqual(["T R A C T I O N"]);
+    expect(body?.embedText).toContain("T R A C T I O N");
+    expect(body?.text).not.toContain("T R A C T I O N");
+  });
+
+  it("an all-caps label behaves like an emphasised one", () => {
+    const chunks = chunkStructuredPages(pages("A P P E N D I X\n\nAppendix body text."), { budget: 400, count });
+
+    expect(chunks.some((chunk) => chunk.text === "A P P E N D I X")).toBe(false);
+    const body = chunks.find((chunk) => chunk.text === "Appendix body text.");
+    expect(body?.localHeadings).toEqual(["A P P E N D I X"]);
+    expect(body?.embedText).toContain("A P P E N D I X");
+  });
+
+  it("a label with nothing after it on its page is still indexed", () => {
+    // The last block of the page: folding it into nothing would lose it, so it stays a chunk.
+    const chunks = chunkStructuredPages(pages("Page one body.", "**S U M M A R Y**"), { budget: 400, count });
+
+    const label = chunks.find((chunk) => chunk.page === 2);
+    expect(label?.text).toContain("S U M M A R Y");
+  });
+
+  it("a short sentence is not a label, even when it would fit the size rule", () => {
+    const chunks = chunkStructuredPages(pages("Results follow.\n\nThe results themselves."), { budget: 400, count });
+
+    expect(chunks.some((chunk) => chunk.text === "Results follow.")).toBe(true);
+  });
+
+  it("text repeated across enough pages stops producing standalone chunks on any of them", () => {
+    const withFooter = Array.from({ length: 6 }, (_unused, index) => `Body of page ${index + 1}.\n\n${FOOTER}`);
+    const chunks = chunkStructuredPages(pages(...withFooter), { budget: 400, count });
+
+    expect(chunks.some((chunk) => chunk.text.includes(FOOTER))).toBe(false);
+    expect(chunks.some((chunk) => chunk.embedText.includes(FOOTER))).toBe(false);
+    expect(chunks.filter((chunk) => chunk.text.startsWith("Body of page")).length).toBe(6);
+  });
+
+  it("repeated text below the page threshold still indexes", () => {
+    // Three pages carry the line; the rule needs max(3, ceil(0.4 * 3)) = 3... so use two pages,
+    // where the same line appears on fewer pages than the threshold demands.
+    const chunks = chunkStructuredPages(pages(`Body one.\n\n${FOOTER}`, `Body two.\n\n${FOOTER}`), {
+      budget: 400,
+      count,
+    });
+
+    expect(chunks.some((chunk) => chunk.text.includes(FOOTER))).toBe(true);
+  });
+
+  it("leaves the document's blocks untouched, because only the chunk set changes", () => {
+    const withFooter = Array.from({ length: 6 }, (_unused, index) => `Body of page ${index + 1}.\n\n${FOOTER}`);
+    const blocks = splitIntoBlocks(pages(...withFooter));
+
+    expect(blocks.filter((block) => block.text.includes(FOOTER)).length).toBe(6);
   });
 });

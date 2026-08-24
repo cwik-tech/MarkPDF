@@ -77,11 +77,38 @@ export function countFrom(value: unknown, context: string): number {
 }
 
 /**
- * `heading_path` is JSON written by this codebase, but the column is plain text and a foreign
- * writer could put anything there. An unreadable breadcrumb degrades to empty rather than
- * failing a search, because the page number — the load-bearing part — is still valid.
+ * One heading in a stored breadcrumb, with the page it stands on.
+ *
+ * The page is nullable because rows written before provenance existed store bare titles, and
+ * their pages are genuinely unknown — recording `null` is what stops a reader inventing one.
  */
-export function parseHeadingPath(raw: unknown): string[] {
+export interface HeadingEntry {
+  title: string;
+  page: number | null;
+}
+
+/** One entry of a stored breadcrumb, when it can be read as one. */
+function headingEntryFrom(value: unknown): HeadingEntry | null {
+  if (typeof value === "string") {
+    return value.length > 0 ? { title: value, page: null } : null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const title = Reflect.get(value, "title");
+  if (typeof title !== "string" || title.length === 0) return null;
+  const page = Reflect.get(value, "page");
+  if (page === null) return { title, page: null };
+  if (typeof page !== "number" || !Number.isInteger(page) || page < 1) return null;
+  return { title, page };
+}
+
+/**
+ * `heading_path` is free-form JSON: rows written now store `[{title, page}]`, rows written
+ * before provenance existed store `["title", ...]`, and the column is plain text a foreign
+ * writer could put anything into. Both shapes read; anything unreadable degrades to empty
+ * rather than failing a search, because the passage itself — the load-bearing part — is still
+ * valid.
+ */
+export function parseHeadingEntries(raw: unknown): HeadingEntry[] {
   if (typeof raw !== "string" || raw.length === 0) return [];
   let parsed: unknown;
   try {
@@ -90,5 +117,10 @@ export function parseHeadingPath(raw: unknown): string[] {
     return [];
   }
   if (!Array.isArray(parsed)) return [];
-  return parsed.filter((entry): entry is string => typeof entry === "string");
+  const entries: HeadingEntry[] = [];
+  for (const value of parsed) {
+    const entry = headingEntryFrom(value);
+    if (entry !== null) entries.push(entry);
+  }
+  return entries;
 }

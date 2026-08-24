@@ -1,9 +1,10 @@
-import { headingPathAt, splitIntoBlocks, type MarkdownBlock, type MarkdownPage } from "./markdownBlocks.js";
+import { headingPathAt, splitIntoBlocks, type HeadingRef, type MarkdownBlock, type MarkdownPage } from "./markdownBlocks.js";
 import { splitTable, type RowFragment } from "./tableWindows.js";
 import { breadcrumbTokenAllowance, embeddingTokenBudget } from "../tokenize/budget.js";
 import { loadCuratedTokenCounter } from "../tokenize/tokenizers.js";
 import { getChunkingPreset, semanticChunkingVersion, type SemanticChunkingProfile } from "../models.js";
 import { chunkIdentifier } from "./chunkIdentity.js";
+import type { HeadingEntry } from "../store/index.js";
 
 /** What separates breadcrumb elements, and the breadcrumb from the body. */
 export const BREADCRUMB_SEPARATOR = " › ";
@@ -17,7 +18,15 @@ export interface StructuredChunk {
    * no repeated header. It is what a citation quotes and what a highlight is matched against.
    */
   text: string;
+  /** The breadcrumb's titles, in order — the shape retrieval has always shown. */
   headingPath: string[];
+  /** The same breadcrumb with the page each heading stands on. */
+  headings: HeadingRef[];
+  /**
+   * Low-signal labels from the chunk's own page, folded in as context rather than indexed as
+   * chunks of their own. Empty for chunks no label preceded.
+   */
+  localHeadings: string[];
   /** What is embedded: breadcrumb, separator, body — measured to fit the budget. */
   embedText: string;
   /** Position within its source unit's continuation sequence, for chunk identity. */
@@ -127,6 +136,81 @@ function splitProse(text: string, room: number, count: (value: string) => number
   return pieces;
 }
 
+/**
+ * Low-signal blocks: text that competes with content in retrieval without adding any.
+ *
+ * Neither kind is removed from the document — extraction, reading and conversion still show
+ * every word. This is a retrieval rule: the standalone *chunk* set changes, and nothing else.
+ *
+ * - A **label** is a one-line paragraph, at most {@link MAX_LABEL_CHARS} plain characters,
+ *   without sentence-ending punctuation, that is either wrapped in emphasis or at least 80 %
+ *   capital letters and spaces — the `**T R A C T I O N**` that opens a slide. Alone it is
+ *   noise a search can hit; with content after it on the same page it is context, so it is
+ *   folded into that content's embedding instead of standing alone. With nothing after it, it
+ *   stays a chunk: folding it into nothing would lose it.
+ * - **Running text** is a paragraph of at most {@link MAX_RUNNING_TEXT_CHARS} plain characters
+ *   repeated identically on `max(3, ceil(0.4 × pageCount))` or more distinct pages — the footer
+ *   on every page of a report. Indexed once per page it outnumbers the content it shares pages
+ *   with, so it produces no chunk on any page. It is still in every page's text.
+ *
+ * Both rules apply to paragraph blocks only: headings, tables and lists carry structure that is
+ * signal whatever their size.
+ */
+const MAX_LABEL_CHARS = 48;
+const MAX_RUNNING_TEXT_CHARS = 80;
+/** Below this page count the floor dominates; above it, forty percent of the document. */
+const RUNNING_TEXT_PAGE_SHARE = 0.4;
+const RUNNING_TEXT_MINIMUM_PAGES = 3;
+const CAPITAL_LABEL_SHARE = 0.8;
+
+function emphasisWrapped(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    (trimmed.startsWith("**") && trimmed.endsWith("**") && trimmed.length > 4) ||
+    (trimmed.startsWith("__") && trimmed.endsWith("__") && trimmed.length > 4)
+  );
+}
+
+function capitalLabel(plain: string): boolean {
+  const characters = Array.from(plain);
+  if (characters.length === 0) return false;
+  const letters = characters.filter((character) => /^[A-Za-z]$/.test(character));
+  if (letters.length === 0) return false;
+  const capitalsAndSpaces = characters.filter((character) => /^[A-Z ]$/.test(character)).length;
+  return capitalsAndSpaces / characters.length >= CAPITAL_LABEL_SHARE;
+}
+
+/** The label rule, applied to one block with its plain text already computed. */
+function isLabel(block: MarkdownBlock, plain: string): boolean {
+  if (block.kind !== "paragraph") return false;
+  if (block.text.includes("\n")) return false;
+  if (plain.length === 0 || plain.length > MAX_LABEL_CHARS) return false;
+  if (/[.!?…]/.test(plain)) return false;
+  return emphasisWrapped(block.text) || capitalLabel(plain);
+}
+
+/** The plain texts that qualify as running text for a document of this length. */
+function runningTexts(blocks: readonly MarkdownBlock[], pageCount: number): Set<string> {
+  const threshold = Math.max(RUNNING_TEXT_MINIMUM_PAGES, Math.ceil(RUNNING_TEXT_PAGE_SHARE * pageCount));
+  const pagesCarrying = new Map<string, Set<number>>();
+  for (const block of blocks) {
+    if (block.kind !== "paragraph") continue;
+    const plain = toPlainText(block.text);
+    if (plain.length === 0 || plain.length > MAX_RUNNING_TEXT_CHARS) continue;
+    let pages = pagesCarrying.get(plain);
+    if (pages === undefined) {
+      pages = new Set<number>();
+      pagesCarrying.set(plain, pages);
+    }
+    pages.add(block.page);
+  }
+  const running = new Set<string>();
+  for (const [plain, pages] of pagesCarrying) {
+    if (pages.size >= threshold) running.add(plain);
+  }
+  return running;
+}
+
 interface Unit {
   /**
    * What is stored: the exact source text this chunk covers.
@@ -169,18 +253,60 @@ function unitsForBlock(block: MarkdownBlock, room: number, options: ChunkOptions
  * Blocks in, chunks out, none of them over budget.
  *
  * The budget is enforced on the assembled `embedText`, not on the body alone, because the
- * breadcrumb is part of what the model sees. That is why the breadcrumb is computed first and
- * the body is given whatever remains.
+ * breadcrumb — and any label folded into it — is part of what the model sees. That is why the
+ * prefix is computed first and the body is given whatever remains.
+ *
+ * Low-signal blocks do not stand alone: running text produces no chunk at all, and a label
+ * folds into the next chunk of its page. A label with nothing after it keeps its chunk, because
+ * folding it into nothing would lose it.
  */
 export function chunkStructuredPages(pages: readonly MarkdownPage[], options: ChunkOptions): StructuredChunk[] {
   const blocks = splitIntoBlocks(pages);
+  const running = runningTexts(blocks, pages.length);
+  const blockInfo = blocks.map((block) => {
+    const plain = toPlainText(block.text);
+    const isRunning = block.kind === "paragraph" && running.has(plain);
+    return { plain, isRunning, isLabel: !isRunning && isLabel(block, plain) };
+  });
+
   const chunks: StructuredChunk[] = [];
   const perPage = new Map<number, number>();
+  // Labels waiting for the chunk they fold into. Always same-page: a label is only held when a
+  // later block on its own page will produce a chunk.
+  let pendingLabels: string[] = [];
 
   for (const [position, block] of blocks.entries()) {
-    const headingPath = headingPathAt(blocks, position);
-    const breadcrumb = breadcrumbFor(headingPath, options);
-    const room = options.budget - options.count(breadcrumb);
+    const info = blockInfo[position];
+    if (info === undefined) continue;
+    if (info.isRunning) continue;
+
+    if (info.isLabel) {
+      // Look for a later chunk-producing block on the same page, skipping blocks that are
+      // themselves dropped or folded.
+      let hasFollower = false;
+      for (let next = position + 1; next < blocks.length; next += 1) {
+        const candidate = blocks[next];
+        const candidateInfo = blockInfo[next];
+        if (candidate === undefined || candidateInfo === undefined) break;
+        if (candidate.page !== block.page) break;
+        if (candidateInfo.isRunning || candidateInfo.isLabel) continue;
+        hasFollower = true;
+        break;
+      }
+      if (hasFollower) {
+        pendingLabels.push(info.plain);
+        continue;
+      }
+      // Nothing after it on the page: indexed as a chunk like any other block.
+    }
+
+    const headings = headingPathAt(blocks, position);
+    const breadcrumb = breadcrumbFor(headings.map((heading) => heading.title), options);
+    const labelPrefix = pendingLabels.map((label) => `${label}${BREADCRUMB_SEPARATOR}`).join("");
+    const prefix = `${breadcrumb}${labelPrefix}`;
+    const room = options.budget - options.count(prefix);
+    const foldedLabels = pendingLabels;
+    pendingLabels = [];
     if (room <= 0) continue;
 
     for (const unit of unitsForBlock(block, room, options)) {
@@ -190,8 +316,10 @@ export function chunkStructuredPages(pages: readonly MarkdownPage[], options: Ch
         page: block.page,
         index,
         text: unit.text,
-        headingPath,
-        embedText: `${breadcrumb}${unit.embedPrefix}${unit.text}`,
+        headingPath: headings.map((heading) => heading.title),
+        headings,
+        localHeadings: foldedLabels,
+        embedText: `${prefix}${unit.embedPrefix}${unit.text}`,
         partIndex: unit.partIndex,
         partCount: unit.partCount,
       });
@@ -209,7 +337,8 @@ export interface IndexableChunk {
   page: number;
   index: number;
   text: string;
-  headingPath: string[];
+  /** The breadcrumb with each heading's page, as the store records it. */
+  headingPath: readonly HeadingEntry[];
   /** What the embedder is given. Never stored; never shown to a reader. */
   embedText: string;
 }
@@ -255,7 +384,7 @@ export async function chunkPagesForIndex(
     page: chunk.page,
     index: chunk.index,
     text: chunk.text,
-    headingPath: chunk.headingPath,
+    headingPath: chunk.headings,
     embedText: chunk.embedText,
   }));
 }

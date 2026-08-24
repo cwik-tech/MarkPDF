@@ -9,6 +9,7 @@ import { indexDocument } from "../dist-core/index/indexDocument.js";
 import { MARKDOWN_ENGINE_ID, MARKDOWN_VERSION, OCR_EXTRACTION_VERSION, TEXT_EXTRACTION_VERSION } from "../dist-core/models.js";
 import { defaultSemanticSearchSettings } from "../dist-core/ipc/settings.js";
 import { DEFAULT_CONTENT_BUDGET, DEFAULT_REPLY_BUDGET, outputBudget } from "../dist-core/output/budget.js";
+import { AppSettingsError } from "../dist-core/settings/appSettings.js";
 import { openSemanticStore, type SemanticStore } from "../dist-core/store/index.js";
 import { CONCURRENT_TOOL_CALLS } from "./context.js";
 import { callTool } from "./server.js";
@@ -67,10 +68,10 @@ function gatedFilesystem() {
 function contextWith(scheduler: BoundedScheduler, readFile: ToolContext["readFile"]): ToolContext {
   return {
     store: () => store,
-    embedder: () => embedder,
+    embedder: (modelId: string) => (modelId === embedder.modelId ? embedder : createDeterministicEmbedder(384, modelId)),
     allowlist: () => ({ readRoots: [libraryDir], writeRoots: [] }),
     openDocuments: () => ({ windows: 0, activeRef: null, documents: [], unreadableWindows: 0 }),
-    settings: defaultSemanticSearchSettings,
+    settings: () => defaultSemanticSearchSettings,
     readFile,
     writeFile: async () => {},
     budget: DEFAULT_CONTENT_BUDGET,
@@ -390,5 +391,32 @@ describe("how much text one call can hand back", () => {
     // Still an answer somebody can act on: which document, and why it could not be read.
     expect(text).toContain("annual-report.pdf");
     expect(text).toContain("ENOENT");
+  }, 60_000);
+});
+
+describe("a settings file that cannot be read", () => {
+  it("rejects the one call that needed the settings, and keeps answering the session", async () => {
+    // Indexed, so the call gets far enough to need the settings. The unreadable-file failure the
+    // application's settings reader raises is reproduced without a filesystem trick: the read
+    // throws, exactly as a permission error would.
+    const { path } = await indexed("annual-report.pdf", ["Passage about enterprise revenue."]);
+    const scheduler = new BoundedScheduler(CONCURRENT_TOOL_CALLS);
+    const context: ToolContext = {
+      ...contextWith(scheduler, async () => {
+        throw new Error("no reading today");
+      }),
+      settings: () => {
+        throw new AppSettingsError(join(dataDir, "config.json"), "EPERM: operation not permitted", new Error("EPERM"));
+      },
+    };
+
+    const refused = await callTool(context, "search", { path, query: "enterprise" });
+
+    expect(refused.isError).toBe(true);
+    expect(refused.content.map((block) => block.text).join("")).toContain("settings");
+
+    // The session is not over: a call that does not need the settings still answers.
+    const next = await callTool(context, "list_open_documents", {});
+    expect(next.isError !== true).toBe(true);
   }, 60_000);
 });

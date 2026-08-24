@@ -108,10 +108,10 @@ function contextWith(
   return {
     reads: filesystem.reads,
     store: () => store,
-    embedder: () => embedder,
+    embedder: (modelId: string) => (modelId === embedder.modelId ? embedder : createDeterministicEmbedder(384, modelId)),
     allowlist: () => ({ readRoots: [], writeRoots: [] }),
     openDocuments: () => view,
-    settings: defaultSemanticSearchSettings,
+    settings: () => defaultSemanticSearchSettings,
     readFile: filesystem.readFile,
     writeFile: async () => {},
     budget: DEFAULT_CONTENT_BUDGET,

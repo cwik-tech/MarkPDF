@@ -43,6 +43,12 @@ export interface ParsedOptions {
   /** The value, for an option the table gives a default, so a caller never restates it. */
   requiredText(name: string): string;
   number(name: string): number;
+  /**
+   * The value, or `undefined` when the option was absent — for options whose fallback is not a
+   * constant the parser can fill in (the application's settings supply it where the command
+   * runs), so absence must survive parsing.
+   */
+  optionalNumber(name: string): number | undefined;
 }
 
 export type ParseOutcome =
@@ -201,6 +207,11 @@ function makeParsedOptions(command: CommandSpec, values: ReadonlyMap<string, Opt
       }
       return value;
     },
+    optionalNumber(name) {
+      declared(name);
+      const value = values.get(name);
+      return typeof value === "number" ? value : undefined;
+    },
   };
 }
 
@@ -285,7 +296,11 @@ export function parseCliArgs(argv: readonly string[]): ParseOutcome {
   for (const option of command.options) {
     const raw = values[option.name];
     if (raw === undefined) {
-      if (option.default !== undefined) coerced.set(option.name, option.default);
+      // An option whose fallback lives in the application settings keeps its absence: filling in
+      // a constant here would override the setting before the command ever read it.
+      if (option.default !== undefined && option.settingsDefault === undefined) {
+        coerced.set(option.name, option.default);
+      }
       continue;
     }
     if (option.type.kind === "boolean") {

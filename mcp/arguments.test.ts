@@ -65,9 +65,15 @@ describe("types and ranges, from the table", () => {
   });
 
   it("applies the default the table declares when an argument is absent", () => {
-    expect(accept("search", { query: "x", path: "/a.pdf" })).toMatchObject({ top_k: 12, min_score: 0.3 });
+    expect(accept("search", { query: "x", path: "/a.pdf" })).toMatchObject({ top_k: 12 });
     expect(accept("outline", { path: "/a.pdf" })).toMatchObject({ depth: 3 });
     expect(accept("to_markdown", { path: "/a.pdf" })).toMatchObject({ mode: "page-preserving" });
+  });
+
+  it("leaves min_score absent, because its fallback is a setting read per call, not a constant", () => {
+    const value = accept("search", { query: "x", path: "/a.pdf" });
+
+    expect("min_score" in value).toBe(false);
   });
 
   it("refuses a missing argument the tool cannot work without", () => {

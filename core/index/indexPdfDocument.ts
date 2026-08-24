@@ -1,4 +1,4 @@
-import { readDocumentPages, type OcrPageCandidate, type ReadPage } from "../extract/readDocumentPages.js";
+import { readDocumentPages, type OcrPageCandidate, type ReadPage, type ResolveOcrRequest } from "../extract/readDocumentPages.js";
 import type { SemanticChunkingProfile } from "../models.js";
 import type { SemanticStore } from "../store/index.js";
 import type { PageText } from "./chunking.js";
@@ -19,18 +19,15 @@ export interface IndexPdfDocumentInput {
   filePath: string | null;
   chunkingProfile: SemanticChunkingProfile;
   /**
-   * Read the pages the structural extractor could not.
+   * Read the pages the structural extractor could not, and the qualifying pictures on pages it
+   * could.
    *
-   * Every surface supplies this, and it is the only way page text is produced for a scanned page.
-   * Anything it throws ends the run without writing: a document whose scanned pages could not be
-   * recognised is incomplete, and recording it as merely short would leave an index quietly missing
-   * pages that a later search would never mention.
+   * Every surface supplies this, and it is the only way page text is produced for a scanned page
+   * or a pictured figure. Anything it throws ends the run without writing: a document whose
+   * scanned pages could not be recognised is incomplete, and recording it as merely short would
+   * leave an index quietly missing pages that a later search would never mention.
    */
-  resolveOcr?: (request: {
-    bytes: Uint8Array;
-    pages: readonly number[];
-    signal?: AbortSignal;
-  }) => Promise<readonly OcrPageCandidate[]>;
+  resolveOcr?: (request: ResolveOcrRequest) => Promise<readonly OcrPageCandidate[]>;
   force?: boolean;
   onProgress?: (progress: IndexProgress) => void;
   signal?: AbortSignal;

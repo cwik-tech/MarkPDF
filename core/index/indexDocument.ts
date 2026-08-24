@@ -175,9 +175,11 @@ function settle(
 
 function textSourceOf(pages: readonly PageText[]): TextSource {
   if (pages.length === 0) return "none";
-  const ocr = pages.filter((page) => page.source === "ocr").length;
-  if (ocr === 0) return "pdf";
-  return ocr === pages.length ? "ocr" : "mixed";
+  // A page read by region carries both a text layer and recognition, so it counts toward each.
+  const fromRecognition = pages.some((page) => page.source === "ocr" || page.source === "mixed");
+  const fromTextLayer = pages.some((page) => page.source === "pdf" || page.source === "mixed");
+  if (fromRecognition && fromTextLayer) return "mixed";
+  return fromRecognition ? "ocr" : "pdf";
 }
 
 /**

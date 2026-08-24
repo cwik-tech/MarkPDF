@@ -7,11 +7,35 @@ import { classifyDocumentFailure } from "../errors.js";
 import { EXIT_CODE, type ExitCode } from "../exit.js";
 import type { ParsedOptions } from "../parse.js";
 
-function renderHuman(results: ReadonlyArray<{ page: number; score: number; snippet: string; headingPath: string[] }>): string {
+/** What a hit's breadcrumb looks like once each heading carries the page it stands on. */
+export interface SearchHitHeading {
+  title: string;
+  page: number | null;
+}
+
+export interface HumanSearchHit {
+  page: number;
+  score: number;
+  snippet: string;
+  headings: readonly SearchHitHeading[];
+}
+
+/**
+ * The human rendering of search results.
+ *
+ * A heading the passage's own page carries is printed as its title alone; a heading inherited
+ * from an earlier page says where it came from, because printing it bare is how a passage came
+ * to appear to claim a heading it merely follows. A heading whose page was never recorded
+ * prints bare too — guessing a page would be worse than not showing one.
+ */
+export function renderSearchResultsHuman(results: readonly HumanSearchHit[]): string {
   if (results.length === 0) return "";
   return `${results
     .map((hit) => {
-      const heading = hit.headingPath.length > 0 ? `  ${hit.headingPath.join(" › ")}` : "";
+      const titles = hit.headings.map((heading) =>
+        heading.page !== null && heading.page !== hit.page ? `p${heading.page}: ${heading.title}` : heading.title,
+      );
+      const heading = titles.length > 0 ? `  ${titles.join(" › ")}` : "";
       return `p${hit.page}  ${hit.score.toFixed(3)}${heading}\n    ${hit.snippet}`;
     })
     .join("\n")}\n`;
@@ -81,7 +105,9 @@ export async function runSearchCommand(
     query,
     chunkingProfile: context.settings.chunkingProfile,
     topK: options.number("top-k"),
-    minScore: options.number("min-score"),
+    // An explicit argument outranks the setting; absence falls back to it. The settings were
+    // read for this run alone, so the fallback is whatever the application says right now.
+    minScore: options.optionalNumber("min-score") ?? context.settings.minSemanticScore,
     signal: context.signal,
   });
 
@@ -98,7 +124,7 @@ export async function runSearchCommand(
       readFromDisk: lookup.usedFilesystem,
       results,
     },
-    () => renderHuman(results),
+    () => renderSearchResultsHuman(results),
   );
   return EXIT_CODE.success;
 }

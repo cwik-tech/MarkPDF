@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRunner } from "./harness.test-support.js";
 import { EXIT_CODE } from "./exit.js";
+import { renderSearchResultsHuman } from "./commands/searchCommand.js";
+import { defaultSemanticSearchSettings } from "../dist-core/ipc/settings.js";
 import { buildReportPdf, PAGE_TWO_HEADING } from "./journeys/fixtures.test-support.js";
 
 /**
@@ -156,4 +158,126 @@ describe("convert", () => {
     // Already on disk; repeating a whole document in the report would tell the caller nothing.
     expect(report.documents[0]?.markdown).toBeNull();
   }, 60_000);
+});
+
+describe("search", () => {
+  /** One result of the command line's search JSON, checked rather than assumed. */
+  interface CheckedSearchResult {
+    page: number;
+    headingPath: string[];
+    headings: Array<{ title: string; page: number | null }>;
+    headingInherited: boolean;
+  }
+
+  function searchResultsOf(stdout: string): CheckedSearchResult[] {
+    const parsed: unknown = JSON.parse(stdout);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error(`Expected an object on standard output, got ${stdout}`);
+    }
+    const results = Reflect.get(parsed, "results");
+    if (!Array.isArray(results)) throw new Error(`Expected a results array, got ${stdout}`);
+    return results.map((entry, index) => {
+      if (typeof entry !== "object" || entry === null) {
+        throw new Error(`Result ${index} is not an object: ${JSON.stringify(entry)}`);
+      }
+      const page = Reflect.get(entry, "page");
+      const headingPath = Reflect.get(entry, "headingPath");
+      const headings = Reflect.get(entry, "headings");
+      const headingInherited = Reflect.get(entry, "headingInherited");
+      if (typeof page !== "number" || !Number.isInteger(page) || page < 1) {
+        throw new Error(`Result ${index} has no usable page: ${JSON.stringify(entry)}`);
+      }
+      if (!Array.isArray(headingPath) || !headingPath.every((title) => typeof title === "string")) {
+        throw new Error(`Result ${index} has no usable headingPath: ${JSON.stringify(entry)}`);
+      }
+      if (!Array.isArray(headings)) {
+        throw new Error(`Result ${index} has no usable headings: ${JSON.stringify(entry)}`);
+      }
+      const checkedHeadings = headings.map((heading, headingIndex) => {
+        if (typeof heading !== "object" || heading === null || Array.isArray(heading)) {
+          throw new Error(`Result ${index} heading ${headingIndex} is not an object: ${JSON.stringify(heading)}`);
+        }
+        const title = Reflect.get(heading, "title");
+        const headingPage = Reflect.get(heading, "page");
+        if (typeof title !== "string" || title.length === 0) {
+          throw new Error(`Result ${index} heading ${headingIndex} has no title: ${JSON.stringify(heading)}`);
+        }
+        if (headingPage !== null && (typeof headingPage !== "number" || !Number.isInteger(headingPage) || headingPage < 1)) {
+          throw new Error(`Result ${index} heading ${headingIndex} has no usable page: ${JSON.stringify(heading)}`);
+        }
+        return { title, page: headingPage };
+      });
+      if (typeof headingInherited !== "boolean") {
+        throw new Error(`Result ${index} has no usable headingInherited: ${JSON.stringify(entry)}`);
+      }
+      return { page, headingPath, headings: checkedHeadings, headingInherited };
+    });
+  }
+
+  it("carries each heading's page in the JSON results", async () => {
+    await run(["--allow-read", libraryDir]);
+    await run(["index", fixture]);
+
+    const result = await run(["search", "Enterprise 1204", "--path", fixture, "--min-score", "0.05", "--json"]);
+
+    expect(result.code).toBe(EXIT_CODE.success);
+    // The command line's JSON mirrors the core result shape; the MCP tool is the surface that
+    // renames fields to snake_case.
+    const results = searchResultsOf(result.stdout);
+    expect(results.length).toBeGreaterThan(0);
+    const hit = results.find((entry) => entry.page === 2);
+    expect(hit?.headingPath).toContain(PAGE_TWO_HEADING);
+    // The heading stands on the same page as the passage, so it says so.
+    expect(hit?.headings).toContainEqual({ title: PAGE_TWO_HEADING, page: 2 });
+    expect(hit?.headingInherited).toBe(false);
+  }, 120_000);
+
+  it("prefixes an inherited heading with its page in the human output", () => {
+    const output = renderSearchResultsHuman([
+      { page: 10, score: 0.412, snippet: "Sales 5170", headings: [{ title: "Operating Plan", page: 9 }] },
+    ]);
+
+    expect(output).toContain("p9: Operating Plan");
+  });
+
+  it("leaves a heading the passage's own page carries unprefixed", () => {
+    const output = renderSearchResultsHuman([
+      { page: 11, score: 0.412, snippet: "Appendix text.", headings: [{ title: "Appendix A", page: 11 }] },
+    ]);
+
+    expect(output).toContain("Appendix A");
+    expect(output).not.toContain("p11: Appendix A");
+  });
+
+  it("leaves a heading with no recorded page unprefixed, because guessing one would be worse", () => {
+    const output = renderSearchResultsHuman([
+      { page: 4, score: 0.412, snippet: "Legacy row.", headings: [{ title: "Legacy Section", page: null }] },
+    ]);
+
+    expect(output).toContain("Legacy Section");
+    expect(output).not.toContain("p0:");
+    expect(output).not.toContain("pnull:");
+  });
+
+  it("uses the settings' threshold when the option is absent, and the option when it is given", async () => {
+    // The settings file is the application's own; a search without --min-score runs under
+    // whatever it says, and an explicit --min-score outranks it. The query is chosen so its
+    // measured score (0.327 against this fixture) clears the fixed fallback of 0.3 — otherwise
+    // the old behaviour would block it too and this test could not tell the two apart.
+    await run(["--allow-read", libraryDir]);
+    await run(["index", fixture]);
+    writeFileSync(
+      join(dataDir, "config.json"),
+      `${JSON.stringify({ semanticSearch: { ...defaultSemanticSearchSettings, minSemanticScore: 0.95 } })}\n`,
+      "utf8",
+    );
+
+    const blocked = await run(["search", "Enterprise 1204 1318", "--path", fixture, "--json"]);
+    expect(blocked.code).toBe(EXIT_CODE.success);
+    expect(searchResultsOf(blocked.stdout)).toEqual([]);
+
+    const allowed = await run(["search", "Enterprise 1204 1318", "--path", fixture, "--min-score", "0.05", "--json"]);
+    expect(allowed.code).toBe(EXIT_CODE.success);
+    expect(searchResultsOf(allowed.stdout).length).toBeGreaterThan(0);
+  }, 120_000);
 });

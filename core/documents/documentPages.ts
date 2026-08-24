@@ -1,5 +1,5 @@
 import { AccessDeniedError, requireAccess, type Allowlist } from "../consent/allowlist.js";
-import { readDocumentPages, type OcrPageCandidate } from "../extract/readDocumentPages.js";
+import { readDocumentPages, type OcrPageCandidate, type ResolveOcrRequest } from "../extract/readDocumentPages.js";
 import { findIndexedDocument } from "../index/documentLookup.js";
 import type { MarkdownPage } from "../index/markdownBlocks.js";
 import { MARKDOWN_ENGINE_ID, MARKDOWN_VERSION } from "../models.js";
@@ -71,11 +71,7 @@ export interface DocumentPagesInput {
   contentHash?: string;
   readFile: (path: string) => Promise<Uint8Array>;
   access: DocumentAccess;
-  resolveOcr?: (request: {
-    bytes: Uint8Array;
-    pages: readonly number[];
-    signal?: AbortSignal;
-  }) => Promise<readonly OcrPageCandidate[]>;
+  resolveOcr?: (request: ResolveOcrRequest) => Promise<readonly OcrPageCandidate[]>;
   signal?: AbortSignal;
 }
 
@@ -221,7 +217,7 @@ export async function resolveDocumentPages(
     pages: read.pages.map((page) => ({
       page: page.page,
       markdown: page.markdown,
-      source: page.source === "ocr" ? "ocr" : "pdf",
+      source: page.source === "ocr" ? "ocr" : page.source === "mixed" ? "mixed" : "pdf",
     })),
     fromIndex: false,
     unresolvedPages: read.unresolvedPages,

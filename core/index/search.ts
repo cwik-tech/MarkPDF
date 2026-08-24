@@ -1,5 +1,5 @@
 import { defaultSemanticScoreThreshold, defaultSemanticTopK, getCuratedEmbeddingModel, modelVersion, semanticChunkingVersion, type SemanticChunkingProfile } from "../models.js";
-import type { SemanticStore } from "../store/index.js";
+import type { HeadingEntry, SemanticStore } from "../store/index.js";
 import type { Embedder } from "./embeddings.js";
 import { createSnippet } from "./chunking.js";
 import { toPlainText } from "./structuredChunking.js";
@@ -9,7 +9,16 @@ export interface SemanticSearchResult {
   page: number;
   snippet: string;
   score: number;
+  /** Titles only — the shape every caller had before provenance existed. */
   headingPath: string[];
+  /** The same breadcrumb with each heading's page, or `null` for rows that predate it. */
+  headings: HeadingEntry[];
+  /**
+   * True when the passage's nearest heading stands on an earlier page, so a reader can tell a
+   * heading the passage sits under from one it merely follows. Never true for rows whose pages
+   * are unknown.
+   */
+  headingInherited: boolean;
 }
 
 export interface SearchInput {
@@ -65,5 +74,11 @@ export async function searchDocument(
   // Plain text before trimming. The stored text is Markdown, and the snippet is matched against
   // pdf.js's reading of the page to place the highlight — where no pipe, hash or emphasis marker
   // appears. A snippet carrying them matches nothing and the highlight silently disappears.
-  return hits.map((hit) => ({ ...hit, snippet: createSnippet(toPlainText(hit.snippet)) }));
+  return hits.map((hit) => {
+    // The nearest heading decides whether the passage appears to claim one from an earlier
+    // page. A heading whose page was never recorded claims nothing either way.
+    const nearest = hit.headings.length > 0 ? hit.headings[hit.headings.length - 1] : undefined;
+    const headingInherited = nearest !== undefined && nearest.page !== null && nearest.page !== hit.page;
+    return { ...hit, snippet: createSnippet(toPlainText(hit.snippet)), headingInherited };
+  });
 }

@@ -8,7 +8,8 @@
 export interface MarkdownPage {
   page: number;
   markdown: string;
-  source: "pdf" | "ocr";
+  /** `mixed`: the extractor read the page and a pictured region on it was read as well. */
+  source: "pdf" | "ocr" | "mixed";
 }
 
 export type BlockKind = "heading" | "paragraph" | "table" | "list";
@@ -22,7 +23,7 @@ export interface MarkdownBlock {
   text: string;
   /** A heading's text with its hashes removed. Absent for everything else. */
   title?: string;
-  source: "pdf" | "ocr";
+  source: "pdf" | "ocr" | "mixed";
 }
 
 const HEADING = /^(#{1,6})\s+(.*)$/;
@@ -87,25 +88,33 @@ export function splitIntoBlocks(pages: readonly MarkdownPage[]): MarkdownBlock[]
   return blocks;
 }
 
+/** A heading in a block's breadcrumb, with the page it stands on. */
+export interface HeadingRef {
+  title: string;
+  page: number;
+}
+
 /**
- * The headings above a block, outermost first.
+ * The headings above a block, outermost first, each with the page it stands on.
  *
  * Computed by walking back rather than carried as state, so it is correct for any block without
  * depending on the order questions are asked. The walk crosses page boundaries for free, which
- * is the property that matters: a table opening page 8 keeps the heading that closed page 7.
+ * is the property that matters: a table opening page 8 keeps the heading that closed page 7 —
+ * and now says so, because a breadcrumb that cannot name the page a heading came from is how a
+ * passage comes to appear to claim a heading from an earlier page.
  *
  * A heading's own title is included in its own path, so a heading indexed as a chunk describes
  * itself rather than only its ancestors.
  */
-export function headingPathAt(blocks: readonly MarkdownBlock[], index: number): string[] {
-  const path: string[] = [];
+export function headingPathAt(blocks: readonly MarkdownBlock[], index: number): HeadingRef[] {
+  const path: HeadingRef[] = [];
   let deepest = Number.POSITIVE_INFINITY;
 
   for (let position = index; position >= 0; position -= 1) {
     const block = blocks[position];
     if (block === undefined || block.kind !== "heading" || block.level === undefined) continue;
     if (block.level < deepest) {
-      path.unshift(block.title ?? block.text);
+      path.unshift({ title: block.title ?? block.text, page: block.page });
       deepest = block.level;
       if (deepest === 1) break;
     }

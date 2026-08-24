@@ -33,6 +33,9 @@ export interface CommandContext {
   report: Reporter;
   global: GlobalSettings;
   signal: AbortSignal;
+  /** The environment this run started in — input, never a place to write configuration back. */
+  env: NodeJS.ProcessEnv;
+  isPackaged: boolean;
   allowlist(): Allowlist;
   /** Opens the index on first use, so a run that is refused before it starts writes nothing. */
   store(): SemanticStore;
@@ -71,6 +74,8 @@ export function createContext(input: ContextInput): CommandContext {
     report: input.report,
     global: input.global,
     signal: input.signal,
+    env: input.env,
+    isPackaged: input.isPackaged,
 
     allowlist: () => allowlist,
 

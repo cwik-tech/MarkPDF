@@ -76,8 +76,14 @@ export const chunkingPresets: readonly ChunkingPreset[] = [
  * rather than as a run of paragraph lines, so a scanned page's chunks are windowed by row with
  * the header as embedding context. Chunk output changed, so stored chunks are invalidated the
  * same lazy way.
+ *
+ * Raised to 4 by the heading-provenance phase: the stored breadcrumb records each heading's
+ * page, and the low-signal rule stops labels and repeated running text standing alone as
+ * chunks. The document's text is unchanged — only the retrieval context is — but both change
+ * what a row carries or whether it exists at all, so rows written before the bump are
+ * re-chunked lazily rather than read as though they matched it.
  */
-export const semanticChunkingVersion = 3;
+export const semanticChunkingVersion = 4;
 
 /**
  * Recorded on `documents`; diagnostic only.

@@ -30,7 +30,8 @@ import type { ArgumentValue } from "./arguments.js";
  */
 export interface ToolContext {
   store: () => SemanticStore;
-  embedder: () => Embedder;
+  /** The embedder for one model id. Held per model, capped, so a change of model does not strand the old runtime nor pile up new ones without limit. */
+  embedder: (modelId: string) => Embedder;
   allowlist: () => Allowlist;
   /**
    * What the application has open, read fresh on every call.
@@ -41,7 +42,16 @@ export interface ToolContext {
    * to be on screen when the client launched.
    */
   openDocuments: () => OpenDocumentsView;
-  settings: SemanticSearchSettings;
+  /**
+   * The application's semantic settings, read when asked.
+   *
+   * A function for the same reason the consent record is one — a session lasts hours, and the
+   * person can change the model, the profile or the threshold in the application at any moment.
+   * A call reads them once, and everything inside that call works from that one read, so the
+   * profile and the model a search runs under cannot come from two different readings. A read
+   * that fails refuses that one call; the next call tries again.
+   */
+  settings: () => SemanticSearchSettings;
   readFile: (path: string) => Promise<Uint8Array>;
   writeFile: (path: string, text: string) => Promise<void>;
   /** How much document text an operation gathers, cut on whole pages and whole headings. */
@@ -98,6 +108,15 @@ function count(args: Record<string, ArgumentValue>, name: string): number {
     throw new Error(`${name} reached an operation without the default its schema declares.`);
   }
   return value;
+}
+
+/**
+ * A number argument that may genuinely be absent: the schema declares no default for it,
+ * because the fallback lives in the application's settings and is read per call, not published.
+ */
+function optionalCount(args: Record<string, ArgumentValue>, name: string): number | undefined {
+  const value = args[name];
+  return typeof value === "number" ? value : undefined;
 }
 
 /**
@@ -206,12 +225,17 @@ export async function runSearch(
     return { ok: false, message: "That document is not in the index. This tool reads the index only; index the document first." };
   }
 
-  const results = await searchDocument(context.store(), context.embedder(), {
+  // One read of the settings for the whole call, so the profile, the model and the threshold
+  // the search runs under all come from the same reading — and a settings file rewritten a
+  // moment ago takes effect on this call, not the session after a restart.
+  const settings = context.settings();
+  const results = await searchDocument(context.store(), context.embedder(settings.activeModelId), {
     contentHash: lookup.document.contentHash,
     query: text(args, "query") ?? "",
-    chunkingProfile: context.settings.chunkingProfile,
+    chunkingProfile: settings.chunkingProfile,
     topK: count(args, "top_k"),
-    minScore: count(args, "min_score"),
+    // An explicit argument outranks the setting; absence falls back to it.
+    minScore: optionalCount(args, "min_score") ?? settings.minSemanticScore,
     ...(signal === undefined ? {} : { signal }),
   });
 
@@ -223,6 +247,11 @@ export async function runSearch(
   const rendered = bounded.items.map((hit) => ({
     page: hit.page,
     heading_path: hit.headingPath,
+    // The same breadcrumb with each heading's page — `null` for rows indexed before provenance
+    // existed — and whether the passage's nearest heading stands on an earlier page, so a
+    // passage no longer appears to claim a heading it merely follows.
+    headings: hit.headings.map((heading) => ({ title: heading.title, page: heading.page })),
+    heading_inherited: hit.headingInherited,
     snippet: hit.snippet,
     score: hit.score,
     chunk_id: hit.id,

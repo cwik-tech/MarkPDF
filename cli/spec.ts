@@ -10,6 +10,9 @@
  * abstraction built for a caller that does not exist yet is a guess about the caller.
  */
 
+import { defaultSemanticTopK } from "../dist-core/models.js";
+import type { SemanticSearchSettings } from "../dist-core/ipc/settings.js";
+
 /** What an option's value is, and what would make one invalid. */
 export type OptionKind =
   | { kind: "boolean" }
@@ -25,6 +28,13 @@ export interface OptionSpec {
   description: string;
   /** Applied when the option is absent. Only meaningful for valued options. */
   default?: string | number;
+  /**
+   * The application setting that supplies the fallback when the option is absent — instead of a
+   * constant. An option carrying this never carries `default`: publishing a constant would
+   * freeze one reading of the setting into the parser and the tool schema, and the setting
+   * itself would then be honoured nowhere. The command reads the setting where it runs.
+   */
+  settingsDefault?: keyof SemanticSearchSettings;
   /** Whether repeating the option collects every occurrence instead of keeping the last. */
   repeatable?: boolean;
 }
@@ -124,13 +134,16 @@ export const commandSpecs: readonly CommandSpec[] = [
         name: "top-k",
         type: { kind: "integer", placeholder: "<n>", minimum: 1, maximum: 100 },
         description: "How many passages to return.",
-        default: 12,
+        // One home for the constant: the models catalogue, not a literal repeated here.
+        default: defaultSemanticTopK,
       },
       {
         name: "min-score",
         type: { kind: "number", placeholder: "<n>", minimum: 0, maximum: 1 },
         description: "Discard passages scoring below this.",
-        default: 0.3,
+        // No constant default: the application's setting supplies the fallback per run, and an
+        // explicit --min-score outranks it.
+        settingsDefault: "minSemanticScore",
       },
     ],
     exactlyOneOf: ["path", "id"],
