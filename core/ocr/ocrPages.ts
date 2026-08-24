@@ -1,5 +1,5 @@
 import type { OcrImageRegion, OcrPageCandidate, OcrRegionBox } from "../extract/readDocumentPages.js";
-import { rasterisePdfPages, RasterisationCancelled, type PageImage, type PdfjsDocumentHandle, type RasteriseOptions } from "./rasterisePages.js";
+import { rasterisePdfPagesStreaming, RasterisationCancelled, type PageImage, type PdfjsDocumentHandle, type RasteriseOptions } from "./rasterisePages.js";
 import { createTesseractRecogniser, OcrEngineError, type TextRecogniser } from "./tesseractEngine.js";
 import { tableFromLines } from "./tableFromLines.js";
 import { ocrProfile } from "./ocrContract.js";
@@ -35,12 +35,13 @@ export interface OcrDependencies {
   /** Injected so the composition can be tested without starting a real engine. */
   createRecogniser?: () => Promise<TextRecogniser>;
   /**
-   * Injected for the same reason, and for one the recogniser seam cannot reach: the window
-   * between rendering finishing and the engine starting. Rendering is not preemptible once begun,
-   * so that window is the only place a cancel arriving during the last page can be noticed, and
-   * it cannot be aimed at from outside.
+   * Compatibility seam for focused tests and specialised callers that already produce an array.
+   * Production uses `rasteriseStreaming`; this form also reaches the cancellation window between
+   * an array-producing rasteriser finishing and the engine starting.
    */
   rasterise?: (bytes: Uint8Array, options: RasteriseOptions) => Promise<PageImage[]>;
+  /** Streaming seam used in production so recognition releases each page before rendering the next. */
+  rasteriseStreaming?: (bytes: Uint8Array, options: RasteriseOptions) => AsyncIterable<PageImage>;
   dpi?: number;
 }
 
@@ -111,9 +112,9 @@ async function cropToRegions(image: PageImage, region: OcrImageRegion): Promise<
  * without this a scanned document indexes to nothing at all — every page dropped by `toPageText`
  * for having no trustworthy text.
  *
- * A page named in `imageRegions` is read by its regions: it renders with the rest in one pass,
- * and the recogniser receives only the padded union of those regions. Any other page is read
- * whole.
+ * A page named in `imageRegions` is read by its regions: it appears once in the selected-page
+ * stream, and the recogniser receives only the padded union of those regions. Any other page is
+ * read whole.
  *
  * A page that recognises to nothing is left out rather than returned empty: an empty candidate
  * would be indistinguishable from a page that was read and found blank.
@@ -125,37 +126,28 @@ export async function ocrPages(request: OcrRequest, dependencies: OcrDependencie
   const cancelled = (): boolean => request.signal?.aborted === true;
   if (cancelled()) return [];
 
-  let images: PageImage[];
-  try {
-    images = await (dependencies.rasterise ?? rasterisePdfPages)(request.bytes, {
-      pages: request.pages,
-      dpi: dependencies.dpi ?? ocrProfile("index").dpi,
-      ...(request.signal === undefined ? {} : { signal: request.signal }),
-      ...(request.document === undefined ? {} : { document: request.document }),
-    });
-  } catch (error) {
-    // Cancellation is an outcome here, as it is everywhere else in this pipeline. The caller reads
-    // the signal the instant this returns and abandons the whole read, so an empty result cannot
-    // be mistaken for a document that had nothing to recognise.
-    if (error instanceof RasterisationCancelled) return [];
-    throw error;
-  }
-  if (images.length === 0) return [];
-  // Read the instant rendering returns, before anything is started. Rendering the last page is
-  // not preemptible once begun, so a cancel arriving during it is only noticeable here — and
-  // without this check it still bought a worker thread and a language file for a run that was
-  // already over.
-  if (cancelled()) return [];
-
   const regionsByPage = new Map((request.imageRegions ?? []).map((region) => [region.page, region]));
-  const recogniser = await (dependencies.createRecogniser ?? (() => createTesseractRecogniser()))();
+  const options: RasteriseOptions = {
+    pages: request.pages,
+    dpi: dependencies.dpi ?? ocrProfile("index").dpi,
+    ...(request.signal === undefined ? {} : { signal: request.signal }),
+    ...(request.document === undefined ? {} : { document: request.document }),
+  };
+  const images = dependencies.rasteriseStreaming !== undefined
+    ? dependencies.rasteriseStreaming(request.bytes, options)
+    : dependencies.rasterise !== undefined
+      ? await dependencies.rasterise(request.bytes, options)
+      : rasterisePdfPagesStreaming(request.bytes, options);
+  let recogniser: TextRecogniser | null = null;
+  const candidates: OcrPageCandidate[] = [];
   try {
-    const candidates: OcrPageCandidate[] = [];
-    for (const [position, image] of images.entries()) {
+    let position = 0;
+    for await (const image of images) {
       // Recognition of one page is not preemptible — the engine offers no cancellation — so the
       // signal is read between pages and nothing pretends otherwise.
       if (cancelled()) break;
-      request.onProgress?.(`Reading page ${image.page} with OCR (${position + 1} of ${images.length})`);
+      recogniser ??= await (dependencies.createRecogniser ?? (() => createTesseractRecogniser()))();
+      request.onProgress?.(`Reading page ${image.page} with OCR (${position + 1} of ${request.pages.length})`);
       const region = regionsByPage.get(image.page);
       const target = region === undefined ? image.image : await cropToRegions(image, region);
       const recognised = await recogniser.recognise(target);
@@ -164,9 +156,14 @@ export async function ocrPages(request: OcrRequest, dependencies: OcrDependencie
       // As before, outer whitespace is trimmed before storage.
       const text = (tableFromLines(recognised.lines) ?? recognised.text).trim();
       if (text.length > 0) candidates.push({ page: image.page, text });
+      position += 1;
+      if (cancelled()) break;
     }
     return candidates;
+  } catch (error) {
+    if (error instanceof RasterisationCancelled) return candidates;
+    throw error;
   } finally {
-    await recogniser.close();
+    await recogniser?.close();
   }
 }

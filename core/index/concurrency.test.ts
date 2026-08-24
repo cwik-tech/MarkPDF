@@ -9,6 +9,7 @@ import type { Embedder } from "./embeddings.js";
 import { deferred } from "./deferred.test-support.js";
 import { expectIndexed } from "./indexResult.test-support.js";
 import { semanticChunkingVersion } from "../models.js";
+import { BoundedScheduler } from "./boundedScheduler.js";
 
 let dataDir: string;
 let store: SemanticStore;
@@ -96,5 +97,34 @@ describe("the same document indexed twice at once", () => {
     };
     expect(store.countIndexedChunks(scope)).toBe(2);
     expect(store.info().chunkCount).toBe(2);
+  });
+});
+
+describe("cancelling work queued behind a bounded resource", () => {
+  it("removes the waiter and never starts its work", async () => {
+    const scheduler = new BoundedScheduler(1);
+    const holding = deferred();
+    const started = deferred();
+    const first = scheduler.run(async () => {
+      started.resolve();
+      await holding.promise;
+    });
+    await started.promise;
+
+    const controller = new AbortController();
+    let queuedRan = false;
+    const queued = scheduler.run(async () => {
+      queuedRan = true;
+    }, controller.signal);
+
+    controller.abort();
+    await expect(queued).rejects.toMatchObject({ name: "SchedulerCancelled" });
+    expect(queuedRan).toBe(false);
+    expect(scheduler.active).toBe(1);
+
+    holding.resolve();
+    await first;
+    expect(scheduler.active).toBe(0);
+    expect(queuedRan).toBe(false);
   });
 });

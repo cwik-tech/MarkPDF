@@ -2,9 +2,9 @@
 
 ## Status
 
-Accepted. This record covers the P5 decisions of `docs/mcp-cli-electron-parity-plan.md`
-(F7 — session-fresh settings and embedders, journeys B and C). The plan scopes this ADR across
-P5–P8; later phases will extend it with their own decisions and verification sections.
+Accepted. This record covers the P5 and P8 decisions of
+`docs/mcp-cli-electron-parity-plan.md`: session-fresh settings and embedders, and progress for
+long MCP calls.
 
 ## Context
 
@@ -23,6 +23,10 @@ call.
 the threshold from the application's settings per run; the MCP tool advertised `default: 0.3`
 and filled it in at validation. The same question through the two doors ran under two different
 thresholds, and the schema stated a constant the server was never meant to honour.
+
+**Long calls were silent.** OCR and model loading already produced progress internally, but the
+MCP request boundary did not consume the SDK progress token or send a notification. A client
+could therefore wait through a scanned conversion without knowing whether work was continuing.
 
 ## Decision
 
@@ -63,6 +67,19 @@ connects, searches, rewrites the settings, re-indexes through the command line (
 settings per run), and searches again over the same connection, requiring hits under the new
 model where the old scope no longer has any.
 
+### Progress belongs to the requesting call
+
+The server creates a reporter only when the SDK supplies a string or numeric progress token. It
+keeps progress nondecreasing, makes messages terminal-safe, applies the normal reply-text bound,
+and sends the first update immediately. Intermediate updates are limited to one per 500 ms; the
+last pending update is always sent before the tool reply completes. Notification failures do not
+turn successful document work into a failed tool call.
+
+OCR page messages are composed with any listener already present on the resolver. Embedding model
+download progress uses `ModelProgressHub`: the cached embedder is the one producer, while every
+call subscribes only for the duration of its own `embed` or `warm` operation. A call that joins an
+in-progress model load therefore sees later bytes, and listeners do not accumulate after calls end.
+
 ## Consequences
 
 - A person who changes the model, profile or threshold in the application sees the change in
@@ -71,6 +88,8 @@ model where the old scope no longer has any.
   of refusing to start; a missing or malformed one still falls back to defaults, as before.
 - Clients validating calls against the published schema can no longer build a `min_score`
   expectation the server does not share.
+- MCP clients that request progress see page-level OCR and model-download updates; clients that do
+  not request it pay no notification cost.
 
 ## Verification
 
@@ -82,4 +101,7 @@ model where the old scope no longer has any.
 - The refusal boundary: `mcp/server.test.ts`.
 - Journeys B and C: `mcp/journeys/liveSettings.test.ts`.
 - Mutation proof: caching the settings behind the function fails journey C; removing the cache
-  cap fails the LRU test. Both restored, both suites green.
+  cap fails the LRU test; dropping the reporter's final pending update fails
+  `mcp/server.test.ts`. All were restored and rerun green.
+- Progress reporter and producer wiring: `mcp/server.test.ts` and `mcp/context.test.ts`.
+- Real SDK progress-token journey over stdio: `mcp/journeys/progress.test.ts`.

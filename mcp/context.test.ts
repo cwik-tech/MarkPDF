@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createToolContext } from "./context.js";
+import { CONCURRENT_OCR_CALLS, createToolContext } from "./context.js";
 import { defaultSemanticSearchSettings } from "../dist-core/ipc/settings.js";
 import { DETERMINISTIC_EMBEDDER_TOKEN } from "../dist-core/index/embedderSelection.js";
+import type { Embedder } from "../dist-core/index/embeddings.js";
+import { resolveOcrWithProgress } from "./operations.js";
 
 /**
  * A session's view of the application's settings, and the embedders it builds from them.
@@ -103,6 +105,135 @@ describe("one embedder per model, bounded", () => {
       expect(context.embedder(MODEL_B)).toBe(second);
       expect(context.embedder(MODEL_A)).not.toBe(first);
     } finally {
+      close();
+    }
+  });
+});
+
+describe("operation progress producers", () => {
+  it("forwards OCR page messages to the current call without replacing the resolver listener", async () => {
+    const resolverMessages: string[] = [];
+    const callMessages: string[] = [];
+    const { context, close } = createToolContext(
+      { dataDir, env: testEnv(dataDir), isPackaged: false },
+      {
+        ocr: async (request) => {
+          request.onProgress?.("Reading page 3 with OCR (1 of 1)");
+          return [];
+        },
+      },
+    );
+    try {
+      const resolve = resolveOcrWithProgress({
+        ...context,
+        progress: ({ message }) => {
+          if (message !== undefined) callMessages.push(message);
+        },
+      });
+      if (resolve === undefined) throw new Error("OCR resolver was not configured");
+
+      await resolve({
+        bytes: new Uint8Array(),
+        pages: [3],
+        onProgress: (message) => resolverMessages.push(message),
+      });
+
+      expect(resolverMessages).toEqual(["Reading page 3 with OCR (1 of 1)"]);
+      expect(callMessages).toEqual(["Reading page 3 with OCR (1 of 1)"]);
+    } finally {
+      close();
+    }
+  });
+
+  it("publishes model download bytes to every call watching the cached embedder", async () => {
+    let publish: ((progress: { loaded: number; total: number }) => void) | undefined;
+    const fake: Embedder = {
+      modelId: MODEL_A,
+      dimensions: 2,
+      async embed() {
+        publish?.({ loaded: 25, total: 100 });
+        return new Float32Array([0, 1]);
+      },
+    };
+    const { context, close } = createToolContext(
+      { dataDir, env: testEnv(dataDir), isPackaged: false },
+      {
+        createEmbedder: (_modelId, onProgress) => {
+          publish = onProgress;
+          return fake;
+        },
+      },
+    );
+    const first: Array<{ loaded: number; total: number }> = [];
+    const second: Array<{ loaded: number; total: number }> = [];
+    try {
+      const firstEmbedder = context.embedder(MODEL_A, (progress) => first.push(progress));
+      const secondEmbedder = context.embedder(MODEL_A, (progress) => second.push(progress));
+
+      await Promise.all([
+        firstEmbedder.embed("one", "query"),
+        secondEmbedder.embed("two", "query"),
+      ]);
+
+      expect(first).toContainEqual({ loaded: 25, total: 100 });
+      expect(second).toContainEqual({ loaded: 25, total: 100 });
+      expect(context.embedder(MODEL_A)).toBe(fake);
+    } finally {
+      close();
+    }
+  });
+});
+
+describe("resource-specific scheduling", () => {
+  it("caps OCR at one while cheap work continues through the tool scheduler", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = 0;
+    let active = 0;
+    let peak = 0;
+    let firstStarted: () => void = () => undefined;
+    const firstStart = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    const { context, close } = createToolContext(
+      { dataDir, env: testEnv(dataDir), isPackaged: false },
+      {
+        ocr: async () => {
+          started += 1;
+          active += 1;
+          peak = Math.max(peak, active);
+          firstStarted();
+          await gate;
+          active -= 1;
+          return [];
+        },
+      },
+    );
+    try {
+      const resolve = context.resolveOcr;
+      if (resolve === undefined) throw new Error("OCR resolver was not configured");
+      const first = resolve({ bytes: new Uint8Array(), pages: [1] });
+      await firstStart;
+      const second = resolve({ bytes: new Uint8Array(), pages: [2] });
+
+      let cheapWorkFinished = false;
+      await context.scheduler.run(async () => {
+        cheapWorkFinished = true;
+      });
+
+      expect(cheapWorkFinished).toBe(true);
+      expect(started).toBe(1);
+      expect(active).toBe(1);
+      expect(CONCURRENT_OCR_CALLS).toBe(1);
+
+      release();
+      await Promise.all([first, second]);
+      expect(started).toBe(2);
+      expect(peak).toBe(1);
+    } finally {
+      release();
       close();
     }
   });

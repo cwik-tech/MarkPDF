@@ -92,8 +92,11 @@ export async function openPdfDocument(bytes: Uint8Array): Promise<PdfjsDocumentH
  * Both libraries are imported lazily. They are only needed for a scanned page, and a document
  * with a text layer should not pay for loading a rasteriser it will not use.
  */
-export async function rasterisePdfPages(bytes: Uint8Array, options: RasteriseOptions): Promise<PageImage[]> {
-  if (options.pages.length === 0) return [];
+export async function* rasterisePdfPagesStreaming(
+  bytes: Uint8Array,
+  options: RasteriseOptions,
+): AsyncIterable<PageImage> {
+  if (options.pages.length === 0) return;
   const { createCanvas } = await import("@napi-rs/canvas");
 
   const scale = (options.dpi ?? 200) / 72;
@@ -102,7 +105,6 @@ export async function rasterisePdfPages(bytes: Uint8Array, options: RasteriseOpt
   const ownsHandle = options.document === undefined;
   const pdf = handle.pdf;
   try {
-    const images: PageImage[] = [];
     for (const page of [...options.pages].sort((a, b) => a - b)) {
       if (options.signal?.aborted === true) throw new RasterisationCancelled();
       if (page < 1 || page > pdf.numPages) continue;
@@ -115,12 +117,21 @@ export async function rasterisePdfPages(bytes: Uint8Array, options: RasteriseOpt
       // and gives the recogniser a photographic negative to read.
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, canvas.width, canvas.height);
-      await rendered.render({ canvasContext: context, viewport, canvas }).promise;
-      images.push({ page, image: canvas.toBuffer("image/png"), width: canvas.width, height: canvas.height });
-      rendered.cleanup();
+      try {
+        await rendered.render({ canvasContext: context, viewport, canvas }).promise;
+        yield { page, image: canvas.toBuffer("image/png"), width: canvas.width, height: canvas.height };
+      } finally {
+        rendered.cleanup();
+      }
     }
-    return images;
   } finally {
     if (ownsHandle) await handle.release();
   }
+}
+
+/** Compatibility collector for callers that genuinely need every rendered image at once. */
+export async function rasterisePdfPages(bytes: Uint8Array, options: RasteriseOptions): Promise<PageImage[]> {
+  const images: PageImage[] = [];
+  for await (const image of rasterisePdfPagesStreaming(bytes, options)) images.push(image);
+  return images;
 }

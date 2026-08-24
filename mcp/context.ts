@@ -1,9 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { BoundedScheduler } from "../dist-core/index/boundedScheduler.js";
+import { BoundedScheduler, SchedulerCancelled } from "../dist-core/index/boundedScheduler.js";
 import { readAllowlist } from "../dist-core/consent/allowlistFile.js";
 import { createDeterministicEmbedder } from "../dist-core/index/deterministicEmbedder.js";
 import { shouldUseDeterministicEmbedder } from "../dist-core/index/embedderSelection.js";
 import { createTransformersEmbedder, type Embedder } from "../dist-core/index/embeddings.js";
+import { ModelProgressHub } from "../dist-core/index/modelProgress.js";
 import { getCuratedEmbeddingModel } from "../dist-core/models.js";
 import { ocrPages } from "../dist-core/ocr/ocrPages.js";
 import { recordingRasteriser, shouldRecordRasterisation } from "../dist-core/ocr/rasterisationRecord.js";
@@ -23,17 +24,22 @@ import type { ToolContext } from "./operations.js";
  * connection and one embedding session — and peak memory then depends on how many calls somebody
  * chose to make rather than on anything this program decided.
  *
- * Four rather than one: an index-only `search` should not have to wait behind a slow conversion of
- * a three-hundred-page scan, and the two do not contend for the same resource. Four rather than
- * many: embedding is synchronous native work that blocks this thread, so overlapping calls do not
- * finish sooner — they only multiply the document text held in memory at once.
+ * Four keeps cheap index-only work responsive while a long conversion runs. Expensive OCR has its
+ * own one-per-process scheduler below, so accepting several tool calls never means holding several
+ * rasterised pages and recognition engines at once.
  */
 export const CONCURRENT_TOOL_CALLS = 4;
+export const CONCURRENT_OCR_CALLS = 1;
 
 export interface ContextInput {
   dataDir: string;
   env: NodeJS.ProcessEnv;
   isPackaged: boolean;
+}
+
+export interface ContextDependencies {
+  createEmbedder?: (modelId: string, onProgress: (progress: { loaded: number; total: number }) => void) => Embedder;
+  ocr?: typeof ocrPages;
 }
 
 /**
@@ -55,10 +61,38 @@ export const EMBEDDER_CACHE_SIZE = 2;
  * tab or a changed setting in that time has to take effect without the person having to restart
  * their editor.
  */
-export function createToolContext(input: ContextInput): { context: ToolContext; close: () => void } {
+export function createToolContext(
+  input: ContextInput,
+  dependencies: ContextDependencies = {},
+): { context: ToolContext; close: () => void } {
   let store: SemanticStore | null = null;
   // Most recently used last; the first entry is the next to go once the cache is full.
   const embedders = new Map<string, Embedder>();
+  const modelProgress = new ModelProgressHub();
+  const ocrScheduler = new BoundedScheduler(CONCURRENT_OCR_CALLS);
+
+  const watchedEmbedder = (
+    embedder: Embedder,
+    listener: (progress: { loaded: number; total: number }) => void,
+  ): Embedder => {
+    const warm = embedder.warm;
+    const watched = async <T>(work: () => Promise<T>): Promise<T> => {
+      const unsubscribe = modelProgress.subscribe(embedder.modelId, listener);
+      try {
+        return await work();
+      } finally {
+        unsubscribe();
+      }
+    };
+    return {
+      modelId: embedder.modelId,
+      dimensions: embedder.dimensions,
+      embed: async (text, mode) => await watched(async () => await embedder.embed(text, mode)),
+      ...(warm === undefined
+        ? {}
+        : { warm: async () => await watched(async () => await warm()) }),
+    };
+  };
 
   const context: ToolContext = {
     store: () => {
@@ -67,26 +101,29 @@ export function createToolContext(input: ContextInput): { context: ToolContext; 
       store ??= openSemanticStore({ dataDir: input.dataDir });
       return store;
     },
-    embedder: (modelId) => {
+    embedder: (modelId, onProgress) => {
       const cached = embedders.get(modelId);
       if (cached !== undefined) {
         // Touched: move to the most-recent end so the eviction takes the true least recent.
         embedders.delete(modelId);
         embedders.set(modelId, cached);
-        return cached;
+        return onProgress === undefined ? cached : watchedEmbedder(cached, onProgress);
       }
       // The same guarded seam the other two surfaces use: unpackaged, the exact opt-in token, and
       // a test data directory. Nothing a client sends can reach it.
-      const created = shouldUseDeterministicEmbedder({ isPackaged: input.isPackaged, env: input.env })
-        ? createDeterministicEmbedder(getCuratedEmbeddingModel(modelId).dimensions, modelId)
-        : createTransformersEmbedder({ modelId, dataDir: input.dataDir });
+      const publish = (progress: { loaded: number; total: number }): void => modelProgress.publish(modelId, progress);
+      const created = dependencies.createEmbedder !== undefined
+        ? dependencies.createEmbedder(modelId, publish)
+        : shouldUseDeterministicEmbedder({ isPackaged: input.isPackaged, env: input.env })
+          ? createDeterministicEmbedder(getCuratedEmbeddingModel(modelId).dimensions, modelId)
+          : createTransformersEmbedder({ modelId, dataDir: input.dataDir, onProgress: publish });
       embedders.set(modelId, created);
       while (embedders.size > EMBEDDER_CACHE_SIZE) {
         const oldest = embedders.keys().next();
         if (oldest.done === true) break;
         embedders.delete(oldest.value);
       }
-      return created;
+      return onProgress === undefined ? created : watchedEmbedder(created, onProgress);
     },
     allowlist: () => readAllowlist(input.dataDir),
     // Per call, like the consent record above and for the same reason: a client session lasts
@@ -101,13 +138,22 @@ export function createToolContext(input: ContextInput): { context: ToolContext; 
     writeFile: async (path, text) => await writeFile(path, text, "utf8"),
     // The same reading the command line does. Without it a scanned document answers with blank
     // pages, which is the one failure that looks like a correct answer.
-    resolveOcr: (request) =>
-      ocrPages(
-        request,
-        shouldRecordRasterisation({ isPackaged: input.isPackaged, env: input.env })
-          ? { rasterise: recordingRasteriser(input.dataDir) }
-          : {},
-      ),
+    resolveOcr: async (request) => {
+      try {
+        return await ocrScheduler.run(
+          async () => await (dependencies.ocr ?? ocrPages)(
+            request,
+            shouldRecordRasterisation({ isPackaged: input.isPackaged, env: input.env })
+              ? { rasterise: recordingRasteriser(input.dataDir) }
+              : {},
+          ),
+          request.signal,
+        );
+      } catch (error) {
+        if (error instanceof SchedulerCancelled) return [];
+        throw error;
+      }
+    },
     budget: DEFAULT_CONTENT_BUDGET,
     replyBudget: DEFAULT_REPLY_BUDGET,
     scheduler: new BoundedScheduler(CONCURRENT_TOOL_CALLS),

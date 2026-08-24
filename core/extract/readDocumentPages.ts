@@ -103,6 +103,8 @@ export interface ResolveOcrRequest {
   /** Every page asked about, ascending — pages nothing could read, then pages read by region. */
   pages: readonly number[];
   signal?: AbortSignal;
+  /** Progress emitted by the recognition adapter, when the caller requested it. */
+  onProgress?: (message: string) => void;
   /**
    * Which of the requested pages are read by their regions rather than whole, and where those
    * regions are. A page named here is rendered once and the recogniser is given a crop of the

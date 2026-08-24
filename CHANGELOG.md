@@ -4,6 +4,7 @@
 
 ### Added
 
+- Long MCP calls now report bounded, monotonic progress to clients that request it, including the page currently being read by OCR and embedding-model download bytes.
 - MCP can now report the visible page of every open PDF and read the current contents of every open Markdown tab, including unsaved edits, without revealing a file path. Long notes paginate by offset, private snapshots follow the tab lifetime, and MarkPDF now provides a source editor and Save behavior for Markdown tabs.
 - MCP document replies now say whether their text is an index snapshot and, when it is, when that exact page cache or search scope was recorded. Search scopes are timestamped independently, so changing the chunking profile or embedding model cannot make an older scope claim the newer scope's time.
 - A picture on a page that reads perfectly well is no longer invisible to search. MarkPDF now finds sizeable images on text pages, reads just that part of the page, and adds what it finds to the page's own words — so a figure containing a number or a table row is retrievable whether it sits on a scanned page or beside ordinary text. Pages with only small decorations are left alone, and nothing is rendered or recognised unless a picture actually qualifies.
@@ -29,6 +30,7 @@
 
 ### Changed
 
+- OCR now rasterises and recognises one page at a time, allows only one recognition job at once, and removes cancelled work from the queue immediately; cheap index-only MCP calls remain responsive while a scan is being read.
 - The Command Line section moved from Settings › General to its own Settings › CLI & MCP page, alongside the new MCP Server instructions.
 
 - Settings › General gained a Command Line section that says what the `markpdf` command on your machine is: not installed, installed and current, out of date, pointing at a different copy of MarkPDF, or shadowed by another program of the same name. Installation now puts the user-local directory on the active shell's PATH when needed.

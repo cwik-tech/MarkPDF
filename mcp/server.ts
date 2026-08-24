@@ -1,10 +1,17 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { boundText, renderReply, type OutputBudget } from "../dist-core/output/budget.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  type CallToolResult,
+  type ProgressNotification,
+  type ProgressToken,
+} from "@modelcontextprotocol/sdk/types.js";
+import { boundText, DEFAULT_REPLY_BUDGET, renderReply, type OutputBudget } from "../dist-core/output/budget.js";
 import { safeForTerminal } from "../dist-core/text/safeForTerminal.js";
 import { parseToolArguments, type ArgumentValue } from "./arguments.js";
 import { runListOpenDocuments, runReadOpenDocument } from "./openDocumentOperations.js";
 import { runOutline, runReadPages, runSearch, runToMarkdown, type ToolContext, type ToolOutcome } from "./operations.js";
+import type { ToolProgress } from "./progress.js";
 import { TOOLS } from "./toolSchemas.js";
 
 /**
@@ -33,6 +40,82 @@ const RUNNERS: Record<string, Runner> = {
 
 /** What a call that was given up on is told, whether it had started or was still waiting. */
 const CANCELLED = "The request was cancelled.";
+
+export interface ProgressReporter {
+  report: (update: ToolProgress) => void;
+  finish: () => Promise<void>;
+}
+
+interface ProgressReporterInput {
+  progressToken: ProgressToken;
+  send: (notification: ProgressNotification) => Promise<void>;
+  now?: () => number;
+  budget?: OutputBudget;
+}
+
+/** Throttle chatty producers without losing the first update or the final state they reported. */
+export function createProgressReporter(input: ProgressReporterInput): ProgressReporter {
+  const now = input.now ?? Date.now;
+  const budget = input.budget ?? DEFAULT_REPLY_BUDGET;
+  let lastSentAt: number | null = null;
+  let lastProgress = 0;
+  let pending: ToolProgress | null = null;
+  let sending = Promise.resolve();
+
+  const normalized = (update: ToolProgress): ToolProgress => {
+    const proposed = update.progress;
+    const progress =
+      typeof proposed === "number" && Number.isFinite(proposed)
+        ? Math.max(lastProgress, proposed)
+        : lastProgress + 1;
+    lastProgress = progress;
+    const message = update.message === undefined
+      ? undefined
+      : boundText(safeForTerminal(update.message), budget).text;
+    const total =
+      typeof update.total === "number" && Number.isFinite(update.total) && update.total >= progress
+        ? update.total
+        : undefined;
+    return {
+      progress,
+      ...(total === undefined ? {} : { total }),
+      ...(message === undefined ? {} : { message }),
+    };
+  };
+
+  const emit = (update: ToolProgress): void => {
+    const params = {
+      progressToken: input.progressToken,
+      progress: update.progress ?? 0,
+      ...(update.total === undefined ? {} : { total: update.total }),
+      ...(update.message === undefined ? {} : { message: update.message }),
+    };
+    sending = sending
+      .then(async () => await input.send({ method: "notifications/progress", params }))
+      .catch(() => undefined);
+  };
+
+  return {
+    report(update) {
+      const next = normalized(update);
+      const at = now();
+      if (lastSentAt === null || at - lastSentAt >= 500) {
+        emit(next);
+        lastSentAt = at;
+        pending = null;
+      } else {
+        pending = next;
+      }
+    },
+    async finish() {
+      if (pending !== null) {
+        emit(pending);
+        pending = null;
+      }
+      await sending;
+    },
+  };
+}
 
 /**
  * A refusal, bounded like an answer.
@@ -67,6 +150,7 @@ export async function callTool(
   name: unknown,
   args: unknown,
   signal?: AbortSignal,
+  reporter?: ProgressReporter,
 ): Promise<ToolReply> {
   const budget = context.replyBudget;
   if (typeof name !== "string") return failure("A tool call must name a tool.", budget);
@@ -82,18 +166,23 @@ export async function callTool(
   const parsed = parseToolArguments(tool.inputSchema, args ?? {});
   if (!parsed.ok) return failure(parsed.message, budget);
 
+  const cancelled = (): boolean => signal?.aborted === true;
   // Cancelled before it was ever queued. Taking a place in the queue for work nobody wants would
   // delay calls that are still wanted.
-  if (signal?.aborted === true) return failure(CANCELLED, budget);
+  if (cancelled()) return failure(CANCELLED, budget);
+
+  const operationContext: ToolContext = reporter === undefined
+    ? context
+    : { ...context, progress: reporter.report };
 
   try {
     const outcome = await context.scheduler.run(async () => {
       // Checked again on the way in. A call can sit in the queue for as long as the calls ahead of
       // it take, and a client that gave up in that time must not have its work started anyway —
       // which is the whole difference between bounding concurrency and merely delaying it.
-      if (signal?.aborted === true) return null;
-      return await run(context, parsed.value, signal);
-    });
+      if (cancelled()) return null;
+      return await run(operationContext, parsed.value, signal);
+    }, signal);
     if (outcome === null) return failure(CANCELLED, budget);
     if (!outcome.ok) return failure(outcome.message, budget);
     // The same serialization the operation measured its reply with. Two spellings of "turn this
@@ -112,7 +201,10 @@ export async function callTool(
     }
     return { content: [{ type: "text", text }] };
   } catch (error) {
+    if (cancelled()) return failure(CANCELLED, budget);
     return failure(error instanceof Error ? error.message : String(error), budget);
+  } finally {
+    await reporter?.finish();
   }
 }
 
@@ -149,7 +241,15 @@ export function createMarkpdfServer(identity: ServerIdentity, context: ToolConte
     const args = typeof params === "object" && params !== null ? Reflect.get(params, "arguments") : undefined;
     // The client's own cancellation, carried through to the work rather than dropped: reading and
     // recognising a document is the longest thing this server does.
-    return await callTool(context, name, args, extra.signal);
+    const token = extra._meta?.progressToken;
+    const reporter = typeof token === "string" || typeof token === "number"
+      ? createProgressReporter({
+          progressToken: token,
+          send: async (notification) => await extra.sendNotification(notification),
+          budget: context.replyBudget,
+        })
+      : undefined;
+    return await callTool(context, name, args, extra.signal, reporter);
   });
 
   return server;

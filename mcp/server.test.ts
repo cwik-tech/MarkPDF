@@ -12,7 +12,7 @@ import { DEFAULT_CONTENT_BUDGET, DEFAULT_REPLY_BUDGET, outputBudget } from "../d
 import { AppSettingsError } from "../dist-core/settings/appSettings.js";
 import { openSemanticStore, type SemanticStore } from "../dist-core/store/index.js";
 import { CONCURRENT_TOOL_CALLS } from "./context.js";
-import { callTool } from "./server.js";
+import { callTool, createProgressReporter } from "./server.js";
 import type { ToolContext } from "./operations.js";
 
 /**
@@ -148,7 +148,7 @@ describe("how much work a client can start at once", () => {
     const [, reply] = await Promise.all([first, queued]);
 
     expect(reply.isError).toBe(true);
-    expect(reply.content[0]?.text).toContain("cancelled");
+    expect(reply.content[0]?.text).toBe("The request was cancelled.");
     // The point of the whole exercise: its turn came, and its work did not happen.
     expect(filesystem.started).toEqual([holding]);
   }, 30_000);
@@ -434,4 +434,55 @@ describe("a settings file that cannot be read", () => {
     const next = await callTool(context, "list_open_documents", {});
     expect(next.isError !== true).toBe(true);
   }, 60_000);
+});
+
+describe("progress notifications", () => {
+  it("emits the first update, throttles the middle, and always emits the last", async () => {
+    let now = 1_000;
+    const sent: Array<{ progress: number; message?: string }> = [];
+    const reporter = createProgressReporter({
+      progressToken: "call-7",
+      now: () => now,
+      send: async (notification) => {
+        sent.push({
+          progress: notification.params.progress,
+          ...(notification.params.message === undefined ? {} : { message: notification.params.message }),
+        });
+      },
+    });
+
+    reporter.report({ progress: 1, message: "page 1" });
+    now += 100;
+    reporter.report({ progress: 2, message: "page 2" });
+    now += 100;
+    reporter.report({ progress: 3, message: "page 3" });
+    await reporter.finish();
+
+    expect(sent).toEqual([
+      { progress: 1, message: "page 1" },
+      { progress: 3, message: "page 3" },
+    ]);
+  });
+
+  it("keeps progress monotonic and bounds terminal-unsafe messages", async () => {
+    const sent: Array<{ progress: number; message?: string }> = [];
+    const reporter = createProgressReporter({
+      progressToken: 9,
+      now: () => 1_000,
+      send: async (notification) => {
+        sent.push({
+          progress: notification.params.progress,
+          ...(notification.params.message === undefined ? {} : { message: notification.params.message }),
+        });
+      },
+    });
+
+    reporter.report({ progress: 9, message: `${"x".repeat(60_000)}\u001b[2K` });
+    reporter.report({ progress: 4, message: "last" });
+    await reporter.finish();
+
+    expect(sent.map((entry) => entry.progress)).toEqual([9, 9]);
+    expect(Buffer.byteLength(sent[0]?.message ?? "", "utf8")).toBeLessThanOrEqual(DEFAULT_REPLY_BUDGET);
+    expect(sent[0]?.message).not.toContain("\u001b");
+  });
 });

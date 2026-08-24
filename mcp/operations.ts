@@ -20,6 +20,7 @@ import type { SemanticSearchSettings } from "../dist-core/ipc/settings.js";
 import type { OpenDocumentEntry, OpenDocumentsView } from "../dist-core/session/openDocuments.js";
 import type { SemanticStore } from "../dist-core/store/index.js";
 import type { ArgumentValue } from "./arguments.js";
+import type { ToolProgress } from "./progress.js";
 
 /**
  * What a tool needs to answer, gathered once per process.
@@ -31,7 +32,9 @@ import type { ArgumentValue } from "./arguments.js";
 export interface ToolContext {
   store: () => SemanticStore;
   /** The embedder for one model id. Held per model, capped, so a change of model does not strand the old runtime nor pile up new ones without limit. */
-  embedder: (modelId: string) => Embedder;
+  embedder: (modelId: string, onProgress?: (progress: { loaded: number; total: number }) => void) => Embedder;
+  /** Progress for this call, present only when the client supplied an MCP progress token. */
+  progress?: (update: ToolProgress) => void;
   allowlist: () => Allowlist;
   /**
    * What the application has open, read fresh on every call.
@@ -168,13 +171,27 @@ function resolving(
   access: "index-only" | "index-first" | "filesystem",
   signal?: AbortSignal,
 ): Parameters<typeof resolveDocumentPages>[2] {
+  const resolveOcr = resolveOcrWithProgress(context);
   return {
     ...identity(args),
     access,
     readFile: context.readFile,
-    ...(context.resolveOcr === undefined ? {} : { resolveOcr: context.resolveOcr }),
+    ...(resolveOcr === undefined ? {} : { resolveOcr }),
     ...(signal === undefined ? {} : { signal }),
   };
+}
+
+/** Add this call's MCP progress listener without replacing a resolver's own listener. */
+export function resolveOcrWithProgress(context: ToolContext): ToolContext["resolveOcr"] {
+  const resolveOcr = context.resolveOcr;
+  if (resolveOcr === undefined) return undefined;
+  return async (request) => await resolveOcr({
+    ...request,
+    onProgress: (message) => {
+      request.onProgress?.(message);
+      context.progress?.({ message });
+    },
+  });
 }
 
 export async function runOutline(
@@ -232,7 +249,16 @@ export async function runSearch(
   // the search runs under all come from the same reading — and a settings file rewritten a
   // moment ago takes effect on this call, not the session after a restart.
   const settings = context.settings();
-  const embedder = context.embedder(settings.activeModelId);
+  const embedder = context.embedder(
+    settings.activeModelId,
+    context.progress === undefined
+      ? undefined
+      : ({ loaded, total }) => context.progress?.({
+          progress: loaded,
+          total,
+          message: "Downloading embedding model",
+        }),
+  );
   const results = await searchDocument(store, embedder, {
     contentHash: lookup.document.contentHash,
     query: text(args, "query") ?? "",

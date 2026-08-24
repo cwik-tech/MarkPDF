@@ -12,10 +12,24 @@
  * each job holds a batch of chunk texts and their vectors, and a longer, more ragged pattern of
  * event-loop stalls in the process that also draws the interface.
  */
+export class SchedulerCancelled extends Error {
+  constructor() {
+    super("Scheduling was cancelled.");
+    this.name = "SchedulerCancelled";
+  }
+}
+
+interface WaitingWork {
+  start: () => void;
+  reject: (error: SchedulerCancelled) => void;
+  signal: AbortSignal | undefined;
+  onAbort: (() => void) | undefined;
+}
+
 export class BoundedScheduler {
   readonly #limit: number;
   #active = 0;
-  readonly #waiting: Array<() => void> = [];
+  readonly #waiting: WaitingWork[] = [];
 
   constructor(limit: number) {
     if (!Number.isInteger(limit) || limit < 1) {
@@ -33,8 +47,8 @@ export class BoundedScheduler {
     return this.#active;
   }
 
-  async run<T>(work: () => Promise<T>): Promise<T> {
-    await this.#acquire();
+  async run<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    await this.#acquire(signal);
     try {
       return await work();
     } finally {
@@ -44,24 +58,41 @@ export class BoundedScheduler {
     }
   }
 
-  #acquire(): Promise<void> {
+  #acquire(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted === true) return Promise.reject(new SchedulerCancelled());
     if (this.#active < this.#limit) {
       this.#active += 1;
       return Promise.resolve();
     }
     // FIFO, so a document queued first is indexed first. A stack would starve the tab the user
     // opened at the start of a batch, which is usually the one they are looking at.
-    return new Promise<void>((resolve) => {
-      this.#waiting.push(() => {
-        this.#active += 1;
-        resolve();
-      });
+    return new Promise<void>((resolve, reject) => {
+      const waiter: WaitingWork = {
+        signal,
+        onAbort: undefined,
+        reject,
+        start: () => {
+          if (waiter.onAbort !== undefined) waiter.signal?.removeEventListener("abort", waiter.onAbort);
+          waiter.onAbort = undefined;
+          this.#active += 1;
+          resolve();
+        },
+      };
+      waiter.onAbort = () => {
+        const position = this.#waiting.indexOf(waiter);
+        if (position < 0) return;
+        this.#waiting.splice(position, 1);
+        waiter.reject(new SchedulerCancelled());
+      };
+      signal?.addEventListener("abort", waiter.onAbort, { once: true });
+      this.#waiting.push(waiter);
+      if (signal?.aborted === true) waiter.onAbort();
     });
   }
 
   #release(): void {
     this.#active -= 1;
     const next = this.#waiting.shift();
-    if (next !== undefined) next();
+    if (next !== undefined) next.start();
   }
 }

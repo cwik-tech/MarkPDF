@@ -556,3 +556,20 @@ export async function buildAdversarialReplacementPair(): Promise<AdversarialRepl
   };
   return { v1: padded(v1), v2: padded(v2) };
 }
+
+/** A long image-only document for the opt-in OCR memory check. */
+export async function buildScannedStressPdf(pageCount: number): Promise<Uint8Array> {
+  if (!Number.isInteger(pageCount) || pageCount < 1) {
+    throw new Error("A scanned stress PDF needs at least one page.");
+  }
+  const pdf = await PDFDocument.create();
+  const scan = await pdf.embedPng(rasteriseText("Quarterly archive", [
+    "Scanned page retained for resource-bound verification.",
+    "The content is repeated; only the number of page images matters.",
+  ]));
+  for (let page = 1; page <= pageCount; page += 1) {
+    const sheet = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+    sheet.drawImage(scan, { x: 0, y: 0, width: PAGE_WIDTH, height: PAGE_HEIGHT });
+  }
+  return await pdf.save();
+}

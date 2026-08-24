@@ -2,7 +2,7 @@ import { resolveDocumentPages } from "../dist-core/documents/documentPages.js";
 import { boundPages, boundTextFrom, fitReply } from "../dist-core/output/budget.js";
 import type { OpenDocumentEntry } from "../dist-core/session/openDocuments.js";
 import type { ArgumentValue } from "./arguments.js";
-import { bytesOfText, selectPages, type ToolContext, type ToolOutcome } from "./operations.js";
+import { bytesOfText, resolveOcrWithProgress, selectPages, type ToolContext, type ToolOutcome } from "./operations.js";
 import { ACTIVE_DOCUMENT } from "./toolSchemas.js";
 
 /**
@@ -222,6 +222,7 @@ export async function runReadOpenDocument(
 
   let resolved;
   try {
+    const resolveOcr = resolveOcrWithProgress(context);
     resolved = await resolveDocumentPages(context.store(), context.allowlist(), {
       // Identity comes from the application's own record. It is a name, not an authority: the
       // resolver below applies the same consent rules it applies to a path a caller typed, so a
@@ -233,7 +234,7 @@ export async function runReadOpenDocument(
       // has not been.
       access: "index-first",
       readFile: context.readFile,
-      ...(context.resolveOcr === undefined ? {} : { resolveOcr: context.resolveOcr }),
+      ...(resolveOcr === undefined ? {} : { resolveOcr }),
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (error) {

@@ -1,7 +1,8 @@
 # MarkPDF CLI / MCP / Electron parity plan — revision 2
 
 Supersedes `mcp-cli-parity-plan.md`. Branch `cwik-tech/mcp-cli`.
-Planning only — no repository file created, edited, committed or pushed.
+Implementation complete on 2026-08-24. P0 through P9 are implemented and verified; local
+checkpoint commits are recorded in Git history. Nothing was pushed by the implementation agents.
 `git status --porcelain` was empty at start and at finish.
 
 **Shared-worktree constraints, unchanged and still in force.** A Kimi session is doing UI work in
@@ -282,18 +283,18 @@ Naming: `snapshotRecordedAt`, never `indexedAt`.
 
 Each is independently useful, ends green, and has its own outer acceptance loop.
 
-| Phase | Delivers | Journey | Depends on |
-|---|---|---|---|
-| **P0** | Adversarial fixture builder + frozen expectations (test support) | — | — |
-| **P1** | Core OCR is the single index producer; no page silently unread | **A1** (Electron) | P0 |
-| **P2** | One versioned OCR contract + deterministic table reconstruction | **A2** (Electron) | P1 |
-| **P3** | Image regions on text-bearing pages (F1b) | **I** (new) | P2 |
-| **P4** | Honest heading provenance + low-signal block rule | focused | P2 |
-| **P5** | Per-call MCP settings, per-model embedder, score precedence | **B**, **C** | — |
-| **P6** | Filesystem-class freshness + truthful snapshot disclosure | **D** | — |
-| **P7** | `currentPage` + open Markdown tabs, saved and unsaved | **E** (Electron) | P5 |
-| **P8** | MCP progress notifications | **F** | P1, P5 |
-| **P9** | Streaming OCR, resource-specific concurrency, abortable queueing | **H** | P2, P3 |
+| Phase | Status | Delivers | Journey | Depends on |
+|---|---|---|---|---|
+| **P0** | ✅ Complete | Adversarial fixture builder + frozen expectations (test support) | — | — |
+| **P1** | ✅ Complete | Core OCR is the single index producer; no page silently unread | **A1** (Electron) | P0 |
+| **P2** | ✅ Complete | One versioned OCR contract + deterministic table reconstruction | **A2** (Electron) | P1 |
+| **P3** | ✅ Complete | Image regions on text-bearing pages (F1b) | **I** (new) | P2 |
+| **P4** | ✅ Complete | Honest heading provenance + low-signal block rule | focused | P2 |
+| **P5** | ✅ Complete | Per-call MCP settings, per-model embedder, score precedence | **B**, **C** | — |
+| **P6** | ✅ Complete | Filesystem-class freshness + truthful snapshot disclosure | **D** | — |
+| **P7** | ✅ Complete | `currentPage` + open Markdown tabs, saved and unsaved | **E** (Electron) | P5 |
+| **P8** | ✅ Complete | MCP progress notifications | **F** | P1, P5 |
+| **P9** | ✅ Complete | Streaming OCR, resource-specific concurrency, abortable queueing | **H** | P2, P3 |
 
 Journey **G** (OCR configuration parity and layout preservation at focused layers) is not a phase —
 it is the focused-test set inside P2 and P3, which is where the brief asked it to live.
