@@ -68,6 +68,11 @@ export function openDocumentsDir(dataDir: string): string {
   return join(dataDir, "session", "open-documents");
 }
 
+/** Private, bounded Markdown buffers kept separately from open-tab metadata. */
+export function openDocumentContentDir(dataDir: string): string {
+  return join(openDocumentsDir(dataDir), "content");
+}
+
 /** Transformers.js `env.cacheDir`. One download serves both the app and the CLI. */
 export function modelCacheDir(dataDir: string): string {
   return join(dataDir, "models");

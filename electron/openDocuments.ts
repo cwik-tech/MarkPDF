@@ -4,7 +4,14 @@ import {
   removeOpenDocuments,
   removeOpenDocumentsForProcess,
   writeOpenDocuments,
+  type OpenDocumentRecord,
 } from "../dist-core/session/openDocuments.js";
+import {
+  removeOpenDocumentContentForProcess,
+  removeOpenDocumentContentForWindow,
+  syncOpenDocumentContent,
+  type OpenDocumentContentState,
+} from "../dist-core/session/openDocumentContent.js";
 import { parseOpenDocumentsPayload, type OpenDocumentsPayload } from "../dist-core/session/openDocumentsRequest.js";
 
 /**
@@ -24,6 +31,9 @@ import { parseOpenDocumentsPayload, type OpenDocumentsPayload } from "../dist-co
 
 /** The last thing each window said about itself, so a focus change can be restamped without it. */
 const lastReport = new WeakMap<BrowserWindow, OpenDocumentsPayload>();
+/** Avoid rewriting every open Markdown buffer when only a PDF page changes. */
+const lastContentSignature = new WeakMap<BrowserWindow, string>();
+const lastContentStates = new WeakMap<BrowserWindow, readonly OpenDocumentContentState[]>();
 /** When each window was last focused, as an order rather than a clock. */
 const focusOrder = new WeakMap<BrowserWindow, number>();
 let focusCounter = 0;
@@ -44,14 +54,44 @@ function report(error: unknown): void {
 
 function write(window: BrowserWindow, payload: OpenDocumentsPayload): void {
   try {
+    const contents = payload.documents.flatMap((document) =>
+      document.kind === "markdown" && document.contentSnapshot !== null
+        ? [{ tabId: document.tabId, content: document.contentSnapshot }]
+        : [],
+    );
+    const contentSignature = JSON.stringify(contents);
+    let contentStates = lastContentStates.get(window);
+    if (contentStates === undefined || contentSignature !== lastContentSignature.get(window)) {
+      contentStates = syncOpenDocumentContent(dataDir(), process.pid, window.id, contents);
+      lastContentSignature.set(window, contentSignature);
+      lastContentStates.set(window, contentStates);
+    }
+    const contentByTab = new Map(contentStates.map((state) => [state.tabId, state]));
+    const documents: OpenDocumentRecord[] = payload.documents.map((document) => {
+      const content = contentByTab.get(document.tabId);
+      return {
+        tabId: document.tabId,
+        kind: document.kind,
+        name: document.name,
+        path: document.path,
+        pageCount: document.pageCount,
+        currentPage: document.currentPage,
+        contentHash: document.contentHash,
+        hasContentSnapshot: content !== undefined,
+        contentChars: content?.contentChars ?? 0,
+        contentBytes: content?.contentBytes ?? 0,
+        snapshotTruncated: content?.snapshotTruncated ?? false,
+        unsavedChanges: document.unsavedChanges,
+      };
+    });
     writeOpenDocuments(dataDir(), {
-      version: 1,
+      version: 2,
       pid: process.pid,
       windowId: window.id,
       focusedAt: focusOrder.get(window) ?? 0,
       writtenAt: new Date().toISOString(),
       activeTabId: payload.activeTabId,
-      documents: payload.documents,
+      documents,
     });
   } catch (error) {
     report(error);
@@ -109,9 +149,12 @@ export function registerOpenDocumentWindow(window: BrowserWindow): void {
 
   window.webContents.on("did-start-loading", () => {
     lastReport.delete(window);
+    lastContentSignature.delete(window);
+    lastContentStates.delete(window);
     try {
+      removeOpenDocumentContentForWindow(dataDir(), process.pid, windowId);
       writeOpenDocuments(dataDir(), {
-        version: 1,
+        version: 2,
         pid: process.pid,
         windowId,
         focusedAt: focusOrder.get(window) ?? 0,
@@ -125,8 +168,12 @@ export function registerOpenDocumentWindow(window: BrowserWindow): void {
   });
 
   window.on("closed", () => {
+    lastReport.delete(window);
+    lastContentSignature.delete(window);
+    lastContentStates.delete(window);
     try {
       removeOpenDocuments(dataDir(), process.pid, windowId);
+      removeOpenDocumentContentForWindow(dataDir(), process.pid, windowId);
     } catch (error) {
       report(error);
     }
@@ -143,6 +190,7 @@ export function registerOpenDocumentWindow(window: BrowserWindow): void {
 export function forgetAllOpenDocuments(): void {
   try {
     removeOpenDocumentsForProcess(dataDir(), process.pid);
+    removeOpenDocumentContentForProcess(dataDir(), process.pid);
   } catch (error) {
     report(error);
   }

@@ -152,7 +152,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   {
     name: "search",
     description:
-      "Find the passages of one indexed document that answer a question. Each hit carries its page and the headings above it. Reads the index only, so it needs no filesystem permission.",
+      "Find the passages of one indexed document that answer a question. Each hit carries its page and the headings above it. Reads the index only, so it needs no filesystem permission. The reply identifies the result as an index snapshot and reports when that exact search scope was recorded.",
     inputSchema: {
       type: "object",
       properties: {
@@ -169,7 +169,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   {
     name: "read_pages",
     description:
-      "Read the text of specific pages of an indexed document — the bridge from a search hit to the surrounding material. Reads the index only, so it needs no filesystem permission and works only for documents already indexed.",
+      "Read the text of specific pages of an indexed document — the bridge from a search hit to the surrounding material. Reads the index only, so it needs no filesystem permission and works only for documents already indexed. The reply identifies the pages as an index snapshot and reports when that cached text was recorded.",
     inputSchema: {
       type: "object",
       properties: { ...documentIdentity(), pages: propertyFromOption("convert", "pages") },
@@ -181,7 +181,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   {
     name: "to_markdown",
     description:
-      "Convert a document to Markdown. Needs read permission for the document, and write permission separately if output_path is given. Output is bounded; anything longer is truncated explicitly and reports how much was left out.",
+      "Convert the document's current file bytes to Markdown rather than returning a historical index snapshot. Needs read permission for the document, and write permission separately if output_path is given. Output is bounded; anything longer is truncated explicitly and reports how much was left out.",
     inputSchema: {
       type: "object",
       properties: {
@@ -201,7 +201,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   {
     name: "list_open_documents",
     description:
-      "List the documents the person is working on right now in the MarkPDF application, and say which one is active. Use this to act on \"the document I have open\" without being told a filesystem path. Reads MarkPDF's own record of its open tabs, so it needs no filesystem permission; it returns no document text and no file paths. Markdown tabs are listed as well as PDFs, so the active document is reported truthfully even when it is one this server cannot read.",
+      "List the documents the person is working on right now in the MarkPDF application, including the visible PDF page and the size and save state of each open Markdown buffer, and say which one is active. Use this to act on \"the document I have open\" without being told a filesystem path. Reads MarkPDF's own private open-tab record, so it needs no filesystem permission; it returns no document text and no file paths.",
     inputSchema: {
       type: "object",
       // No arguments at all. Publishing a path here would invite the very call these tools exist
@@ -214,7 +214,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   {
     name: "read_open_document",
     description:
-      "Read the pages of a PDF that is open in MarkPDF, named by a reference from list_open_documents. Defaults to whichever document is active, so reading the PDF the person has in front of them takes no arguments. Answered from the index when the document is already indexed; otherwise it reads the file, which needs read permission. Edits to the document itself — a deleted or inserted page — are picked up once MarkPDF reindexes it, without saving; annotations, comments, highlights, signatures and form entries are not part of the document and stay invisible here until they have been saved into it.",
+      "Read a PDF or Markdown tab that is open in MarkPDF, named by a reference from list_open_documents. Defaults to whichever document is active. PDF pages come from the index when available; annotations, highlights and comments appear only after they have been saved into the PDF. Markdown comes from the current private open buffer, whether saved or unsaved, and is paged with offset. No filesystem path is returned.",
     inputSchema: {
       type: "object",
       properties: {
@@ -223,7 +223,16 @@ export const TOOLS: readonly ToolDefinition[] = [
           description: `A reference from list_open_documents, or "${ACTIVE_DOCUMENT}" for whichever document is at the front. Defaults to "${ACTIVE_DOCUMENT}".`,
           default: ACTIVE_DOCUMENT,
         },
-        pages: propertyFromOption("convert", "pages"),
+        pages: {
+          ...propertyFromOption("convert", "pages"),
+          description: "PDF refs only. Select pages as 3, 3-7, or 1,4-6. For Markdown, use offset.",
+        },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          default: 0,
+          description: "Markdown refs only. UTF-16 offset to start reading at. For PDFs, use pages.",
+        },
       },
       required: [],
       additionalProperties: false,

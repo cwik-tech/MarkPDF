@@ -245,7 +245,10 @@ export interface ReportedOpenDocument {
   name: string;
   path: string | null;
   pageCount: number;
+  currentPage: number | null;
   contentHash: string | null;
+  /** Private IPC payload. The main process writes it to a bounded 0600 snapshot, never metadata. */
+  contentSnapshot: string | null;
   unsavedChanges: boolean;
 }
 

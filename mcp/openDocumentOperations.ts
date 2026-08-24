@@ -1,5 +1,5 @@
 import { resolveDocumentPages } from "../dist-core/documents/documentPages.js";
-import { boundPages, fitReply } from "../dist-core/output/budget.js";
+import { boundPages, boundTextFrom, fitReply } from "../dist-core/output/budget.js";
 import type { OpenDocumentEntry } from "../dist-core/session/openDocuments.js";
 import type { ArgumentValue } from "./arguments.js";
 import { bytesOfText, selectPages, type ToolContext, type ToolOutcome } from "./operations.js";
@@ -61,7 +61,12 @@ function publicView(entry: OpenDocumentEntry, indexed: boolean): Record<string, 
     kind: entry.kind,
     name: entry.name,
     pageCount: entry.pageCount,
+    currentPage: entry.currentPage,
     indexed,
+    hasContentSnapshot: entry.hasContentSnapshot,
+    contentChars: entry.contentChars,
+    contentBytes: entry.contentBytes,
+    snapshotTruncated: entry.snapshotTruncated,
     unsavedChanges: entry.unsavedChanges,
     active: entry.active,
     activeInWindow: entry.activeInWindow,
@@ -153,12 +158,65 @@ export async function runReadOpenDocument(
   }
   if (typeof target === "string") return { ok: false, message: target };
 
-  // Named rather than silently skipped. Somebody looking at their notes who asks about "the
-  // document I have open" must not be answered about a different file that happens to be a PDF.
-  if (target.kind !== "pdf") {
+  const pages = text(args, "pages");
+  const offsetValue = args.offset;
+  const offset = typeof offsetValue === "number" ? offsetValue : 0;
+
+  if (target.kind === "markdown") {
+    if (pages !== undefined) {
+      return {
+        ok: false,
+        message: `${target.name} is Markdown, so pages does not apply. Use offset to page through its text.`,
+      };
+    }
+    let content: string | null;
+    try {
+      content = context.readOpenDocumentContent(target);
+    } catch (error) {
+      return { ok: false, message: recordUnavailable(error) };
+    }
+    if (content === null) {
+      return {
+        ok: false,
+        message: `${target.name}'s private content snapshot is no longer available. The tab may have closed; call list_open_documents again.`,
+      };
+    }
+
+    const bounded = boundTextFrom(content, offset, context.budget);
+    const safeLength = (length: number): number => {
+      if (length <= 0 || length >= bounded.text.length) return Math.max(0, Math.min(length, bounded.text.length));
+      const code = bounded.text.charCodeAt(length);
+      return code >= 0xdc00 && code <= 0xdfff ? length - 1 : length;
+    };
+    const fitted = fitReply(bounded.text.length, context.replyBudget, (requested) => {
+      const keep = safeLength(requested);
+      const kept = bounded.text.slice(0, keep);
+      const end = bounded.offset + kept.length;
+      const truncated = end < content.length;
+      return {
+        ref: target.ref,
+        name: target.name,
+        kind: "markdown",
+        unsavedChanges: target.unsavedChanges,
+        text: kept,
+        offset: bounded.offset,
+        nextOffset: truncated ? end : null,
+        totalChars: content.length,
+        totalBytes: Buffer.byteLength(content, "utf8"),
+        truncated,
+        omittedBytes: Buffer.byteLength(content.slice(end), "utf8"),
+        snapshotTruncated: target.snapshotTruncated,
+      };
+    });
+    return { ok: true, payload: fitted.payload };
+  }
+
+  // Offset zero is the schema's default and therefore present even when the caller omitted it.
+  // A positive offset is unambiguously a Markdown pagination request and is refused for a PDF.
+  if (offset > 0) {
     return {
       ok: false,
-      message: `The document ${target.name} is a Markdown file, and this tool reads PDF documents. list_open_documents shows which of the open documents are PDFs.`,
+      message: `${target.name} is a PDF, so offset does not apply. Use pages to select PDF pages.`,
     };
   }
 
@@ -199,7 +257,7 @@ export async function runReadOpenDocument(
   const fitted = fitReply(bounded.pages.length, context.replyBudget, (keep) => ({
     ref: target.ref,
     name: target.name,
-    contentHash: resolved.document?.contentHash ?? null,
+    contentHash: resolved.contentHash,
     readFromIndex: resolved.fromIndex,
     unsavedChanges: target.unsavedChanges,
     pages: bounded.pages.slice(0, keep),

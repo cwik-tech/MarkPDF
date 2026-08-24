@@ -28,8 +28,8 @@ const PAGES = [
   { page: 3, markdown: "" },
 ];
 
-function makeDocument(contentHash: string) {
-  return store.upsertDocument({
+function makeDocument(contentHash: string, owner: SemanticStore = store) {
+  return owner.upsertDocument({
     contentHash,
     name: "report.pdf",
     filePath: null,
@@ -104,6 +104,45 @@ describe("recording why a cached page is empty", () => {
         pageProvenance: [{ page: 1, status: "read" }],
       }),
     ).toThrow(/provenance/i);
+  });
+});
+
+describe("when the snapshot was recorded", () => {
+  it("says when the cached pages were written, by the clock the store runs under", () => {
+    // The snapshot `read_pages` actually serves is this row; its recorded time is what a reader
+    // can truthfully be told. Injected clock, so the assertion is exact rather than approximate.
+    const recorded = new Date("2026-08-23T09:30:00.000Z");
+    const timed = openSemanticStore({ dataDir, clock: () => recorded });
+    try {
+      const document = makeDocument("d".repeat(64), timed);
+
+      timed.putMarkdown(document.id, { engineId: "pdf-inspector", markdownVersion: 1, pages: PAGES });
+
+      expect(timed.getMarkdown(document.id, "pdf-inspector", 1)?.createdAt).toBe(recorded.toISOString());
+    } finally {
+      timed.close();
+    }
+  });
+
+  it("moves the recorded time when the cache is rewritten, not the document's own history", () => {
+    // A re-index rewrites the row; the snapshot it then serves was recorded at the rewrite, and
+    // the read-back must say so rather than repeating the earlier instant.
+    let instant = new Date("2026-08-23T09:30:00.000Z").getTime();
+    const timed = openSemanticStore({ dataDir, clock: () => new Date((instant += 60_000)) });
+    try {
+      const document = makeDocument("e".repeat(64), timed);
+
+      timed.putMarkdown(document.id, { engineId: "pdf-inspector", markdownVersion: 1, pages: PAGES });
+      const first = timed.getMarkdown(document.id, "pdf-inspector", 1)?.createdAt;
+      timed.putMarkdown(document.id, { engineId: "pdf-inspector", markdownVersion: 1, pages: PAGES });
+      const second = timed.getMarkdown(document.id, "pdf-inspector", 1)?.createdAt;
+
+      expect(typeof first).toBe("string");
+      expect(second).not.toBe(first);
+      expect(second).toBe(new Date(instant).toISOString());
+    } finally {
+      timed.close();
+    }
   });
 });
 

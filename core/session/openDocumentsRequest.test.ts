@@ -19,7 +19,9 @@ function payload(overrides: Record<string, unknown> = {}): Record<string, unknow
         name: "annual-report.pdf",
         path: "/library/annual-report.pdf",
         pageCount: 3,
+        currentPage: 2,
         contentHash: "a".repeat(64),
+        contentSnapshot: null,
         unsavedChanges: false,
       },
     ],
@@ -42,7 +44,9 @@ describe("checking what a window claims it has open", () => {
           name: "annual-report.pdf",
           path: "/library/annual-report.pdf",
           pageCount: 3,
+          currentPage: 2,
           contentHash: "a".repeat(64),
+          contentSnapshot: null,
           unsavedChanges: false,
         },
       ],
@@ -64,10 +68,25 @@ describe("checking what a window claims it has open", () => {
     expect(parsed.documents[0]).toMatchObject({ path: null, contentHash: null, unsavedChanges: true });
   });
 
-  it("accepts a Markdown tab, which is reported even though it cannot be read", () => {
-    expect(parseOpenDocumentsPayload(payload({ documents: [document({ kind: "markdown", pageCount: 0 })] })).documents[0]?.kind).toBe(
-      "markdown",
+  it("accepts a Markdown tab with its current private content snapshot", () => {
+    const parsed = parseOpenDocumentsPayload(
+      payload({
+        documents: [
+          document({
+            kind: "markdown",
+            pageCount: 0,
+            currentPage: null,
+            contentSnapshot: "# Notes\n",
+          }),
+        ],
+      }),
     );
+
+    expect(parsed.documents[0]).toMatchObject({
+      kind: "markdown",
+      currentPage: null,
+      contentSnapshot: "# Notes\n",
+    });
   });
 
   it("refuses anything that is not an object", () => {
@@ -98,6 +117,27 @@ describe("checking what a window claims it has open", () => {
     for (const wrong of [-1, 1.5, Number.NaN, "3", null]) {
       expect(() => parseOpenDocumentsPayload(payload({ documents: [document({ pageCount: wrong })] }))).toThrow(/pageCount/);
     }
+  });
+
+  it("accepts a PDF current page only when it is a whole number inside the document", () => {
+    for (const wrong of [null, 0, 4, 1.5, "2", Number.NaN]) {
+      expect(() =>
+        parseOpenDocumentsPayload(payload({ documents: [document({ currentPage: wrong })] })),
+      ).toThrow(/currentPage/);
+    }
+
+    expect(parseOpenDocumentsPayload(payload()).documents[0]?.currentPage).toBe(2);
+  });
+
+  it("requires Markdown tabs to report no current page and PDFs to report no content snapshot", () => {
+    expect(() =>
+      parseOpenDocumentsPayload(
+        payload({ documents: [document({ kind: "markdown", pageCount: 0, currentPage: 1, contentSnapshot: "notes" })] }),
+      ),
+    ).toThrow(/currentPage/);
+    expect(() =>
+      parseOpenDocumentsPayload(payload({ documents: [document({ contentSnapshot: "forged PDF text" })] })),
+    ).toThrow(/contentSnapshot/);
   });
 
   it("refuses a content hash that is not one", () => {

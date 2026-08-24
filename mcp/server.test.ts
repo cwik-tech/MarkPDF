@@ -71,6 +71,7 @@ function contextWith(scheduler: BoundedScheduler, readFile: ToolContext["readFil
     embedder: (modelId: string) => (modelId === embedder.modelId ? embedder : createDeterministicEmbedder(384, modelId)),
     allowlist: () => ({ readRoots: [libraryDir], writeRoots: [] }),
     openDocuments: () => ({ windows: 0, activeRef: null, documents: [], unreadableWindows: 0 }),
+    readOpenDocumentContent: () => null,
     settings: () => defaultSemanticSearchSettings,
     readFile,
     writeFile: async () => {},
@@ -183,10 +184,13 @@ const control = (code: number): string => String.fromCharCode(code);
 /** Put a document in the index with exactly the Markdown a test wants to get back out. */
 async function indexed(name: string, markdown: readonly string[]): Promise<{ path: string; hash: string }> {
   const path = join(libraryDir, name);
-  writeFileSync(path, "the bytes are never read; every tool below answers from the index");
+  const bytes = new TextEncoder().encode(name);
+  // `to_markdown` verifies the live file before using its cache, so the fixture on disk must be the
+  // same bytes the index identifies. Index-only tools still never open it.
+  writeFileSync(path, bytes);
   const pages = markdown.map((text, offset) => ({ page: offset + 1, markdown: text }));
   const result = await indexDocument(store, embedder, {
-    bytes: new TextEncoder().encode(name),
+    bytes,
     name,
     filePath: path,
     pageCount: pages.length,
@@ -209,9 +213,10 @@ function replyBytesOf(reply: { content: Array<{ text: string }> }): number {
 }
 
 function readingContext(): ToolContext {
-  return contextWith(new BoundedScheduler(CONCURRENT_TOOL_CALLS), async () => {
-    throw new Error("no tool in this group should be opening a file");
-  });
+  return contextWith(
+    new BoundedScheduler(CONCURRENT_TOOL_CALLS),
+    async (path) => new Uint8Array(await readFile(path)),
+  );
 }
 
 describe("how much text one call can hand back", () => {
@@ -259,9 +264,7 @@ describe("how much text one call can hand back", () => {
     const budget = outputBudget(4_000);
     const { path } = await indexed("long.pdf", Array.from({ length: 1_200 }, (unused, index) => `Page ${index + 1}.`));
     const context: ToolContext = {
-      ...contextWith(new BoundedScheduler(CONCURRENT_TOOL_CALLS), async () => {
-        throw new Error("answered from the index");
-      }),
+      ...readingContext(),
       allowlist: () => ({ readRoots: [libraryDir], writeRoots: [libraryDir] }),
       replyBudget: budget,
     };
@@ -273,7 +276,7 @@ describe("how much text one call can hand back", () => {
     ]) {
       const reply = await callTool(context, call.name, call.args);
 
-      expect(reply.isError).toBeUndefined();
+      expect(reply.isError, `${call.name}: ${reply.content[0]?.text ?? "no reply text"}`).toBeUndefined();
       expect(replyBytesOf(reply)).toBeLessThanOrEqual(budget);
     }
   }, 60_000);
@@ -319,10 +322,16 @@ describe("how much text one call can hand back", () => {
       name: `${"long-document-name-".repeat(20)}${index}.pdf`,
       path: null,
       pageCount: 10,
+      currentPage: 1,
       contentHash: null,
+      hasContentSnapshot: false,
+      contentChars: 0,
+      contentBytes: 0,
+      snapshotTruncated: false,
       unsavedChanges: false,
       ref: `1-1:tab-${index}`,
       window: 1,
+      process: 1,
       activeInWindow: index === 499,
       active: index === 499,
     }));
@@ -370,10 +379,16 @@ describe("how much text one call can hand back", () => {
             name: "annual-report.pdf",
             path: secret,
             pageCount: 2,
+            currentPage: 1,
             contentHash: null,
+            hasContentSnapshot: false,
+            contentChars: 0,
+            contentBytes: 0,
+            snapshotTruncated: false,
             unsavedChanges: false,
             ref: "1-1:tab-a",
             window: 1,
+            process: 1,
             activeInWindow: true,
             active: true,
           },

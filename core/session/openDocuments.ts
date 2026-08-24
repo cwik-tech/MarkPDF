@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { openDocumentsDir } from "../paths.js";
+import { removeOpenDocumentContentForProcess } from "./openDocumentContent.js";
 import { processIsRunning } from "./processLiveness.js";
 
 /**
@@ -38,8 +39,17 @@ export interface OpenDocumentRecord {
    */
   path: string | null;
   pageCount: number;
+  /** The visible PDF page, or null for a Markdown tab. */
+  currentPage: number | null;
   /** The document's identity in the index, or `null` while it is not indexed. */
   contentHash: string | null;
+  /** Whether the separate private content file exists for this tab. */
+  hasContentSnapshot: boolean;
+  /** UTF-16 code units and UTF-8 bytes available in that separate file. */
+  contentChars: number;
+  contentBytes: number;
+  /** True when the open buffer exceeded the local snapshot ceiling. */
+  snapshotTruncated: boolean;
   /**
    * Whether the window holds changes not yet written to disk.
    *
@@ -50,7 +60,7 @@ export interface OpenDocumentRecord {
 }
 
 export interface WindowSnapshot {
-  version: 1;
+  version: 2;
   /** The application process. What makes a file from a crashed run recognisable as one. */
   pid: number;
   windowId: number;
@@ -65,6 +75,8 @@ export interface OpenDocumentEntry extends OpenDocumentRecord {
   /** Opaque, stable while the tab is open, and meaningless to anything but this program. */
   ref: string;
   window: number;
+  /** Owning process, used only to locate the private content snapshot. Never returned by a tool. */
+  process: number;
   /** The front tab of its own window. Several may be true at once. */
   activeInWindow: boolean;
   /** The one document a person would call "the one I have open". At most one is true. */
@@ -169,6 +181,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
 /**
  * Read one file back into a snapshot, or refuse it.
  *
@@ -185,7 +201,7 @@ function readSnapshot(file: string): WindowSnapshot | null {
   } catch {
     return null;
   }
-  if (!isRecord(parsed) || parsed.version !== 1) return null;
+  if (!isRecord(parsed) || parsed.version !== 2) return null;
   if (typeof parsed.pid !== "number" || typeof parsed.windowId !== "number") return null;
   if (typeof parsed.focusedAt !== "number" || typeof parsed.writtenAt !== "string") return null;
   if (parsed.activeTabId !== null && typeof parsed.activeTabId !== "string") return null;
@@ -194,17 +210,54 @@ function readSnapshot(file: string): WindowSnapshot | null {
   const documents: OpenDocumentRecord[] = [];
   for (const entry of parsed.documents) {
     if (!isRecord(entry)) return null;
-    const { tabId, kind, name, path, pageCount, contentHash, unsavedChanges } = entry;
+    const {
+      tabId,
+      kind,
+      name,
+      path,
+      pageCount,
+      currentPage,
+      contentHash,
+      hasContentSnapshot,
+      contentChars,
+      contentBytes,
+      snapshotTruncated,
+      unsavedChanges,
+    } = entry;
     if (typeof tabId !== "string" || typeof name !== "string") return null;
     if (kind !== "pdf" && kind !== "markdown") return null;
     if (path !== null && typeof path !== "string") return null;
-    if (typeof pageCount !== "number" || typeof unsavedChanges !== "boolean") return null;
+    if (!isNonNegativeInteger(pageCount) || typeof unsavedChanges !== "boolean") return null;
+    let checkedCurrentPage: number | null;
+    if (kind === "pdf") {
+      if (!isNonNegativeInteger(currentPage) || currentPage < 1 || currentPage > pageCount) return null;
+      checkedCurrentPage = currentPage;
+    } else {
+      if (currentPage !== null) return null;
+      checkedCurrentPage = null;
+    }
     if (contentHash !== null && typeof contentHash !== "string") return null;
-    documents.push({ tabId, kind, name, path, pageCount, contentHash, unsavedChanges });
+    if (typeof hasContentSnapshot !== "boolean") return null;
+    if (!isNonNegativeInteger(contentChars) || !isNonNegativeInteger(contentBytes)) return null;
+    if (typeof snapshotTruncated !== "boolean") return null;
+    documents.push({
+      tabId,
+      kind,
+      name,
+      path,
+      pageCount,
+      currentPage: checkedCurrentPage,
+      contentHash,
+      hasContentSnapshot,
+      contentChars,
+      contentBytes,
+      snapshotTruncated,
+      unsavedChanges,
+    });
   }
 
   return {
-    version: 1,
+    version: 2,
     pid: parsed.pid,
     windowId: parsed.windowId,
     focusedAt: parsed.focusedAt,
@@ -248,6 +301,11 @@ export function readOpenDocuments(dataDir: string): OpenDocumentsView {
       } catch {
         // Left on disk. It will be skipped again next time, for the same reason.
       }
+      try {
+        removeOpenDocumentContentForProcess(dataDir, snapshotPid);
+      } catch {
+        // Content is also ignored while its owner is gone. Removal is only cleanup.
+      }
       continue;
     }
     const snapshot = readSnapshot(file);
@@ -270,6 +328,7 @@ export function readOpenDocuments(dataDir: string): OpenDocumentsView {
         ...record,
         ref,
         window: snapshot.windowId,
+        process: snapshot.pid,
         activeInWindow: snapshot.activeTabId === record.tabId,
         active: ref === activeRef,
       };

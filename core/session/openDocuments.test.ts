@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDocumentsDir } from "../paths.js";
+import { openDocumentContentDir, openDocumentsDir } from "../paths.js";
+import { syncOpenDocumentContent } from "./openDocumentContent.js";
 import {
   openDocumentReference,
   readOpenDocuments,
   removeOpenDocuments,
   removeOpenDocumentsForProcess,
   writeOpenDocuments,
+  type OpenDocumentRecord,
   type WindowSnapshot,
 } from "./openDocuments.js";
 
@@ -30,17 +32,33 @@ function reapedPid(): number {
   return finished.pid;
 }
 
+function makeRecord(overrides: Partial<OpenDocumentRecord> = {}): OpenDocumentRecord {
+  return {
+    tabId: "tab-a",
+    kind: "pdf",
+    name: "annual-report.pdf",
+    path: "/library/annual-report.pdf",
+    pageCount: 3,
+    currentPage: 1,
+    contentHash: "a".repeat(64),
+    hasContentSnapshot: false,
+    contentChars: 0,
+    contentBytes: 0,
+    snapshotTruncated: false,
+    unsavedChanges: false,
+    ...overrides,
+  };
+}
+
 function makeSnapshot(overrides: Partial<WindowSnapshot> = {}): WindowSnapshot {
   return {
-    version: 1,
+    version: 2,
     pid: process.pid,
     windowId: 1,
     focusedAt: 1,
     writtenAt: "2026-08-23T10:00:00.000Z",
     activeTabId: "tab-a",
-    documents: [
-      { tabId: "tab-a", kind: "pdf", name: "annual-report.pdf", path: "/library/annual-report.pdf", pageCount: 3, contentHash: "a".repeat(64), unsavedChanges: false },
-    ],
+    documents: [makeRecord()],
     ...overrides,
   };
 }
@@ -88,6 +106,8 @@ describe("the record of what a window has open", () => {
 
     // Which documents somebody has open is nobody else's business on a shared machine.
     expect(statSync(file).mode & 0o777).toBe(0o600);
+    const raw: unknown = JSON.parse(readFileSync(file, "utf8"));
+    expect(typeof raw === "object" && raw !== null ? Reflect.get(raw, "version") : null).toBe(2);
   });
 
   it("gives each open document a reference that names its window and its tab", () => {
@@ -114,7 +134,7 @@ describe("the record of what a window has open", () => {
         windowId: 2,
         focusedAt: 2,
         activeTabId: "tab-b",
-        documents: [{ tabId: "tab-b", kind: "pdf", name: "notes.pdf", path: null, pageCount: 1, contentHash: null, unsavedChanges: true }],
+        documents: [makeRecord({ tabId: "tab-b", name: "notes.pdf", path: null, pageCount: 1, contentHash: null, unsavedChanges: true })],
       }),
     );
 
@@ -138,7 +158,7 @@ describe("the record of what a window has open", () => {
         windowId: 2,
         focusedAt: 9,
         activeTabId: "tab-b",
-        documents: [{ tabId: "tab-b", kind: "pdf", name: "notes.pdf", path: null, pageCount: 1, contentHash: null, unsavedChanges: false }],
+        documents: [makeRecord({ tabId: "tab-b", name: "notes.pdf", path: null, pageCount: 1, contentHash: null })],
       }),
     );
 
@@ -159,9 +179,9 @@ describe("the record of what a window has open", () => {
       makeSnapshot({
         activeTabId: "tab-c",
         documents: [
-          { tabId: "tab-a", kind: "pdf", name: "first.pdf", path: null, pageCount: 1, contentHash: null, unsavedChanges: false },
-          { tabId: "tab-b", kind: "pdf", name: "second.pdf", path: null, pageCount: 1, contentHash: null, unsavedChanges: false },
-          { tabId: "tab-c", kind: "pdf", name: "third.pdf", path: null, pageCount: 1, contentHash: null, unsavedChanges: false },
+          makeRecord({ tabId: "tab-a", name: "first.pdf", path: null, pageCount: 1, contentHash: null }),
+          makeRecord({ tabId: "tab-b", name: "second.pdf", path: null, pageCount: 1, contentHash: null }),
+          makeRecord({ tabId: "tab-c", name: "third.pdf", path: null, pageCount: 1, contentHash: null }),
         ],
       }),
     );
@@ -184,12 +204,15 @@ describe("the record of what a window has open", () => {
 
   it("ignores a window whose process is gone, and clears it away", () => {
     // The application was killed. Its file is still on disk and says a document is open.
-    writeOpenDocuments(dataDir, makeSnapshot({ pid: reapedPid(), windowId: 3 }));
+    const dead = reapedPid();
+    writeOpenDocuments(dataDir, makeSnapshot({ pid: dead, windowId: 3 }));
+    syncOpenDocumentContent(dataDir, dead, 3, [{ tabId: "tab-notes", content: "private notes" }]);
 
     const view = readOpenDocuments(dataDir);
 
     expect(view).toEqual({ windows: 0, activeRef: null, documents: [], unreadableWindows: 0 });
-    expect(readdirSync(openDocumentsDir(dataDir))).toEqual([]);
+    expect(readdirSync(openDocumentsDir(dataDir))).toEqual(["content"]);
+    expect(readdirSync(openDocumentContentDir(dataDir))).toEqual([]);
   });
 
   it("ignores a window whose process is gone even when its file cannot be removed", () => {

@@ -8,7 +8,14 @@ import { indexDocument } from "../dist-core/index/indexDocument.js";
 import { createDeterministicEmbedder } from "../dist-core/index/deterministicEmbedder.js";
 import { defaultSemanticSearchSettings } from "../dist-core/ipc/settings.js";
 import { readSemanticSettings } from "../dist-core/settings/appSettings.js";
-import { MARKDOWN_ENGINE_ID, MARKDOWN_VERSION, OCR_EXTRACTION_VERSION, TEXT_EXTRACTION_VERSION } from "../dist-core/models.js";
+import {
+  MARKDOWN_ENGINE_ID,
+  MARKDOWN_VERSION,
+  OCR_EXTRACTION_VERSION,
+  TEXT_EXTRACTION_VERSION,
+  modelVersion,
+  semanticChunkingVersion,
+} from "../dist-core/models.js";
 import { outputBudget, DEFAULT_CONTENT_BUDGET, DEFAULT_REPLY_BUDGET } from "../dist-core/output/budget.js";
 import { buildReportPdf } from "../cli/journeys/fixtures.test-support.js";
 import { parseToolArguments } from "./arguments.js";
@@ -123,6 +130,18 @@ function searchHitsOf(payload: Record<string, unknown>): CheckedSearchHit[] {
   });
 }
 
+function snapshotOf(payload: Record<string, unknown>): { indexSnapshot: boolean; snapshotRecordedAt: string | null } {
+  const indexSnapshot = payload.indexSnapshot;
+  const snapshotRecordedAt = payload.snapshotRecordedAt;
+  if (typeof indexSnapshot !== "boolean") {
+    throw new Error(`Expected indexSnapshot boolean, got ${JSON.stringify(payload)}`);
+  }
+  if (snapshotRecordedAt !== null && typeof snapshotRecordedAt !== "string") {
+    throw new Error(`Expected snapshotRecordedAt string or null, got ${JSON.stringify(payload)}`);
+  }
+  return { indexSnapshot, snapshotRecordedAt };
+}
+
 function contextWith(overrides: Partial<ToolContext> = {}): ToolContext & { reads: string[] } {
   const filesystem = spyFilesystem();
   const written: Array<{ path: string; text: string }> = [];
@@ -134,6 +153,7 @@ function contextWith(overrides: Partial<ToolContext> = {}): ToolContext & { read
     embedder: (modelId: string) => (modelId === embedder.modelId ? embedder : createDeterministicEmbedder(384, modelId)),
     allowlist: () => ({ readRoots: [], writeRoots: [] }),
     openDocuments: () => ({ windows: 0, activeRef: null, documents: [], unreadableWindows: 0 }),
+    readOpenDocumentContent: () => null,
     // Read from disk per call, like the server: a test that rewrites the settings file sees
     // the rewrite on the next operation.
     settings: () => readSemanticSettings(dataDir),
@@ -264,6 +284,62 @@ describe("tools that read the index only", () => {
   });
 });
 
+describe("disclosing whether a reply is an index snapshot", () => {
+  it("reports the cached-page write time for read_pages", async () => {
+    const hash = await indexTheFixture();
+    const document = store.getDocument(hash);
+    if (document === null) throw new Error("Expected the indexed document to exist.");
+    const cached = store.getMarkdown(document.id, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION);
+    if (cached === null) throw new Error("Expected the indexed Markdown cache to exist.");
+
+    const outcome = await runReadPages(contextWith(), { path: fixture, pages: "1" });
+
+    if (!outcome.ok) throw new Error(outcome.message);
+    expect(snapshotOf(outcome.payload)).toEqual({ indexSnapshot: true, snapshotRecordedAt: cached.createdAt });
+  }, 60_000);
+
+  it("reports the exact completed search scope's write time for search", async () => {
+    const hash = await indexTheFixture();
+    const document = store.getDocument(hash);
+    if (document === null) throw new Error("Expected the indexed document to exist.");
+    const expected = store.chunksWrittenAt({
+      documentId: document.id,
+      chunkingProfile: defaultSemanticSearchSettings.chunkingProfile,
+      chunkingVersion: semanticChunkingVersion,
+      modelId: embedder.modelId,
+      modelVersion,
+      dimensions: embedder.dimensions,
+    });
+
+    const outcome = await runSearch(contextWith(), { path: fixture, query: "Enterprise", min_score: 0.01 });
+
+    if (!outcome.ok) throw new Error(outcome.message);
+    expect(snapshotOf(outcome.payload)).toEqual({ indexSnapshot: true, snapshotRecordedAt: expected });
+  }, 60_000);
+
+  it("reports live bytes rather than an index snapshot for inline to_markdown", async () => {
+    await indexTheFixture();
+
+    const outcome = await runToMarkdown(contextWith({ allowlist: granted }), { path: fixture, pages: "1" });
+
+    if (!outcome.ok) throw new Error(outcome.message);
+    expect(snapshotOf(outcome.payload)).toEqual({ indexSnapshot: false, snapshotRecordedAt: null });
+  }, 60_000);
+
+  it("reports live bytes rather than an index snapshot for file-writing to_markdown", async () => {
+    await indexTheFixture();
+    const output = join(libraryDir, "snapshot.md");
+    const context = contextWith({
+      allowlist: () => ({ readRoots: [libraryDir], writeRoots: [libraryDir] }),
+    });
+
+    const outcome = await runToMarkdown(context, { path: fixture, pages: "1", output_path: output });
+
+    if (!outcome.ok) throw new Error(outcome.message);
+    expect(snapshotOf(outcome.payload)).toEqual({ indexSnapshot: false, snapshotRecordedAt: null });
+  }, 60_000);
+});
+
 describe("a tool classed as reading the file", () => {
   it("is refused once the grant is withdrawn, although the index still holds the text", async () => {
     // Serving `to_markdown` from a cached copy after consent was withdrawn would make the
@@ -279,7 +355,7 @@ describe("a tool classed as reading the file", () => {
     expect(context.reads).toEqual([]);
   }, 60_000);
 
-  it("answers from the index once the grant is in place, rather than re-reading", async () => {
+  it("confirms the live bytes before using the cache once the grant is in place", async () => {
     await indexTheFixture();
     const context = contextWith({ allowlist: granted });
 
@@ -288,7 +364,7 @@ describe("a tool classed as reading the file", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
     expect(outcome.payload.markdown).toContain("Revenue by Segment");
-    expect(context.reads).toEqual([]);
+    expect(context.reads).toEqual([fixture]);
   }, 60_000);
 
   it("needs a separate grant to write, and says so", async () => {

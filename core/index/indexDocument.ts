@@ -387,6 +387,9 @@ async function indexDocumentExclusive(
     await input.yieldControl?.();
   }
 
+  // The timestamp describes a complete searchable scope, so it is written only after the final
+  // chunk batch. `beginChunkReplace` withdrew the previous claim before clearing any chunks.
+  store.markChunksComplete(scope);
   input.onProgress?.({ status: "ready", current: chunks.length, total: chunks.length, message: "Semantic index ready" });
   return { ...settle("ready", unresolvedPages), contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: chunks.length, textSource };
 }

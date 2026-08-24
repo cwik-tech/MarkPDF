@@ -15,6 +15,7 @@ export interface ProjectableTab {
   pageCount?: number | undefined;
   /** Read by nothing here. Present so that omitting it from the report is a visible decision. */
   currentPage?: number | undefined;
+  markdown?: string | undefined;
   semanticContentHash?: string | undefined;
   dirty: boolean;
 }
@@ -22,18 +23,15 @@ export interface ProjectableTab {
 /**
  * What this window has open, for the benefit of processes that cannot see it.
  *
- * **Narrow on purpose.** Everything a person does constantly — turning pages, watching a scan
- * progress, running a search, dragging a highlight — must produce a report identical to the last
- * one, because the caller writes a file only when the report changes. Page position is the clearest
- * case: it is the most volatile thing about a tab and of no use to anything outside the window, so
- * it is read here and deliberately not carried.
+ * **Narrow on purpose.** Scan progress, searches and highlights do not alter this report. Page
+ * position does because it is useful context for an assistant, but the caller gives page-only
+ * changes a longer coalescing delay.
  *
- * **No text and no bytes.** Document content leaves this program through bounded replies and
- * nowhere else. A copy of a document inside a metadata file would be neither bounded nor counted.
+ * Markdown text crosses the private preload bridge so main can maintain the bounded snapshot an
+ * MCP reply reads. It is never put in the metadata file and PDF bytes never cross this report.
  *
- * A Markdown tab is reported like any other. It cannot be read by the tools that read PDFs, and
- * saying so is the point: an agent told only about PDFs, while a Markdown file is at the front,
- * would be handed a document the person is not looking at.
+ * A Markdown tab is reported like any other. Its current buffer is carried to main so the open-tab
+ * read can answer for saved and unsaved notes without handing an agent the file's path.
  */
 export function projectOpenDocuments(
   tabs: readonly ProjectableTab[],
@@ -46,7 +44,9 @@ export function projectOpenDocuments(
     path: tab.path ?? null,
     // A Markdown tab has no pages. Zero rather than absent, so every entry has the same shape.
     pageCount: tab.kind === "pdf" ? (tab.pageCount ?? 0) : 0,
+    currentPage: tab.kind === "pdf" ? (tab.currentPage ?? 1) : null,
     contentHash: tab.semanticContentHash ?? null,
+    contentSnapshot: tab.kind === "markdown" ? (tab.markdown ?? "") : null,
     unsavedChanges: tab.dirty,
   }));
 
@@ -55,4 +55,25 @@ export function projectOpenDocuments(
   const active = documents.some((entry) => entry.tabId === activeTabId) ? activeTabId : null;
 
   return { activeTabId: active, documents };
+}
+
+const RESPONSIVE_PUBLISH_DELAY = 250;
+const PAGE_ONLY_PUBLISH_DELAY = 750;
+
+function withoutCurrentPage(report: OpenDocumentsReport): string {
+  return JSON.stringify({
+    ...report,
+    documents: report.documents.map(({ currentPage: _currentPage, ...entry }) => entry),
+  });
+}
+
+/** Page turns can arrive in bursts. Identity, content and save-state changes stay responsive. */
+export function publishDelayFor(
+  previous: OpenDocumentsReport | null,
+  next: OpenDocumentsReport,
+): number {
+  if (previous === null) return RESPONSIVE_PUBLISH_DELAY;
+  return withoutCurrentPage(previous) === withoutCurrentPage(next)
+    ? PAGE_ONLY_PUBLISH_DELAY
+    : RESPONSIVE_PUBLISH_DELAY;
 }

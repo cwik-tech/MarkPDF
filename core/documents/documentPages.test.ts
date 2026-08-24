@@ -30,16 +30,30 @@ function spyFilesystem(bytes: Uint8Array) {
   return { reads, readFile: async (path: string) => (reads.push(path), bytes) };
 }
 
-async function realPdf(): Promise<Uint8Array> {
+async function realPdf(text = "A page with a real text layer that the extractor can read."): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
-  pdf.addPage([612, 792]).drawText("A page with a real text layer that the extractor can read.", {
+  pdf.addPage([612, 792]).drawText(text, {
     x: 60,
     y: 700,
     size: 12,
     font,
   });
   return await pdf.save();
+}
+
+async function sameSizePdfPair(firstText: string, secondText: string): Promise<readonly [Uint8Array, Uint8Array]> {
+  const first = await realPdf(firstText);
+  const second = await realPdf(secondText);
+  const size = Math.max(first.byteLength, second.byteLength);
+  const pad = (bytes: Uint8Array): Uint8Array => {
+    if (bytes.byteLength === size) return bytes;
+    const result = new Uint8Array(size);
+    result.set(bytes);
+    result.fill(0x20, bytes.byteLength);
+    return result;
+  };
+  return [pad(first), pad(second)];
 }
 
 async function indexWithText(bytes: Uint8Array, withCache: boolean): Promise<string> {
@@ -340,7 +354,7 @@ describe("a caller that is classed as reading the file", () => {
     expect(filesystem.reads).toEqual([]);
   });
 
-  it("still answers from the index once the grant is in place, rather than re-reading", async () => {
+  it("confirms the live bytes before serving the index once the grant is in place", async () => {
     const bytes = new TextEncoder().encode("a document");
     await indexWithText(bytes, true);
     const filesystem = spyFilesystem(bytes);
@@ -354,7 +368,29 @@ describe("a caller that is classed as reading the file", () => {
     expect(found.status).toBe("found");
     if (found.status !== "found") return;
     expect(found.fromIndex).toBe(true);
-    expect(filesystem.reads).toEqual([]);
+    expect(filesystem.reads).toEqual([INDEXED_PATH]);
+  });
+
+  it("re-reads a same-size replacement instead of serving cached pages for old bytes", async () => {
+    const [indexedBytes, replacementBytes] = await sameSizePdfPair(
+      "SENTINEL-ALPHA-7731",
+      "SENTINEL-BRAVO-7731",
+    );
+    expect(replacementBytes.byteLength, "the replacement cannot be detected from file size").toBe(indexedBytes.byteLength);
+    await indexWithText(indexedBytes, true);
+    const filesystem = spyFilesystem(replacementBytes);
+
+    const result = await resolveDocumentPages(
+      store,
+      { readRoots: ["/Users/someone/Papers"], writeRoots: [] },
+      { path: INDEXED_PATH, access: "filesystem", ...filesystem },
+    );
+
+    if (result.status !== "found") throw new Error(`Expected the replacement to be readable, got ${result.status}.`);
+    expect(result.fromIndex).toBe(false);
+    expect(result.pages[0]?.markdown).toContain("SENTINEL-BRAVO-7731");
+    expect(result.pages[0]?.markdown).not.toContain("SENTINEL-ALPHA-7731");
+    expect(filesystem.reads).toEqual([INDEXED_PATH]);
   });
 });
 

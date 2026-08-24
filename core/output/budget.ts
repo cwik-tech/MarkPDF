@@ -204,6 +204,48 @@ export function boundText(text: string, budget: OutputBudget): BoundedText {
   };
 }
 
+export interface BoundedTextRange {
+  text: string;
+  /** Actual UTF-16 offset used after clamping to the text and a code-point boundary. */
+  offset: number;
+  /** UTF-16 offset for the next call, or null when this page reached the end. */
+  nextOffset: number | null;
+  totalChars: number;
+  truncated: boolean;
+  /** UTF-8 bytes after this page. Bytes before offset were already requested, not omitted. */
+  omittedBytes: number;
+  totalBytes: number;
+}
+
+function codePointBoundaryAtOrBefore(text: string, requested: number): number {
+  const clamped = Math.min(requested, text.length);
+  if (clamped === 0 || clamped === text.length) return clamped;
+  const code = text.charCodeAt(clamped);
+  return code >= 0xdc00 && code <= 0xdfff ? clamped - 1 : clamped;
+}
+
+/** Return one exact, repeatable page of text, addressed by UTF-16 code-unit offset. */
+export function boundTextFrom(text: string, offset: number, budget: OutputBudget): BoundedTextRange {
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new Error(`A text offset must be a whole number at least zero; received ${offset}.`);
+  }
+  const start = codePointBoundaryAtOrBefore(text, offset);
+  const remaining = text.slice(start);
+  const kept = remaining.slice(0, fittingLength(remaining, budget));
+  const end = start + kept.length;
+  const trailing = text.slice(end);
+  const truncated = end < text.length;
+  return {
+    text: kept,
+    offset: start,
+    nextOffset: truncated ? end : null,
+    totalChars: text.length,
+    truncated,
+    omittedBytes: utf8Length(trailing),
+    totalBytes: utf8Length(text),
+  };
+}
+
 export interface BoundedPage {
   page: number;
   markdown: string;

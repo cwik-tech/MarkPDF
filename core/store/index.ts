@@ -98,6 +98,7 @@ export interface MarkdownCacheInput {
 export interface MarkdownCacheRecord {
   pages: MarkdownPageRecord[];
   provenance: CachedPageProvenance[] | null;
+  createdAt: string;
 }
 
 export interface ChunkInsert {
@@ -185,12 +186,17 @@ export interface SemanticStore {
    * Clear this document's chunks for the current scope and every superseded version.
    *
    * Paired with `insertChunkBatch` so that embedding — which is asynchronous and slow — never
-   * happens inside a transaction. The gap between the two is safe because completeness is
-   * derived rather than stamped: `listIndexedChunkIds` is compared against the identifiers the
-   * document is expected to produce, so a partial or differently-distributed set re-indexes on
-   * next open. Counting alone is not sufficient — see `indexDocument`.
+   * happens inside a transaction. Reuse completeness remains derived:
+   * `listIndexedChunkIds` is compared against the identifiers the document is expected to produce,
+   * so a partial or differently-distributed set re-indexes on next open. The disclosure timestamp
+   * is withdrawn here and written only after the final batch; it never decides reuse. Counting
+   * alone is not sufficient — see `indexDocument`.
    */
   beginChunkReplace(scope: ChunkScope): void;
+  /** Mark the exact searchable scope complete after its final chunk batch committed. */
+  markChunksComplete(scope: ChunkScope): void;
+  /** The completion time for this exact searchable scope, or null for legacy/incomplete rows. */
+  chunksWrittenAt(scope: ChunkScope): string | null;
   insertChunkBatch(scope: ChunkScope, chunks: readonly ChunkInsert[]): void;
   replaceChunks(scope: ChunkScope, chunks: readonly ChunkInsert[]): void;
   countIndexedChunks(scope: ChunkScope): number;
@@ -443,6 +449,32 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
         WHERE document_id = ?
           AND (chunking_version < ? OR (chunking_profile = ? AND chunking_version = ?))`,
     ).run(scope.documentId, scope.chunkingVersion, scope.chunkingProfile, scope.chunkingVersion);
+    // Chunk rows own embeddings for every model. Clearing them invalidates completion claims for
+    // every affected model scope, not only the model that initiated this replacement.
+    db.prepare(
+      `DELETE FROM chunk_scope_snapshots
+        WHERE document_id = ?
+          AND (chunking_version < ? OR (chunking_profile = ? AND chunking_version = ?))`,
+    ).run(scope.documentId, scope.chunkingVersion, scope.chunkingProfile, scope.chunkingVersion);
+  });
+
+  const markScopeComplete = db.transaction((scope: ChunkScope) => {
+    db.prepare(
+      `INSERT INTO chunk_scope_snapshots (
+         document_id, chunking_profile, chunking_version,
+         model_id, model_version, dimensions, chunks_written_at
+       ) VALUES (?,?,?,?,?,?,?)
+       ON CONFLICT(document_id, chunking_profile, chunking_version, model_id, model_version, dimensions)
+       DO UPDATE SET chunks_written_at = excluded.chunks_written_at`,
+    ).run(
+      scope.documentId,
+      scope.chunkingProfile,
+      scope.chunkingVersion,
+      scope.modelId,
+      scope.modelVersion,
+      scope.dimensions,
+      clock().toISOString(),
+    );
   });
 
   const removeDocument = db.transaction((hash: string): boolean => {
@@ -585,6 +617,29 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
       clearScope.immediate(scope);
     },
 
+    markChunksComplete(scope) {
+      markScopeComplete.immediate(scope);
+    },
+
+    chunksWrittenAt(scope) {
+      const raw = db
+        .prepare(
+          `SELECT chunks_written_at FROM chunk_scope_snapshots
+            WHERE document_id = ? AND chunking_profile = ? AND chunking_version = ?
+              AND model_id = ? AND model_version = ? AND dimensions = ?`,
+        )
+        .get(
+          scope.documentId,
+          scope.chunkingProfile,
+          scope.chunkingVersion,
+          scope.modelId,
+          scope.modelVersion,
+          scope.dimensions,
+        );
+      if (raw === undefined) return null;
+      return requireString(asRow(raw, "chunk_scope_snapshots row"), "chunks_written_at", "chunk_scope_snapshots row");
+    },
+
     insertChunkBatch(scope, chunks) {
       if (chunks.length === 0) return;
       insertBatch.immediate(scope, chunks);
@@ -674,7 +729,8 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
       // would report pages that were never cached as though they had been.
       const raw = db
         .prepare(
-          `SELECT m.markdown AS markdown, m.page_provenance AS page_provenance, d.page_count AS page_count
+          `SELECT m.markdown AS markdown, m.page_provenance AS page_provenance,
+                  m.created_at AS created_at, d.page_count AS page_count
              FROM document_markdown m JOIN documents d ON d.id = m.document_id
             WHERE m.document_id = ? AND m.engine_id = ? AND m.markdown_version = ?`,
         )
@@ -688,7 +744,11 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
       // A miss, deliberately, and consistently with a malformed row: the caller's remedy for
       // both is the same — extract again — and a corrupt cache must never be served in part.
       if (pages.length !== requireInteger(row, "page_count", context)) return null;
-      return { pages, provenance: parsePageProvenance(row.page_provenance, pages.length) };
+      return {
+        pages,
+        provenance: parsePageProvenance(row.page_provenance, pages.length),
+        createdAt: requireString(row, "created_at", context),
+      };
     },
 
     deleteDocument(contentHash) {

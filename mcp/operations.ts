@@ -4,7 +4,7 @@ import { resolveDocumentPages, type DocumentPages } from "../dist-core/documents
 import { parsePageSelection } from "../dist-core/documents/pageSelection.js";
 import { findIndexedDocument } from "../dist-core/index/documentLookup.js";
 import type { Embedder } from "../dist-core/index/embeddings.js";
-import { searchDocument } from "../dist-core/index/search.js";
+import { searchChunkScope, searchDocument } from "../dist-core/index/search.js";
 import type { BoundedScheduler } from "../dist-core/index/boundedScheduler.js";
 import { outlineFromPages } from "../dist-core/outline/documentOutline.js";
 import {
@@ -17,7 +17,7 @@ import {
   type OutputBudget,
 } from "../dist-core/output/budget.js";
 import type { SemanticSearchSettings } from "../dist-core/ipc/settings.js";
-import type { OpenDocumentsView } from "../dist-core/session/openDocuments.js";
+import type { OpenDocumentEntry, OpenDocumentsView } from "../dist-core/session/openDocuments.js";
 import type { SemanticStore } from "../dist-core/store/index.js";
 import type { ArgumentValue } from "./arguments.js";
 
@@ -42,6 +42,8 @@ export interface ToolContext {
    * to be on screen when the client launched.
    */
   openDocuments: () => OpenDocumentsView;
+  /** Read the separate private Markdown snapshot for one live open tab. */
+  readOpenDocumentContent: (entry: OpenDocumentEntry) => string | null;
   /**
    * The application's semantic settings, read when asked.
    *
@@ -194,7 +196,7 @@ export async function runOutline(
   const bounded = boundItems(all, context.budget, (entry) => entry.title);
   const scanned = resolved.pages.some((page) => page.source === "ocr");
   const fitted = fitReply(bounded.items.length, context.replyBudget, (keep) => ({
-    contentHash: resolved.document?.contentHash ?? null,
+    contentHash: resolved.contentHash,
     name: resolved.document?.name ?? null,
     pageCount: resolved.document?.pageCount ?? resolved.pages.length,
     indexed: resolved.document !== null,
@@ -216,7 +218,8 @@ export async function runSearch(
 ): Promise<ToolOutcome> {
   // Index only, always. A path the index does not hold is reported as such rather than read and
   // hashed, so this tool needs no filesystem permission under any circumstances.
-  const lookup = await findIndexedDocument(context.store(), context.allowlist(), {
+  const store = context.store();
+  const lookup = await findIndexedDocument(store, context.allowlist(), {
     ...identity(args),
     filesystemFallback: false,
     readFile: context.readFile,
@@ -229,7 +232,8 @@ export async function runSearch(
   // the search runs under all come from the same reading — and a settings file rewritten a
   // moment ago takes effect on this call, not the session after a restart.
   const settings = context.settings();
-  const results = await searchDocument(context.store(), context.embedder(settings.activeModelId), {
+  const embedder = context.embedder(settings.activeModelId);
+  const results = await searchDocument(store, embedder, {
     contentHash: lookup.document.contentHash,
     query: text(args, "query") ?? "",
     chunkingProfile: settings.chunkingProfile,
@@ -238,6 +242,9 @@ export async function runSearch(
     minScore: optionalCount(args, "min_score") ?? settings.minSemanticScore,
     ...(signal === undefined ? {} : { signal }),
   });
+  const snapshotRecordedAt = store.chunksWrittenAt(
+    searchChunkScope(lookup.document.id, embedder, settings.chunkingProfile),
+  );
 
   // Both the snippet and the headings above it came from the document, so both are measured for
   // the content bound; the page, the score and the chunk identifier did not. They are still bytes
@@ -260,6 +267,8 @@ export async function runSearch(
   const fitted = fitReply(rendered.length, context.replyBudget, (keep) => ({
     contentHash: lookup.document.contentHash,
     name: lookup.document.name,
+    indexSnapshot: true,
+    snapshotRecordedAt,
     truncated: keep < results.length,
     omittedResults: results.length - keep,
     omittedBytes: bounded.omittedBytes + bytesOfText(bounded.items.slice(keep), documentTextOf),
@@ -312,7 +321,9 @@ export async function runReadPages(
   const selected = new Set(chosen.pages.map((page) => page.page));
   const unresolvedPages = resolved.unresolvedPages.filter((page) => selected.has(page));
   const fitted = fitReply(bounded.pages.length, context.replyBudget, (keep) => ({
-    contentHash: resolved.document?.contentHash ?? null,
+    contentHash: resolved.contentHash,
+    indexSnapshot: true,
+    snapshotRecordedAt: resolved.snapshotRecordedAt,
     pages: bounded.pages.slice(0, keep),
     // Always present, never omitted when empty. An agent that cannot tell "no gaps" from "gaps not
     // reported" has to assume the second, and would distrust every page it is given.
@@ -364,7 +375,9 @@ export async function runToMarkdown(
     return {
       ok: true,
       payload: {
-        contentHash: resolved.document?.contentHash ?? null,
+        contentHash: resolved.contentHash,
+        indexSnapshot: false,
+        snapshotRecordedAt: null,
         outputPath: target,
         // Summarised, not listed. This reply carries no document text at all, so without this the
         // one thing that could make it large is the page numbers — and a bound that a whole branch
@@ -393,7 +406,9 @@ export async function runToMarkdown(
         : boundText(bounded.text, outputBudget(keep));
     const omitted = bounded.omittedBytes + kept.omittedBytes;
     return {
-      contentHash: resolved.document?.contentHash ?? null,
+      contentHash: resolved.contentHash,
+      indexSnapshot: false,
+      snapshotRecordedAt: null,
       pages,
       pageCount: chosen.pages.length,
       mode,

@@ -1,6 +1,7 @@
 import { AccessDeniedError, requireAccess, type Allowlist } from "../consent/allowlist.js";
 import { readDocumentPages, type OcrPageCandidate, type ResolveOcrRequest } from "../extract/readDocumentPages.js";
 import { findIndexedDocument } from "../index/documentLookup.js";
+import { contentHash as hashBytes } from "../hash.js";
 import type { MarkdownPage } from "../index/markdownBlocks.js";
 import { MARKDOWN_ENGINE_ID, MARKDOWN_VERSION } from "../models.js";
 import type { MarkdownCacheRecord, SemanticStore, StoredDocument } from "../store/index.js";
@@ -9,8 +10,12 @@ export type DocumentPages =
   | {
       status: "found";
       document: StoredDocument | null;
+      /** Hash of the bytes these pages describe, whether or not that version is indexed. */
+      contentHash: string;
       pages: MarkdownPage[];
       fromIndex: boolean;
+      /** When the cached pages were written, or null when these pages came from live bytes. */
+      snapshotRecordedAt: string | null;
       /**
        * Pages that are empty because nothing read them, rather than because they are blank.
        *
@@ -60,8 +65,8 @@ function unresolvedCachedPages(cached: MarkdownCacheRecord): number[] {
  *   usually not need one.
  * - `index-first` answers from the index when it can and reads the file otherwise, with
  *   permission. Reading is the fallback, so a document already indexed costs nothing.
- * - `filesystem` proves read permission **first, always** — even when the answer will come from
- *   the index. A caller in this class is doing something classed as reading the file, and a
+ * - `filesystem` proves read permission **first, always**, then verifies the current bytes before
+ *   using a cache. A caller in this class is doing something classed as reading the file, and a
  *   withdrawn grant must refuse it whether or not a cached copy happens to exist.
  */
 export type DocumentAccess = "index-only" | "index-first" | "filesystem";
@@ -87,9 +92,9 @@ export interface DocumentPagesInput {
  * The order is not the same for every caller, and `DocumentAccess` below is where that is decided.
  * An `index-only` caller never touches the filesystem at all. An `index-first` caller is answered
  * from the index when it can be, so asking about an already-indexed document needs no permission.
- * A `filesystem` caller proves read permission before anything else, cached text included — which
- * is what `to_markdown` is, and why a withdrawn grant refuses it even though the index still holds
- * the words.
+ * A `filesystem` caller proves read permission before anything else, then verifies byte identity
+ * before using cached text — which is what `to_markdown` is, and why a withdrawn grant refuses it
+ * while a same-path replacement is read fresh.
  */
 export async function resolveDocumentPages(
   store: SemanticStore,
@@ -134,24 +139,19 @@ export async function resolveDocumentPages(
       : null;
   const target = input.path ?? knownByHash?.filePath ?? undefined;
 
-  const denyOrThrow = (path: string): DocumentPages | null => {
-    try {
-      requireAccess(allowlist, path, "read");
-      return null;
-    } catch (error) {
-      if (error instanceof AccessDeniedError) return { status: "denied", path };
-      throw error;
-    }
-  };
-
   // A caller classed as reading the file proves that first, whatever the index happens to hold. A
   // cached copy is a convenience, not a second route around a grant that has been withdrawn.
+  let resolvedFilesystemTarget: string | null = null;
   if (input.access === "filesystem") {
     if (target === undefined) {
       return knownByHash === null ? { status: "not-indexed" } : { status: "no-recorded-path", document: knownByHash };
     }
-    const refused = denyOrThrow(target);
-    if (refused !== null) return refused;
+    try {
+      resolvedFilesystemTarget = requireAccess(allowlist, target, "read");
+    } catch (error) {
+      if (error instanceof AccessDeniedError) return { status: "denied", path: target };
+      throw error;
+    }
   }
 
   const lookup = await findIndexedDocument(store, allowlist, {
@@ -164,21 +164,29 @@ export async function resolveDocumentPages(
   if (lookup.status === "found") {
     const cached = store.getMarkdown(lookup.document.id, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION);
     if (cached !== null) {
+      // A filesystem-class call promises the file's current bytes, not merely permission to see a
+      // historical cache. Hash the canonical permitted path before serving that cache. The same
+      // `readOnce` result is reused below if the bytes changed and extraction is required.
+      const cacheMatchesLiveFile =
+        resolvedFilesystemTarget === null ||
+        hashBytes(await readOnce(resolvedFilesystemTarget)) === lookup.document.contentHash;
       const gaps = unresolvedCachedPages(cached);
       const fromCache: DocumentPages = {
         status: "found",
         document: lookup.document,
+        contentHash: lookup.document.contentHash,
         // The cache records the text, not how it was read. Heading detection and page identity do
         // not depend on that, and claiming a source the cache never stored would be worse.
         pages: cached.pages.map((page) => ({ page: page.page, markdown: page.markdown, source: "pdf" })),
         fromIndex: true,
+        snapshotRecordedAt: cached.createdAt,
         unresolvedPages: gaps,
       };
       // A complete cache is the answer, as it always was. A cache with a gap in it is only the
       // answer for a caller that cannot go and get the rest — and that caller is told which pages
       // it is missing rather than handed them as blank.
-      if (gaps.length === 0 || !allowFilesystem) return fromCache;
-      cachedFallback = fromCache;
+      if (cacheMatchesLiveFile && (gaps.length === 0 || !allowFilesystem)) return fromCache;
+      if (cacheMatchesLiveFile) cachedFallback = fromCache;
     } else if (!allowFilesystem) {
       return { status: "no-stored-text", document: lookup.document };
     }
@@ -204,8 +212,9 @@ export async function resolveDocumentPages(
     throw error;
   }
 
+  const liveBytes = await readOnce(resolved);
   const read = await readDocumentPages({
-    bytes: await readOnce(resolved),
+    bytes: liveBytes,
     ...(input.resolveOcr === undefined ? {} : { resolveOcr: input.resolveOcr }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
@@ -214,12 +223,14 @@ export async function resolveDocumentPages(
   return {
     status: "found",
     document: lookup.status === "found" ? lookup.document : null,
+    contentHash: hashBytes(liveBytes),
     pages: read.pages.map((page) => ({
       page: page.page,
       markdown: page.markdown,
       source: page.source === "ocr" ? "ocr" : page.source === "mixed" ? "mixed" : "pdf",
     })),
     fromIndex: false,
+    snapshotRecordedAt: null,
     unresolvedPages: read.unresolvedPages,
   };
 }

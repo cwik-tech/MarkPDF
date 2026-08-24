@@ -9,6 +9,7 @@ import { ocrPages } from "../dist-core/ocr/ocrPages.js";
 import { recordingRasteriser, shouldRecordRasterisation } from "../dist-core/ocr/rasterisationRecord.js";
 import { DEFAULT_CONTENT_BUDGET, DEFAULT_REPLY_BUDGET } from "../dist-core/output/budget.js";
 import { readOpenDocuments } from "../dist-core/session/openDocuments.js";
+import { readOpenDocumentContent } from "../dist-core/session/openDocumentContent.js";
 import { readSemanticSettings } from "../dist-core/settings/appSettings.js";
 import { openSemanticStore, type SemanticStore } from "../dist-core/store/index.js";
 import type { ToolContext } from "./operations.js";
@@ -91,6 +92,8 @@ export function createToolContext(input: ContextInput): { context: ToolContext; 
     // Per call, like the consent record above and for the same reason: a client session lasts
     // hours, and which document somebody is looking at changes by the minute.
     openDocuments: () => readOpenDocuments(input.dataDir),
+    readOpenDocumentContent: (entry) =>
+      readOpenDocumentContent(input.dataDir, entry.process, entry.window, entry.tabId),
     // Per call, for the same reason again — and read inside the call rather than at startup, so
     // a settings file that cannot be opened refuses one call instead of refusing to start.
     settings: () => readSemanticSettings(input.dataDir),

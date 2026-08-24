@@ -423,3 +423,135 @@ describe("reading a heading breadcrumb the index stored", () => {
     ]);
   });
 });
+
+describe("when a scope's chunks were last written", () => {
+  /** The stored row is the timestamp's only home, so the document row must not be consulted. */
+  function upsertDocument(store: SemanticStore, contentHash: string) {
+    return store.upsertDocument({
+      contentHash,
+      name: "report.pdf",
+      filePath: "/tmp/report.pdf",
+      fileSize: 10,
+      pageCount: 2,
+      textSource: "pdf",
+      textExtractionVersion: TEXT_EXTRACTION_VERSION,
+      ocrExtractionVersion: OCR_EXTRACTION_VERSION,
+      markdownEngine: null,
+      markdownVersion: null,
+    });
+  }
+
+  it("reports nothing for a scope that was never marked complete", () => {
+    const store = open();
+    const document = upsertDocument(store, "s".repeat(64));
+
+    // Legacy rows and interrupted runs alike: absence is the honest answer, and null says it.
+    expect(store.chunksWrittenAt(scopeFor(document.id))).toBeNull();
+  });
+
+  it("records the moment a scope is marked complete, and keeps one stamp per scope", () => {
+    // Two scopes of one document — the profile a search runs under is exactly this fine — and
+    // the second write must not overwrite the first's account of itself.
+    const store = open();
+    const document = upsertDocument(store, "s".repeat(64));
+    const balanced = scopeFor(document.id);
+    const precise: ChunkScope = { ...balanced, chunkingProfile: "precise" };
+
+    store.markChunksComplete(balanced);
+    expect(store.chunksWrittenAt(balanced)).toBe(FIXED_CLOCK().toISOString());
+    expect(store.chunksWrittenAt(precise)).toBeNull();
+
+    store.markChunksComplete(precise);
+    expect(store.chunksWrittenAt(precise)).toBe(FIXED_CLOCK().toISOString());
+    expect(store.chunksWrittenAt(balanced)).toBe(FIXED_CLOCK().toISOString());
+  });
+
+  it("invalidates the stamp when the scope's replacement begins, and only that scope's", () => {
+    // A run cancelled between the clear and the final batch leaves fewer chunks than the scope
+    // claims. A completion stamp surviving that window would describe partial chunks as though
+    // they were the finished write — so beginning the replace withdraws the claim.
+    const store = open();
+    const document = upsertDocument(store, "s".repeat(64));
+    const balanced = scopeFor(document.id);
+    const precise: ChunkScope = { ...balanced, chunkingProfile: "precise" };
+    store.markChunksComplete(balanced);
+    store.markChunksComplete(precise);
+
+    store.beginChunkReplace(balanced);
+
+    expect(store.chunksWrittenAt(balanced)).toBeNull();
+    expect(store.chunksWrittenAt(precise)).toBe(FIXED_CLOCK().toISOString());
+  });
+
+  it("does not mistake the document row's own timestamps for a snapshot time", () => {
+    // Why neither column on `documents` can carry the answer. `created_at` is INSERT-only: it
+    // survives re-indexing, so it would keep claiming the first write after the chunks had been
+    // rewritten. `last_opened_at` moves on every upsert — including the reused path that wrote
+    // no chunks at all — so it would claim a write that never happened.
+    let instant = new Date("2026-08-22T12:00:00.000Z").getTime();
+    const stepping = openSemanticStore({ dataDir, clock: () => new Date((instant += 60_000)) });
+    opened.push(stepping);
+    const first = upsertDocument(stepping, "s".repeat(64));
+    const second = stepping.upsertDocument({
+      contentHash: "s".repeat(64),
+      name: "renamed.pdf",
+      filePath: "/tmp/renamed.pdf",
+      fileSize: 10,
+      pageCount: 2,
+      textSource: "pdf",
+      textExtractionVersion: TEXT_EXTRACTION_VERSION,
+      ocrExtractionVersion: OCR_EXTRACTION_VERSION,
+      markdownEngine: null,
+      markdownVersion: null,
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.createdAt).toBe(first.createdAt);
+    expect(second.lastOpenedAt).not.toBe(first.lastOpenedAt);
+  });
+});
+
+describe("migrating a database that predates scope stamps", () => {
+  /** A value that must be present; a null is a failure, not a branch to walk around. */
+  function present<T>(value: T | null, what: string): T {
+    if (value === null) throw new Error(`Expected ${what} to be present.`);
+    return value;
+  }
+
+  it("adds scope state and reads documents written before it as unstamped", () => {
+    // A v3 database, written out here rather than imported, so this is an independent statement
+    // of the shape being migrated from.
+    const db = connectDirectly();
+    db.exec(LEGACY_V1_DDL);
+    db.exec(`
+      ALTER TABLE documents ADD COLUMN markdown_engine TEXT;
+      ALTER TABLE documents ADD COLUMN markdown_version INTEGER;
+      ALTER TABLE document_chunks ADD COLUMN heading_path TEXT;
+      CREATE TABLE document_markdown (
+        document_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+        engine_id TEXT NOT NULL,
+        markdown_version INTEGER NOT NULL,
+        markdown TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      ALTER TABLE document_markdown ADD COLUMN page_provenance TEXT;
+    `);
+    db.prepare(
+      `INSERT INTO documents (content_hash,name,file_path,file_size,page_count,text_source,
+         text_extraction_version,ocr_extraction_version,created_at,last_opened_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    ).run("v3hash", "v3.pdf", "/tmp/v3.pdf", 10, 1, "pdf", 2, 1, "2026-01-01", "2026-01-01");
+    db.pragma("user_version = 3");
+    db.close();
+
+    const store = open();
+
+    expect(store.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    const document = present(store.getDocument("v3hash"), "the migrated document");
+    // Its chunks were written by a build that recorded no completion: the stamp says so.
+    expect(store.chunksWrittenAt(scopeFor(document.id))).toBeNull();
+    // And the new table is usable from the first run after the upgrade.
+    store.markChunksComplete(scopeFor(document.id));
+    expect(store.chunksWrittenAt(scopeFor(document.id))).toBe(FIXED_CLOCK().toISOString());
+  });
+});

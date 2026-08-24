@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectOpenDocuments, type ProjectableTab } from "./openDocuments";
+import { projectOpenDocuments, publishDelayFor, type ProjectableTab } from "./openDocuments";
 
 /**
  * What a window tells the rest of the machine about its own tabs.
@@ -25,7 +25,15 @@ function makePdfTab(overrides: Partial<ProjectableTab> = {}): ProjectableTab {
 }
 
 function makeMarkdownTab(overrides: Partial<ProjectableTab> = {}): ProjectableTab {
-  return { kind: "markdown", id: "tab-m", name: "notes.md", path: "/library/notes.md", dirty: false, ...overrides };
+  return {
+    kind: "markdown",
+    id: "tab-m",
+    name: "notes.md",
+    path: "/library/notes.md",
+    markdown: "# Notes\n",
+    dirty: false,
+    ...overrides,
+  };
 }
 
 describe("reporting the documents a window has open", () => {
@@ -45,7 +53,9 @@ describe("reporting the documents a window has open", () => {
           name: "annual-report.pdf",
           path: "/library/annual-report.pdf",
           pageCount: 3,
+          currentPage: 1,
           contentHash: "a".repeat(64),
+          contentSnapshot: null,
           unsavedChanges: false,
         },
       ],
@@ -74,7 +84,9 @@ describe("reporting the documents a window has open", () => {
       name: "notes.md",
       path: "/library/notes.md",
       pageCount: 0,
+      currentPage: null,
       contentHash: null,
+      contentSnapshot: "# Notes\n",
       unsavedChanges: false,
     });
   });
@@ -91,31 +103,31 @@ describe("reporting the documents a window has open", () => {
     expect(report.documents[0]?.contentHash).toBeNull();
   });
 
-  it("says the same thing after the reader turns a page", () => {
-    // Page position is the most frequently changing thing about a tab and the least useful thing
-    // to know about it from outside. Reporting it would mean writing a file on every scroll.
+  it("reports the PDF page the reader is currently viewing", () => {
     const before = projectOpenDocuments([makePdfTab({ currentPage: 1 })], "tab-a");
     const after = projectOpenDocuments([makePdfTab({ currentPage: 97 })], "tab-a");
 
-    expect(after).toEqual(before);
-    expect(JSON.stringify(after)).toBe(JSON.stringify(before));
-    expect(JSON.stringify(after)).not.toContain("97");
+    expect(before.documents[0]?.currentPage).toBe(1);
+    expect(after.documents[0]?.currentPage).toBe(97);
   });
 
-  it("carries no document text and no bytes", () => {
+  it("uses a longer coalescing delay only when the current PDF page changed", () => {
+    const before = projectOpenDocuments([makePdfTab({ currentPage: 1 })], "tab-a");
+    const pageTurn = projectOpenDocuments([makePdfTab({ currentPage: 2 })], "tab-a");
+    const tabChange = projectOpenDocuments([makePdfTab({ id: "tab-b" })], "tab-b");
+    const edit = projectOpenDocuments([makeMarkdownTab({ markdown: "edited" })], "tab-m");
+
+    expect(publishDelayFor(before, pageTurn)).toBeGreaterThan(publishDelayFor(before, tabChange));
+    expect(publishDelayFor(before, edit)).toBe(publishDelayFor(before, tabChange));
+    expect(publishDelayFor(null, before)).toBe(publishDelayFor(before, tabChange));
+  });
+
+  it("carries Markdown text for the private snapshot but no PDF bytes", () => {
     const report = projectOpenDocuments([makePdfTab(), makeMarkdownTab()], "tab-a");
 
-    for (const entry of report.documents) {
-      expect(Object.keys(entry).sort()).toEqual([
-        "contentHash",
-        "kind",
-        "name",
-        "pageCount",
-        "path",
-        "tabId",
-        "unsavedChanges",
-      ]);
-    }
+    expect(report.documents[0]?.contentSnapshot).toBeNull();
+    expect(report.documents[1]?.contentSnapshot).toBe("# Notes\n");
+    expect(JSON.stringify(report)).not.toContain("bytes");
   });
 
   it("does not claim an active tab that is no longer open", () => {

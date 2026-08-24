@@ -1,5 +1,5 @@
 import { hasTerminalControlCharacter } from "../text/safeForTerminal.js";
-import type { OpenDocumentKind, OpenDocumentRecord } from "./openDocuments.js";
+import type { OpenDocumentKind } from "./openDocuments.js";
 
 /**
  * Validation for what a window says about its own tabs.
@@ -21,7 +21,19 @@ export class OpenDocumentsRequestError extends Error {
 
 export interface OpenDocumentsPayload {
   activeTabId: string | null;
-  documents: OpenDocumentRecord[];
+  documents: PublishedOpenDocument[];
+}
+
+export interface PublishedOpenDocument {
+  tabId: string;
+  kind: OpenDocumentKind;
+  name: string;
+  path: string | null;
+  pageCount: number;
+  currentPage: number | null;
+  contentHash: string | null;
+  contentSnapshot: string | null;
+  unsavedChanges: boolean;
 }
 
 /**
@@ -86,13 +98,33 @@ function requireFlag(value: unknown, what: string): boolean {
   return value;
 }
 
+function requireCurrentPage(value: unknown, kind: OpenDocumentKind, pageCount: number): number | null {
+  if (kind === "markdown") {
+    if (value !== null) refuse("currentPage must be null for Markdown.");
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > pageCount) {
+    refuse("currentPage must be a whole number from 1 through pageCount for a PDF.");
+  }
+  return value;
+}
+
+function requireContentSnapshot(value: unknown, kind: OpenDocumentKind): string | null {
+  if (kind === "pdf") {
+    if (value !== null) refuse("contentSnapshot must be null for a PDF.");
+    return null;
+  }
+  if (typeof value !== "string") refuse("contentSnapshot must be text for Markdown.");
+  return value;
+}
+
 /**
  * Read one window's report, or refuse it.
  *
  * **The active tab must be one of the documents reported.** A window naming a front tab it did not
  * list would leave the one document a caller is most likely to ask for unreachable, and tab
  * identities must be distinct because a reference is built from one — two documents sharing an
- * identity would silently become the same document.
+ * identity would silently become the same tab.
  */
 export function parseOpenDocumentsPayload(raw: unknown): OpenDocumentsPayload {
   const record = requireRecord(raw, "an open-documents report");
@@ -103,7 +135,7 @@ export function parseOpenDocumentsPayload(raw: unknown): OpenDocumentsPayload {
     refuse(`documents must name at most ${MAX_DOCUMENTS} open documents; received ${rawDocuments.length}.`);
   }
 
-  const documents: OpenDocumentRecord[] = [];
+  const documents: PublishedOpenDocument[] = [];
   const seen = new Set<string>();
   for (const entry of rawDocuments) {
     // Named `fields` rather than `document`: `core/boundaries.test.ts` reads a bare `document.` as
@@ -113,13 +145,17 @@ export function parseOpenDocumentsPayload(raw: unknown): OpenDocumentsPayload {
     const tabId = requireText(fields.tabId, "tabId", MAX_NAME);
     if (seen.has(tabId)) refuse(`two open documents share the tabId ${tabId}.`);
     seen.add(tabId);
+    const kind = requireKind(fields.kind);
+    const pageCount = requirePageCount(fields.pageCount);
     documents.push({
       tabId,
-      kind: requireKind(fields.kind),
+      kind,
       name: requireText(fields.name, "name", MAX_NAME),
       path: requireOptionalPath(fields.path),
-      pageCount: requirePageCount(fields.pageCount),
+      pageCount,
+      currentPage: requireCurrentPage(fields.currentPage, kind, pageCount),
       contentHash: requireOptionalHash(fields.contentHash),
+      contentSnapshot: requireContentSnapshot(fields.contentSnapshot, kind),
       unsavedChanges: requireFlag(fields.unsavedChanges, "unsavedChanges"),
     });
   }

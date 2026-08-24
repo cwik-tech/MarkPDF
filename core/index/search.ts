@@ -1,5 +1,5 @@
 import { defaultSemanticScoreThreshold, defaultSemanticTopK, getCuratedEmbeddingModel, modelVersion, semanticChunkingVersion, type SemanticChunkingProfile } from "../models.js";
-import type { HeadingEntry, SemanticStore } from "../store/index.js";
+import type { ChunkScope, HeadingEntry, SemanticStore } from "../store/index.js";
 import type { Embedder } from "./embeddings.js";
 import { createSnippet } from "./chunking.js";
 import { toPlainText } from "./structuredChunking.js";
@@ -37,6 +37,23 @@ export interface SearchInput {
   signal?: AbortSignal;
 }
 
+/** The exact persisted scope a search reads under. Shared with disclosure so the two cannot drift. */
+export function searchChunkScope(
+  documentId: number,
+  embedder: Embedder,
+  chunkingProfile: SemanticChunkingProfile,
+): ChunkScope {
+  const model = getCuratedEmbeddingModel(embedder.modelId);
+  return {
+    documentId,
+    chunkingProfile,
+    chunkingVersion: semanticChunkingVersion,
+    modelId: model.id,
+    modelVersion,
+    dimensions: embedder.dimensions,
+  };
+}
+
 export async function searchDocument(
   store: SemanticStore,
   embedder: Embedder,
@@ -53,19 +70,11 @@ export async function searchDocument(
   const stored = store.getDocument(input.contentHash);
   if (stored === null) return [];
 
-  const model = getCuratedEmbeddingModel(embedder.modelId);
   const queryVector = await embedder.embed(query, "query");
   if (cancelled()) return [];
 
   const hits = store.search(
-    {
-      documentId: stored.id,
-      chunkingProfile: input.chunkingProfile,
-      chunkingVersion: semanticChunkingVersion,
-      modelId: model.id,
-      modelVersion,
-      dimensions: embedder.dimensions,
-    },
+    searchChunkScope(stored.id, embedder, input.chunkingProfile),
     queryVector,
     input.topK ?? defaultSemanticTopK,
     input.minScore ?? defaultSemanticScoreThreshold,

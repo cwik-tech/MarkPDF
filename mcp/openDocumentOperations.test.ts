@@ -8,7 +8,7 @@ import { createDeterministicEmbedder } from "../dist-core/index/deterministicEmb
 import { indexDocument } from "../dist-core/index/indexDocument.js";
 import { defaultSemanticSearchSettings } from "../dist-core/ipc/settings.js";
 import { MARKDOWN_ENGINE_ID, MARKDOWN_VERSION, OCR_EXTRACTION_VERSION, TEXT_EXTRACTION_VERSION } from "../dist-core/models.js";
-import { DEFAULT_CONTENT_BUDGET, DEFAULT_REPLY_BUDGET } from "../dist-core/output/budget.js";
+import { DEFAULT_CONTENT_BUDGET, DEFAULT_REPLY_BUDGET, outputBudget } from "../dist-core/output/budget.js";
 import { openDocumentReference, type OpenDocumentEntry, type OpenDocumentsView } from "../dist-core/session/openDocuments.js";
 import { openSemanticStore, type SemanticStore } from "../dist-core/store/index.js";
 import { buildReportPdf } from "../cli/journeys/fixtures.test-support.js";
@@ -80,10 +80,16 @@ function makeEntry(overrides: Partial<OpenDocumentEntry> = {}): OpenDocumentEntr
     name: "annual-report.pdf",
     path: null,
     pageCount: 2,
+    currentPage: 1,
     contentHash: null,
+    hasContentSnapshot: false,
+    contentChars: 0,
+    contentBytes: 0,
+    snapshotTruncated: false,
     unsavedChanges: false,
     ref: openDocumentReference(4242, 1, tabId),
     window: 1,
+    process: 4242,
     activeInWindow: true,
     active: true,
     ...overrides,
@@ -111,6 +117,7 @@ function contextWith(
     embedder: (modelId: string) => (modelId === embedder.modelId ? embedder : createDeterministicEmbedder(384, modelId)),
     allowlist: () => ({ readRoots: [], writeRoots: [] }),
     openDocuments: () => view,
+    readOpenDocumentContent: () => null,
     settings: () => defaultSemanticSearchSettings,
     readFile: filesystem.readFile,
     writeFile: async () => {},
@@ -224,6 +231,36 @@ describe("saying what the application has open", () => {
     expect(documents[0]?.unsavedChanges).toBe(true);
   });
 
+  it("reports the visible page and the size of each Markdown snapshot", async () => {
+    const view = openWindow(
+      makeEntry({ currentPage: 10 }),
+      makeEntry({
+        tabId: "tab-m",
+        kind: "markdown",
+        name: "notes.md",
+        pageCount: 0,
+        currentPage: null,
+        hasContentSnapshot: true,
+        contentChars: 123,
+        contentBytes: 125,
+        snapshotTruncated: true,
+        active: false,
+        activeInWindow: false,
+      }),
+    );
+
+    const documents = payloadOf(await listOpen(contextWith(view))).documents as Array<Record<string, unknown>>;
+
+    expect(documents[0]).toMatchObject({ currentPage: 10, hasContentSnapshot: false });
+    expect(documents[1]).toMatchObject({
+      currentPage: null,
+      hasContentSnapshot: true,
+      contentChars: 123,
+      contentBytes: 125,
+      snapshotTruncated: true,
+    });
+  });
+
   it("says how many windows could not be understood, rather than passing over them", async () => {
     const payload = payloadOf(await listOpen(contextWith({ ...NOTHING_OPEN, unreadableWindows: 2 })));
 
@@ -297,29 +334,141 @@ describe("reading the document the application has open", () => {
     expect(message).toMatch(/list_open_documents/);
   });
 
-  it("refuses an active Markdown tab instead of quietly reading a PDF behind it", async () => {
-    // The mistake worth preventing: a person looking at their notes asks about "the document I
-    // have open" and is answered about a different file entirely.
+  it("reads an unsaved active Markdown tab instead of quietly reading a PDF behind it", async () => {
     const contentHash = await indexTheFixture();
+    const markdown = "# Notes\n\nunsaved sentinel";
     const context = contextWith(
       openWindow(
-        makeEntry({ tabId: "tab-m", kind: "markdown", name: "notes.md", pageCount: 0, active: true, activeInWindow: true }),
+        makeEntry({
+          tabId: "tab-m",
+          kind: "markdown",
+          name: "notes.md",
+          pageCount: 0,
+          currentPage: null,
+          hasContentSnapshot: true,
+          contentChars: markdown.length,
+          contentBytes: Buffer.byteLength(markdown, "utf8"),
+          unsavedChanges: true,
+          active: true,
+          activeInWindow: true,
+        }),
         makeEntry({ tabId: "tab-a", contentHash, active: false, activeInWindow: false }),
       ),
+      { readOpenDocumentContent: () => markdown },
     );
+
+    const payload = payloadOf(await readOpen(context));
+
+    expect(payload).toMatchObject({
+      kind: "markdown",
+      name: "notes.md",
+      unsavedChanges: true,
+      text: markdown,
+      offset: 0,
+      nextOffset: null,
+      snapshotTruncated: false,
+    });
+    expect(JSON.stringify(payload)).not.toContain("annual-report.pdf");
+  });
+
+  it("reads a saved Markdown tab named on purpose", async () => {
+    const source = "# Saved notes\n";
+    const markdown = makeEntry({
+      tabId: "tab-m",
+      kind: "markdown",
+      name: "notes.md",
+      pageCount: 0,
+      currentPage: null,
+      hasContentSnapshot: true,
+      contentChars: source.length,
+      contentBytes: Buffer.byteLength(source, "utf8"),
+      unsavedChanges: false,
+      active: false,
+      activeInWindow: false,
+    });
+    const context = contextWith(openWindow(makeEntry({ tabId: "tab-a", active: true }), markdown), {
+      readOpenDocumentContent: () => source,
+    });
+
+    expect(payloadOf(await readOpen(context, { ref: markdown.ref }))).toMatchObject({
+      text: source,
+      unsavedChanges: false,
+    });
+  });
+
+  it("paginates a long Markdown tab without losing or duplicating content", async () => {
+    const source = `${"line with text\n".repeat(20)}𝔘 final`;
+    const markdown = makeEntry({
+      kind: "markdown",
+      pageCount: 0,
+      currentPage: null,
+      hasContentSnapshot: true,
+      contentChars: source.length,
+      contentBytes: Buffer.byteLength(source, "utf8"),
+    });
+    const context = contextWith(openWindow(markdown), {
+      readOpenDocumentContent: () => source,
+      budget: outputBudget(37),
+    });
+    const parts: string[] = [];
+    let offset = 0;
+
+    for (;;) {
+      const payload = payloadOf(await readOpen(context, { ref: markdown.ref, offset }));
+      parts.push(String(payload.text));
+      if (payload.nextOffset === null) break;
+      if (typeof payload.nextOffset !== "number") throw new Error("nextOffset was not a number or null");
+      offset = payload.nextOffset;
+    }
+
+    expect(parts.join("")).toBe(source);
+  });
+
+  it("refuses a missing Markdown snapshot without disclosing its recorded path", async () => {
+    const secret = "/Users/someone/Private/notes.md";
+    const markdown = makeEntry({
+      kind: "markdown",
+      name: "notes.md",
+      path: secret,
+      pageCount: 0,
+      currentPage: null,
+      hasContentSnapshot: true,
+    });
+    const context = contextWith(openWindow(markdown), { readOpenDocumentContent: () => null });
 
     const message = refusalOf(await readOpen(context));
 
-    expect(message).toContain("notes.md");
-    expect(message).toMatch(/Markdown/);
-    expect(message).not.toContain("annual-report.pdf");
+    expect(message).toMatch(/no longer open|snapshot/i);
+    expect(message).not.toContain(secret);
   });
 
-  it("refuses a Markdown tab named on purpose, with the same answer", async () => {
-    const markdown = makeEntry({ tabId: "tab-m", kind: "markdown", name: "notes.md", active: false, activeInWindow: false });
-    const context = contextWith(openWindow(makeEntry({ tabId: "tab-a", active: true }), markdown));
+  it("reports when the local Markdown snapshot hit its ceiling", async () => {
+    const stored = "x".repeat(100);
+    const markdown = makeEntry({
+      kind: "markdown",
+      pageCount: 0,
+      currentPage: null,
+      hasContentSnapshot: true,
+      contentChars: stored.length,
+      contentBytes: stored.length,
+      snapshotTruncated: true,
+    });
+    const context = contextWith(openWindow(markdown), { readOpenDocumentContent: () => stored });
 
-    expect(refusalOf(await readOpen(context, { ref: markdown.ref }))).toMatch(/Markdown/);
+    expect(payloadOf(await readOpen(context))).toMatchObject({
+      totalChars: stored.length,
+      snapshotTruncated: true,
+    });
+  });
+
+  it("refuses page selection for Markdown and text offsets for PDFs", async () => {
+    const markdown = makeEntry({ kind: "markdown", pageCount: 0, currentPage: null, hasContentSnapshot: true });
+    const markdownContext = contextWith(openWindow(markdown), { readOpenDocumentContent: () => "notes" });
+    expect(refusalOf(await readOpen(markdownContext, { pages: "1" }))).toMatch(/offset/i);
+
+    const contentHash = await indexTheFixture();
+    const pdfContext = contextWith(openWindow(makeEntry({ contentHash })));
+    expect(refusalOf(await readOpen(pdfContext, { offset: 1 }))).toMatch(/pages/i);
   });
 
   it("says a document that has never been saved and never been indexed has nothing to read yet", async () => {

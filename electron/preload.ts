@@ -37,8 +37,8 @@ contextBridge.exposeInMainWorld("pdfReader", {
   readyForOpenFiles: () =>
     ipcRenderer.invoke("app:renderer-ready-for-open-files"),
   openDocuments: {
-    // What this window is showing, for processes that cannot see it. Names and page counts only;
-    // no document text and no bytes cross here.
+    // What this window is showing, for processes that cannot see it. Markdown text crosses only
+    // so main can maintain a private bounded snapshot; no PDF bytes cross here.
     publish: (report: unknown) =>
       ipcRenderer.invoke("open-documents:publish", report),
   },

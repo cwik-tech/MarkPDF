@@ -130,6 +130,14 @@ describe("the tools this server offers", () => {
     expect(ACTIVE_DOCUMENT).toBe("active");
   });
 
+  it("offers pages for PDFs and non-negative offsets for Markdown tabs", () => {
+    const read = TOOLS.find((tool) => tool.name === "read_open_document");
+
+    expect(read?.inputSchema.properties.pages?.description).toMatch(/PDF/i);
+    expect(read?.inputSchema.properties.offset).toMatchObject({ type: "integer", minimum: 0, default: 0 });
+    expect(read?.inputSchema.properties.offset?.description).toMatch(/Markdown/i);
+  });
+
   it("requires the arguments a tool cannot work without, and nothing else", () => {
     const required = Object.fromEntries(TOOLS.map((tool) => [tool.name, tool.inputSchema.required ?? []]));
 
@@ -166,6 +174,14 @@ describe("the tools this server offers", () => {
     expect(byName.read_pages).toContain("index");
     expect(byName.search).toContain("index");
     expect(byName.to_markdown).toContain("read");
+  });
+
+  it("explains which replies are recorded snapshots and which read current bytes", () => {
+    const byName = Object.fromEntries(TOOLS.map((tool) => [tool.name, tool.description]));
+
+    expect(byName.search).toMatch(/snapshot/i);
+    expect(byName.read_pages).toMatch(/snapshot/i);
+    expect(byName.to_markdown).toMatch(/current|live/i);
   });
 
   it("offers no tool that indexes, grants, or deletes", () => {

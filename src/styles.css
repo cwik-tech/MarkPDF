@@ -955,6 +955,40 @@ select {
   padding: 36px 24px 56px;
 }
 
+.markdown-workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(360px, 1.2fr);
+  gap: 20px;
+  width: min(1400px, 100%);
+  min-height: calc(100% - 4px);
+  margin: 0 auto;
+}
+
+.markdown-source-editor {
+  width: 100%;
+  min-height: 640px;
+  resize: vertical;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  outline: none;
+  background: var(--panel);
+  color: var(--text);
+  font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  tab-size: 2;
+}
+
+.markdown-source-editor:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+@media (max-width: 900px) {
+  .markdown-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
 .markdown-preview {
   width: min(880px, 100%);
   margin: 0 auto;

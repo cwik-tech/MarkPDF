@@ -3,6 +3,7 @@ import {
   boundItems,
   boundPages,
   boundText,
+  boundTextFrom,
   DEFAULT_CONTENT_BUDGET,
   DEFAULT_REPLY_BUDGET,
   fitReply,
@@ -105,6 +106,51 @@ describe("bounding a piece of text", () => {
 
     expect([...bounded.text].every((character) => astral.includes(character))).toBe(true);
     expect(bounded.text.length).toBeLessThanOrEqual(5);
+  });
+});
+
+describe("paging through one piece of text", () => {
+  it("concatenates back to the exact source across successive UTF-16 offsets", () => {
+    const source = "first line\nsecond 𝔘 line\nthird line";
+    const parts: string[] = [];
+    let offset = 0;
+
+    for (;;) {
+      const bounded = boundTextFrom(source, offset, outputBudget(11));
+      parts.push(bounded.text);
+      if (bounded.nextOffset === null) break;
+      expect(bounded.nextOffset).toBeGreaterThan(offset);
+      offset = bounded.nextOffset;
+    }
+
+    expect(parts.join("")).toBe(source);
+  });
+
+  it("reports UTF-16 offsets and never ends inside a surrogate pair", () => {
+    const source = "ab𝔘cd";
+    const first = boundTextFrom(source, 0, outputBudget(5));
+
+    expect(first).toEqual({
+      text: "ab",
+      offset: 0,
+      nextOffset: 2,
+      totalChars: 6,
+      truncated: true,
+      omittedBytes: Buffer.byteLength("𝔘cd", "utf8"),
+      totalBytes: Buffer.byteLength(source, "utf8"),
+    });
+    if (first.nextOffset === null) throw new Error("the first page unexpectedly reached the end");
+    expect(boundTextFrom(source, first.nextOffset, outputBudget(4)).text).toBe("𝔘");
+  });
+
+  it("returns an empty final page when the requested offset is beyond the end", () => {
+    expect(boundTextFrom("notes", 50, outputBudget(10))).toMatchObject({
+      text: "",
+      offset: 5,
+      nextOffset: null,
+      truncated: false,
+      omittedBytes: 0,
+    });
   });
 });
 

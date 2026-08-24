@@ -3,7 +3,7 @@ import { LEGACY_V1_DDL } from "./legacySchema.js";
 import { SchemaTooNewError } from "./errors.js";
 import { pragmaInteger } from "./rows.js";
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 export interface MigrationReport {
   from: number;
@@ -41,6 +41,23 @@ const V2_DDL = `
  */
 const V3_DDL = `
   ALTER TABLE document_markdown ADD COLUMN page_provenance TEXT;
+`;
+
+/** v4 records completion per searchable chunk scope, rather than ambiguously per document. */
+const V4_DDL = `
+  CREATE TABLE chunk_scope_snapshots (
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    chunking_profile TEXT NOT NULL,
+    chunking_version INTEGER NOT NULL,
+    model_id TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    dimensions INTEGER NOT NULL,
+    chunks_written_at TEXT NOT NULL,
+    PRIMARY KEY (
+      document_id, chunking_profile, chunking_version,
+      model_id, model_version, dimensions
+    )
+  );
 `;
 
 function hasDocumentsTable(db: Db): boolean {
@@ -84,6 +101,7 @@ export function migrate(db: Db): MigrationReport {
     }
 
     if (from < 3) db.exec(V3_DDL);
+    if (from < 4) db.exec(V4_DDL);
 
     db.pragma(`user_version = ${CURRENT_SCHEMA_VERSION}`);
   });

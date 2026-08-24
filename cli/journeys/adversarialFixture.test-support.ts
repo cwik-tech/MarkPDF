@@ -147,9 +147,19 @@ export const ADVERSARIAL = Object.freeze({
    * reading would otherwise replace the one this program does itself.
    */
   scannedPages: Object.freeze([1, 2, 3, 7, 13]),
+  // The v1/v2 pair, drawn on page 1. Equal length is the point: a freshness check implemented
+  // as a size comparison would pass this replacement, and the staleness mutation proof depends
+  // on that passing when it should not.
+  v1Sentinel: "SENTINEL-ALPHA-7731",
+  v2Sentinel: "SENTINEL-BRAVO-7731",
 });
 
-export type AdversarialVariant = "mixed" | "scanned";
+export type AdversarialVariant = "mixed" | "scanned" | "v1" | "v2";
+
+export interface AdversarialReplacementPair {
+  v1: Uint8Array;
+  v2: Uint8Array;
+}
 
 const PROSE = [
   "Administrative preamble concerning departmental record keeping and filing",
@@ -309,6 +319,9 @@ export async function buildAdversarialPdf(variant: AdversarialVariant = "mixed")
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
   const scanned = variant === "scanned" ? new Set<number>(ADVERSARIAL.scannedPages) : new Set<number>();
+  // The v1/v2 pair differs only in this line: the same document, rewritten at the same path.
+  const sentinel =
+    variant === "v1" ? ADVERSARIAL.v1Sentinel : variant === "v2" ? ADVERSARIAL.v2Sentinel : null;
   const answerImage = await pdf.embedPng(rasteriseAnswerTable());
   const figureImage = await pdf.embedPng(rasteriseFigure());
   const chartImage = await pdf.embedPng(rasteriseChart());
@@ -341,8 +354,12 @@ export async function buildAdversarialPdf(variant: AdversarialVariant = "mixed")
     if (drawnAsText) page.drawText(ADVERSARIAL.footer, { x: 60, y: 48, size: 9, font });
   };
 
-  // 1 — the document's own title. Sampled by the window's density check.
-  await textPage("Operating Plan 2026-2029", 20, PROSE);
+  // 1 — the document's own title. Sampled by the window's density check. The sentinel, for the
+  // v1/v2 pair, rides at the foot of this page: native text, so both surfaces can show it.
+  {
+    const { page } = await textPage("Operating Plan 2026-2029", 20, PROSE);
+    if (sentinel !== null) page.drawText(sentinel, { x: 60, y: 30, size: 9, font });
+  }
 
   // 2 — a page carrying a mark too small to be worth recognising.
   {
@@ -517,4 +534,25 @@ export async function buildAdversarialPdf(variant: AdversarialVariant = "mixed")
   addPage();
 
   return await pdf.save();
+}
+
+/**
+ * Two valid PDFs whose differing content cannot be distinguished by file size.
+ *
+ * Deflate output can differ by a byte even when the source strings have equal length. PDF readers
+ * permit trailing whitespace after `%%EOF`, so padding only the shorter finished file makes the
+ * mutation property deterministic without changing either document's content.
+ */
+export async function buildAdversarialReplacementPair(): Promise<AdversarialReplacementPair> {
+  const v1 = await buildAdversarialPdf("v1");
+  const v2 = await buildAdversarialPdf("v2");
+  const size = Math.max(v1.byteLength, v2.byteLength);
+  const padded = (bytes: Uint8Array): Uint8Array => {
+    if (bytes.byteLength === size) return bytes;
+    const result = new Uint8Array(size);
+    result.set(bytes);
+    result.fill(0x20, bytes.byteLength);
+    return result;
+  };
+  return { v1: padded(v1), v2: padded(v2) };
 }
