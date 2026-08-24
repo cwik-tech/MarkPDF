@@ -9,9 +9,8 @@ Accepted. This supersedes the page-position and Markdown-refusal decisions in
 
 The first open-document implementation listed Markdown tabs but refused to read them. It also
 dropped a PDF tab's current page. An assistant could identify a tab but could not read the notes
-beside a PDF or tell which PDF page the person was discussing. Reading a saved Markdown file from
-its path would still miss unsaved edits and would make behavior change when the person pressed
-Save.
+beside a PDF or tell which PDF page the person was discussing. Reading a Markdown file from its
+path would bypass the open-tab authority and require separate filesystem access.
 
 The renderer owns the current Markdown buffer. The MCP server is a separate process and cannot
 reach React state. Putting the buffer in the existing window metadata JSON would make every listing
@@ -19,11 +18,10 @@ read document text and would mix a small discovery record with content up to sev
 
 ## Decision
 
-### An open tab grants access to that tab's current Markdown buffer
+### An open tab grants access to that tab's loaded Markdown text
 
-MarkPDF treats the open tab itself as the authority for this local, cross-process read. Saved and
-unsaved Markdown use the same route. The tool never returns the saved path. Closing the tab removes
-the authority and its content snapshot.
+MarkPDF treats the open tab itself as the authority for this local, cross-process read. The tool
+never returns the saved path. Closing the tab removes the authority and its content snapshot.
 
 This does not grant general filesystem access. PDF fallback reads still use the existing allowlist,
 and no MCP tool can open an arbitrary Markdown path through this mechanism.
@@ -47,25 +45,25 @@ exact stored source.
 
 ### Snapshot lifetime follows the tab
 
-Opening and editing a Markdown tab writes or replaces its snapshot. Saving rewrites metadata but
-does not delete the content. Closing a tab removes its file. Reloading or closing a window removes
-that window's files, and clean process exit removes the process's files. A reader ignores and
-deletes both metadata and content owned by a process that no longer exists.
+Opening a Markdown tab writes its snapshot. Closing a tab removes its file. Reloading or closing a
+window removes that window's files, and clean process exit removes the process's files. A reader
+ignores and deletes both metadata and content owned by a process that no longer exists.
 
 The main process compares Markdown content separately from the open-document report. A PDF page
 turn still updates `currentPage`, but it does not rewrite unchanged Markdown files. Page-only
 reports use a longer debounce than tab, content, and save-state changes.
 
-### Markdown tabs are editable and save through the existing bridge
+### Markdown tabs remain read-only
 
-The renderer shows an editable Markdown source pane beside the preview. Editing marks the tab
-dirty. The existing Save command writes the current buffer through `file:write-markdown`, then
-marks the tab clean while leaving its open snapshot readable.
+The renderer shows one rendered Markdown preview. It publishes the already loaded Markdown text to
+the private snapshot without exposing an editor or a Markdown Save action. PDF-to-Markdown export
+continues to use `file:write-markdown`; that export path does not make an open Markdown tab
+editable.
 
 ## Consequences
 
-- An assistant can read the current saved or unsaved notes and can paginate long buffers without a
-  path.
+- An assistant can read the Markdown text loaded in an open tab and can paginate long documents
+  without a path.
 - `list_open_documents` reports the current PDF page and enough Markdown size information to plan
   reads without returning text.
 - At most five megabytes per open Markdown tab is duplicated in the application data directory.
@@ -76,8 +74,8 @@ marks the tab clean while leaving its open snapshot readable.
 
 ## Alternatives considered
 
-- Read saved Markdown through the filesystem allowlist. This misses unsaved changes and changes the
-  tool's behavior on Save.
+- Read Markdown through the filesystem allowlist. This bypasses the open-tab authority and requires
+  separate permission for the file's path.
 - Put the whole buffer in window metadata. This makes tab listing read large document content and
   couples discovery to content storage.
 - Add a socket between Electron and MCP. This adds a server lifecycle and platform-specific
@@ -87,8 +85,9 @@ marks the tab clean while leaving its open snapshot readable.
 
 ## Verification
 
-- `tests/e2e/open-document-context.spec.ts` exercises edit, page navigation, MCP listing, unsaved
-  read, Save, saved read, and path privacy through the real Electron and stdio boundaries.
+- `tests/e2e/open-document-context.spec.ts` exercises the read-only preview, disabled Markdown Save
+  action, page navigation, MCP listing and reading, and path privacy through the real Electron and
+  stdio boundaries.
 - `src/openDocuments.test.ts` covers current-page projection, content projection, and debounce
   selection.
 - `core/session/openDocumentsRequest.test.ts` validates page and content fields at the IPC boundary.

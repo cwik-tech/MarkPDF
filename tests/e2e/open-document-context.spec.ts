@@ -14,6 +14,7 @@ const electronPath = require("electron") as string;
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const serverEntryPoint = path.join(projectRoot, "dist-mcp", "main.js");
 const MARKDOWN_SENTINEL = "ADVERSARIAL.markdownTabSentinel-5817";
+const MARKDOWN_CONTENT = `# Meeting notes\n\n${MARKDOWN_SENTINEL}\n`;
 
 function record(value: unknown, what: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -91,7 +92,7 @@ async function closeBounded(app: ElectronApplication | null): Promise<void> {
   }
 }
 
-test("an agent sees the current PDF page and reads saved or unsaved open notes without a path", async () => {
+test("an agent reads an open Markdown preview that has no editing UI or exposed path", async () => {
   test.setTimeout(240_000);
 
   const tempDir = await mkdtemp(path.join(tmpdir(), "markpdf-open-context-"));
@@ -102,7 +103,7 @@ test("an agent sees the current PDF page and reads saved or unsaved open notes w
   await mkdir(libraryDir, { recursive: true });
   await mkdir(userDataPath, { recursive: true });
   await writeFile(pdfPath, await buildAdversarialPdf("mixed"));
-  await writeFile(notesPath, `# Meeting notes\n\n${MARKDOWN_SENTINEL}\n`);
+  await writeFile(notesPath, MARKDOWN_CONTENT);
 
   let app: ElectronApplication | null = null;
   let client: Client | null = null;
@@ -123,10 +124,10 @@ test("an agent sees the current PDF page and reads saved or unsaved open notes w
     });
     const window = await app.firstWindow();
 
-    stage = "editing the Markdown tab without saving";
-    const editor = window.getByRole("textbox", { name: "Edit meeting-notes.md" });
-    await expect(editor).toHaveValue(new RegExp(MARKDOWN_SENTINEL));
-    await editor.fill(`# Meeting notes\n\n${MARKDOWN_SENTINEL}\n\nunsaved observation`);
+    stage = "confirming that Markdown opens as a read-only preview";
+    await expect(window.locator(".markdown-preview")).toContainText(MARKDOWN_SENTINEL);
+    await expect(window.getByRole("textbox", { name: "Edit meeting-notes.md" })).toHaveCount(0);
+    await expect(window.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
 
     stage = "navigating the PDF to page ten and leaving it active";
     await window.getByRole("button", { name: /mixed\.pdf/ }).click();
@@ -150,39 +151,21 @@ test("an agent sees the current PDF page and reads saved or unsaved open notes w
           chars: notes === undefined ? 0 : integer(notes.contentChars, "notes contentChars"),
         };
       }, { timeout: 30_000 })
-      .toEqual({ page: 10, dirty: true, chars: 74 });
+      .toEqual({ page: 10, dirty: false, chars: MARKDOWN_CONTENT.length });
 
     const documents = documentsOf(listed);
     const notes = documents.find((entry) => entry.name === "meeting-notes.md");
     if (notes === undefined) throw new Error("The Markdown tab was not listed.");
     const notesRef = text(notes.ref, "notes ref");
 
-    stage = "reading the unsaved Markdown buffer";
-    const unsaved = payloadOf(
+    stage = "reading the open Markdown document";
+    const openNotes = payloadOf(
       await client.callTool({ name: "read_open_document", arguments: { ref: notesRef } }),
     );
-    expect(text(unsaved.text, "unsaved Markdown text")).toContain(MARKDOWN_SENTINEL);
-    expect(flag(unsaved.unsavedChanges, "unsaved reply flag")).toBe(true);
-    expect(JSON.stringify(unsaved)).not.toContain(libraryDir);
+    expect(text(openNotes.text, "open Markdown text")).toContain(MARKDOWN_SENTINEL);
+    expect(flag(openNotes.unsavedChanges, "open Markdown reply flag")).toBe(false);
+    expect(JSON.stringify(openNotes)).not.toContain(libraryDir);
     expect(JSON.stringify(listed)).not.toContain(libraryDir);
-
-    stage = "saving the Markdown tab";
-    await window.getByRole("button", { name: /meeting-notes\.md/ }).click();
-    await window.getByRole("button", { name: "Save", exact: true }).click();
-
-    stage = "reading the same open buffer after save";
-    await expect
-      .poll(async () => {
-        const afterSave = payloadOf(
-          await client!.callTool({ name: "read_open_document", arguments: { ref: notesRef } }),
-        );
-        return {
-          dirty: flag(afterSave.unsavedChanges, "saved reply flag"),
-          hasSentinel: text(afterSave.text, "saved Markdown text").includes(MARKDOWN_SENTINEL),
-          leaksPath: JSON.stringify(afterSave).includes(libraryDir),
-        };
-      }, { timeout: 30_000 })
-      .toEqual({ dirty: false, hasSentinel: true, leaksPath: false });
   } catch (error) {
     if (error instanceof Error) error.message = `${error.message}\n--- failed during: ${stage} ---`;
     throw error;

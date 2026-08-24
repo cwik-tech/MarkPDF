@@ -1514,29 +1514,6 @@ export default function App() {
       : "cancel";
   };
 
-  const saveMarkdownTab = async (tabToSave: MarkdownTab, saveAs = false) => {
-    let targetPath = tabToSave.path;
-    if (window.pdfReader && (!targetPath || saveAs)) {
-      targetPath = await window.pdfReader.saveMarkdownDialog(tabToSave.name) ?? undefined;
-      if (!targetPath) return false;
-    }
-
-    if (window.pdfReader) {
-      if (!targetPath) return false;
-      const written = await window.pdfReader.writeMarkdown(targetPath, tabToSave.markdown);
-      updateMarkdownTab(tabToSave.id, {
-        path: written.path,
-        name: written.name,
-        dirty: false,
-      });
-      return true;
-    }
-
-    downloadText(tabToSave.markdown, tabToSave.name, "text/markdown");
-    updateMarkdownTab(tabToSave.id, { dirty: false });
-    return true;
-  };
-
   const closeTab = async (tabId: string) => {
     const tab = tabs.find((item) => item.id === tabId);
     if (!tab) return;
@@ -1545,9 +1522,7 @@ export default function App() {
     if (action === "cancel") return;
     if (
       action === "save" &&
-      !(isPdfTab(tab)
-        ? await saveTabWithSignaturePrompt(tab, false, false)
-        : await saveMarkdownTab(tab, false))
+      (!isPdfTab(tab) || !(await saveTabWithSignaturePrompt(tab, false, false)))
     ) {
       return;
     }
@@ -1726,10 +1701,8 @@ export default function App() {
   };
 
   const saveActiveTab = async (saveAs = false, flattenForms = false) => {
-    if (activeTab === null) return false;
-    return isPdfTab(activeTab)
-      ? saveTabWithSignaturePrompt(activeTab, saveAs, flattenForms)
-      : saveMarkdownTab(activeTab, saveAs);
+    if (!activePdfTab) return false;
+    return saveTabWithSignaturePrompt(activePdfTab, saveAs, flattenForms);
   };
 
   const saveActiveTabAsMarkdown = async () => {
@@ -1922,9 +1895,8 @@ export default function App() {
         if (action === "cancel") return;
         if (
           action === "save" &&
-          !(isPdfTab(tab)
-            ? await saveTabWithSignaturePrompt(tab, false, false)
-            : await saveMarkdownTab(tab, false))
+          (!isPdfTab(tab) ||
+            !(await saveTabWithSignaturePrompt(tab, false, false)))
         )
           return;
       }
@@ -2533,7 +2505,7 @@ export default function App() {
 
       if (shortcut && event.key.toLowerCase() === "s") {
         event.preventDefault();
-        if (!activeTab) return;
+        if (!activePdfTab) return;
         void saveActiveTab(false, false);
         return;
       }
@@ -2620,7 +2592,7 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeTab, activePdfTab, selectedOverlayId, updatePdfTab, focusSearch]);
+  }, [activePdfTab, selectedOverlayId, updatePdfTab, focusSearch]);
 
   const semanticToolbarProgress =
     semanticModelDownloadProgress ??
@@ -2662,10 +2634,6 @@ export default function App() {
             if (nextPage !== activePdfTab.currentPage)
               updatePdfTab(activePdfTab.id, { currentPage: nextPage });
           }}
-          onMarkdownChange={(markdown) => {
-            if (!isMarkdownTab(activeTab)) return;
-            updateMarkdownTab(activeTab.id, { markdown, dirty: true });
-          }}
         />
       )}
     </section>
@@ -2689,7 +2657,6 @@ export default function App() {
         onExportFlattened={() => void saveActiveTab(true, true)}
         onPrint={() => void printActiveTab()}
         canSavePdf={Boolean(activePdfTab)}
-        canSave={Boolean(activeTab)}
         canSaveMarkdown={Boolean(activePdfTab)}
         canPrint={Boolean(activePdfTab)}
         theme={theme}
@@ -3299,7 +3266,6 @@ function TopBar({
   onExportFlattened,
   onPrint,
   canSavePdf,
-  canSave,
   canSaveMarkdown,
   canPrint,
   theme,
@@ -3325,7 +3291,6 @@ function TopBar({
   onExportFlattened: () => void;
   onPrint: () => void;
   canSavePdf: boolean;
-  canSave: boolean;
   canSaveMarkdown: boolean;
   canPrint: boolean;
   theme: ThemeMode;
@@ -3414,7 +3379,7 @@ function TopBar({
           className="icon-button"
           title="Save"
           onClick={onSave}
-          disabled={!canSave}
+          disabled={!canSavePdf}
         >
           <Save size={17} />
         </button>
@@ -3846,7 +3811,6 @@ function DocumentView({
   onTextSelection,
   onClearSemanticHighlight,
   onWheelPage,
-  onMarkdownChange,
 }: {
   tab: DocumentTab;
   theme: ThemeMode;
@@ -3874,10 +3838,9 @@ function DocumentView({
   ) => void;
   onClearSemanticHighlight: () => void;
   onWheelPage: (direction: -1 | 1) => void;
-  onMarkdownChange: (markdown: string) => void;
 }) {
   if (isMarkdownTab(tab)) {
-    return <MarkdownDocumentView tab={tab} theme={theme} onChange={onMarkdownChange} />;
+    return <MarkdownDocumentView tab={tab} theme={theme} />;
   }
 
   return (
@@ -4041,29 +4004,18 @@ function PdfDocumentView({
 function MarkdownDocumentView({
   tab,
   theme,
-  onChange,
 }: {
   tab: MarkdownTab;
   theme: ThemeMode;
-  onChange: (markdown: string) => void;
 }) {
   return (
     <div className="markdown-document-scroll">
-      <div className="markdown-workspace">
-        <textarea
-          className="markdown-source-editor"
-          aria-label={`Edit ${tab.name}`}
-          value={tab.markdown}
-          spellCheck={false}
-          onChange={(event) => onChange(event.target.value)}
-        />
-        <MarkdownPreview
-          markdown={tab.markdown}
-          theme={theme}
-          searchQuery={tab.searchQuery}
-          baseUrl={tab.baseUrl}
-        />
-      </div>
+      <MarkdownPreview
+        markdown={tab.markdown}
+        theme={theme}
+        searchQuery={tab.searchQuery}
+        baseUrl={tab.baseUrl}
+      />
     </div>
   );
 }

@@ -5,7 +5,7 @@
 ### Added
 
 - Long MCP calls now report bounded, monotonic progress to clients that request it, including the page currently being read by OCR and embedding-model download bytes.
-- MCP can now report the visible page of every open PDF and read the current contents of every open Markdown tab, including unsaved edits, without revealing a file path. Long notes paginate by offset, private snapshots follow the tab lifetime, and MarkPDF now provides a source editor and Save behavior for Markdown tabs.
+- MCP can now report the visible page of every open PDF and read the loaded contents of every open Markdown tab without revealing a file path. Long notes paginate by offset, and private snapshots follow the tab lifetime.
 - MCP document replies now say whether their text is an index snapshot and, when it is, when that exact page cache or search scope was recorded. Search scopes are timestamped independently, so changing the chunking profile or embedding model cannot make an older scope claim the newer scope's time.
 - A picture on a page that reads perfectly well is no longer invisible to search. MarkPDF now finds sizeable images on text pages, reads just that part of the page, and adds what it finds to the page's own words — so a figure containing a number or a table row is retrievable whether it sits on a scanned page or beside ordinary text. Pages with only small decorations are left alone, and nothing is rendered or recognised unless a picture actually qualifies.
 - An assistant connected through MCP now works under the settings the application is actually using, as they change. Change the embedding model or the similarity threshold in MarkPDF and the next MCP answer already honours it — no editor restart, no reconnecting the assistant. The command line and the MCP tool also agree passage for passage when asked the same question of the same index, and `min_score` falls back to the application's own threshold on both surfaces unless the caller gives one explicitly.
@@ -49,6 +49,7 @@
 
 ### Fixed
 
+- Markdown documents once again open as a single read-only preview. MCP can still read the open document without adding an editor, Markdown Save behavior, or a second scrollbar.
 - `to_markdown` now verifies the current file contents before using cached text, so replacing a PDF at the same path returns the new document even when the replacement has exactly the same byte length. Index-only tools continue to expose the older indexed snapshot until the file is re-indexed, and identify it as such.
 - Scanned financial tables now keep their rows and columns when they enter the index. Reading the pictured page through an assistant returns a Markdown table, and semantic search can associate a value with the correct row and year instead of seeing a loose sequence of numbers.
 - A page that is only a picture is no longer skipped when the app indexes a document. MarkPDF decided whether to read a scan by sampling five pages — the first three, the middle and the last — so a scanned table in an otherwise ordinary report was stored as an empty page, and searching for anything on it found nothing. Every page a document's structure cannot be read from is now read, whichever way the document was opened.
