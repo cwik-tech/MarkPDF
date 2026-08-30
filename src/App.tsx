@@ -78,6 +78,14 @@ import {
   matchRangesByLeaf,
   rectsForMatch,
 } from "./pdf/textLayerSearch";
+import {
+  normalizeRotation,
+  overlayGeometry,
+  scaleSelectionFragments,
+  textSelectionGeometry,
+  viewPointToUnrotated,
+  type TextSelectionOverlayGeometry,
+} from "./pdf/overlayGeometry";
 import { convertDocumentToMarkdown } from "./documentConversion/markdown";
 import type { MarkdownConversionProgress } from "./documentConversion/types";
 import { selectMarkdownEngine } from "./documentConversion/engineSelection";
@@ -453,10 +461,8 @@ export default function App() {
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [selectionAction, setSelectionAction] = useState<{
     page: number;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
+    /** The lines the reader selected, not the box around them. */
+    geometry: TextSelectionOverlayGeometry;
     screenX: number;
     screenY: number;
     text: string;
@@ -2134,18 +2140,22 @@ export default function App() {
     if (!activePdfTab || !selectionAction) return;
     const isComment = kind === "comment";
     const isBookmark = kind === "bookmark";
+    const { bounds, fragments } = selectionAction.geometry;
     const overlay: OverlayItem = {
       id: newId(kind),
       kind,
       page: selectionAction.page,
-      x: selectionAction.x,
-      y: selectionAction.y,
-      width: isBookmark ? 1 : selectionAction.width,
-      height: isBookmark ? 1 : selectionAction.height,
+      x: bounds.x,
+      y: bounds.y,
+      width: isBookmark ? 1 : bounds.width,
+      height: isBookmark ? 1 : bounds.height,
       text: isComment ? "" : isBookmark ? selectionAction.text : undefined,
       fontSize: isComment ? 12 : undefined,
       color: "#facc15",
       minimized: isComment ? true : undefined,
+      // A bookmark is a pin beside the line, not a shape over it, so it keeps no fragments. A
+      // highlight or a comment carries the line rectangles the reader actually selected.
+      fragments: isBookmark ? undefined : fragments,
     };
 
     updatePdfTab(activePdfTab.id, (tab) => ({
@@ -3859,10 +3869,7 @@ function DocumentView({
   onTextSelection: (
     selection: {
       page: number;
-      x: number;
-      y: number;
-      width: number;
-      height: number;
+      geometry: TextSelectionOverlayGeometry;
       screenX: number;
       screenY: number;
       text: string;
@@ -3923,10 +3930,7 @@ function PdfDocumentView({
   onTextSelection: (
     selection: {
       page: number;
-      x: number;
-      y: number;
-      width: number;
-      height: number;
+      geometry: TextSelectionOverlayGeometry;
       screenX: number;
       screenY: number;
       text: string;
@@ -4081,10 +4085,6 @@ function MarkdownDocumentView({
   );
 }
 
-function normalizeRotation(rotation: number) {
-  return ((rotation % 360) + 360) % 360;
-}
-
 // Overlays are stored in un-rotated page coordinates. The page view rotation is
 // applied to the overlay layer as a CSS transform so overlays stay aligned with
 // the rotated canvas without persisting rotation into overlay coordinates.
@@ -4102,27 +4102,6 @@ function overlayLayerTransform(
       return `translate(0px, ${viewHeight}px) rotate(270deg)`;
     default:
       return "none";
-  }
-}
-
-// Convert a point in the rotated page-view space (CSS px, origin at the page
-// top-left) into un-rotated page space (the inverse of overlayLayerTransform).
-function viewPointToUnrotated(
-  vx: number,
-  vy: number,
-  rotation: number,
-  viewWidth: number,
-  viewHeight: number,
-) {
-  switch (normalizeRotation(rotation)) {
-    case 90:
-      return { x: vy, y: viewWidth - vx };
-    case 180:
-      return { x: viewWidth - vx, y: viewHeight - vy };
-    case 270:
-      return { x: viewHeight - vy, y: vx };
-    default:
-      return { x: vx, y: vy };
   }
 }
 
@@ -4195,10 +4174,7 @@ function PdfPage({
   onTextSelection: (
     selection: {
       page: number;
-      x: number;
-      y: number;
-      width: number;
-      height: number;
+      geometry: TextSelectionOverlayGeometry;
       screenX: number;
       screenY: number;
       text: string;
@@ -4444,34 +4420,36 @@ function PdfPage({
               rect.top <= pageRect.bottom,
           );
           if (rects.length === 0) return;
+          // One rectangle per line the selection crossed, kept apart. The browser paints a
+          // selection this way for a reason: the blank page between two lines is not selected, and
+          // the single box around them all would cover it.
+          const geometry = textSelectionGeometry(
+            rects.map((rect) => ({
+              left: rect.left - pageRect.left,
+              top: rect.top - pageRect.top,
+              width: rect.width,
+              height: rect.height,
+            })),
+            {
+              width: size.width,
+              height: size.height,
+              rotation,
+              zoom,
+            },
+          );
+          if (!geometry) return;
           const left = Math.min(...rects.map((rect) => rect.left));
           const top = Math.min(...rects.map((rect) => rect.top));
           const right = Math.max(...rects.map((rect) => rect.right));
-          const bottom = Math.max(...rects.map((rect) => rect.bottom));
           const selectedText =
             extractSelectedTextFromLayer(textLayerRef.current, rects) ||
             selection.toString().trim();
           if (selectedText) void copyTextToClipboard(selectedText);
-          const corner0 = viewPointToUnrotated(
-            left - pageRect.left,
-            top - pageRect.top,
-            rotation,
-            size.width,
-            size.height,
-          );
-          const corner1 = viewPointToUnrotated(
-            right - pageRect.left,
-            bottom - pageRect.top,
-            rotation,
-            size.width,
-            size.height,
-          );
           onTextSelection({
             page: pageNumber,
-            x: Math.max(0, Math.min(corner0.x, corner1.x) / zoom),
-            y: Math.max(0, Math.min(corner0.y, corner1.y) / zoom),
-            width: Math.max(12, Math.abs(corner1.x - corner0.x) / zoom),
-            height: Math.max(8, Math.abs(corner1.y - corner0.y) / zoom),
+            geometry,
+            // The popover sits over the middle of the whole selection, which is the one thing the
+            // enclosing box is still the right answer for.
             screenX: left + (right - left) / 2,
             screenY: Math.max(10, top - 10),
             text: selectedText,
@@ -4717,10 +4695,14 @@ function OverlayBox({
     originalX: number;
     originalY: number;
   } | null>(null);
+  // Which of the two shapes this annotation has. An overlay the reader dropped on the page is one
+  // box; one they made by dragging across text is the lines they selected, and the box around them
+  // is only the group that holds them together.
+  const geometry = overlayGeometry(overlay);
 
   return (
     <div
-      className={`overlay-box ${overlay.kind} ${overlay.minimized ? "minimized" : ""} ${selected ? "selected" : ""}`}
+      className={`overlay-box ${overlay.kind} ${geometry.shape === "textSelection" ? "text-anchored" : ""} ${overlay.minimized ? "minimized" : ""} ${selected ? "selected" : ""}`}
       style={{
         left: overlay.x * zoom,
         top: overlay.y * zoom,
@@ -4769,6 +4751,19 @@ function OverlayBox({
         if (nextText !== null) onUpdate({ text: nextText }, true);
       }}
     >
+      {geometry.shape === "textSelection" &&
+        geometry.fragments.map((fragment, index) => (
+          <span
+            key={`${overlay.id}-fragment-${String(index)}`}
+            className="selection-fragment"
+            style={{
+              left: fragment.x * zoom,
+              top: fragment.y * zoom,
+              width: fragment.width * zoom,
+              height: fragment.height * zoom,
+            }}
+          />
+        ))}
       {overlay.kind === "bookmark" ? (
         <button
           className={`bookmark-pin ${selected ? "selected" : ""}`}
@@ -4868,6 +4863,8 @@ function OverlayBox({
                 const startY = event.clientY;
                 const startWidth = overlay.width;
                 const startHeight = overlay.height;
+                const startFragments =
+                  geometry.shape === "textSelection" ? geometry.fragments : null;
                 const target = event.currentTarget;
                 target.setPointerCapture(event.pointerId);
                 target.onpointermove = (moveEvent) => {
@@ -4876,10 +4873,23 @@ function OverlayBox({
                     moveEvent.clientY - startY,
                     rotation,
                   );
+                  const width = Math.max(24, startWidth + delta.x / zoom);
+                  const height = Math.max(18, startHeight + delta.y / zoom);
                   onUpdate(
                     {
-                      width: Math.max(24, startWidth + delta.x / zoom),
-                      height: Math.max(18, startHeight + delta.y / zoom),
+                      width,
+                      height,
+                      // The lines move with the box they belong to, so resizing still acts on the
+                      // annotation as one object rather than leaving the paint behind.
+                      ...(startFragments
+                        ? {
+                            fragments: scaleSelectionFragments(
+                              startFragments,
+                              width / startWidth,
+                              height / startHeight,
+                            ),
+                          }
+                        : {}),
                     },
                     false,
                   );

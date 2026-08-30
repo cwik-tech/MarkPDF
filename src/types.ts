@@ -7,6 +7,14 @@ export type ToolMode = "select" | "text" | "comment" | "highlight" | "signature"
 
 export type OverlayKind = "text" | "comment" | "highlight" | "signature" | "bookmark";
 
+/** A rectangle in unrotated page coordinates at zoom 1: the space overlays are stored in. */
+export interface OverlayRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface OverlayItem {
   id: string;
   kind: OverlayKind;
@@ -20,6 +28,16 @@ export interface OverlayItem {
   color?: string;
   dataUrl?: string;
   minimized?: boolean;
+  /**
+   * The rectangles of the text this overlay is anchored to, as offsets from `x`/`y`.
+   *
+   * Present only on an overlay a reader made from a text selection, where the browser reported one
+   * rectangle per line the selection crossed. Absent — as on every overlay written before this
+   * field existed, and on every overlay placed by hand — means the overlay is the single box that
+   * `x`, `y`, `width` and `height` describe. `overlayGeometry` in `pdf/overlayGeometry.ts` is the
+   * one place that reads this distinction.
+   */
+  fragments?: OverlayRect[];
 }
 
 export type FormFieldKind = "text" | "checkbox" | "dropdown" | "radio" | "unknown";

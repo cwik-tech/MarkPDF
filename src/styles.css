@@ -1424,6 +1424,35 @@ select {
   mix-blend-mode: multiply;
 }
 
+/*
+ * An annotation anchored to selected text.
+ *
+ * The box paints nothing of its own. It is the group that holds the selected lines, carries the
+ * reader's drag and the selection outline, and places the popover — and the blank page between two
+ * selected lines is inside it, so anything it painted would cover page the reader never selected.
+ *
+ * Its border and padding go too: an absolutely positioned child is placed against the padding box,
+ * so a line left at 0 would otherwise land a few pixels away from the text it belongs to. The
+ * minimized-comment selectors are named because they set a background of their own and would
+ * otherwise win on specificity.
+ */
+.overlay-box.text-anchored,
+.overlay-box.comment.minimized.text-anchored,
+.overlay-box.comment.minimized.selected.text-anchored {
+  overflow: visible;
+  padding: 0;
+  border-width: 0;
+  background: transparent;
+  mix-blend-mode: normal;
+}
+
+.selection-fragment {
+  position: absolute;
+  background: rgba(250, 204, 21, 0.38);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+
 .overlay-box.bookmark {
   overflow: visible;
   padding: 0;

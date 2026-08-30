@@ -15,7 +15,18 @@ import {
   rgb,
   StandardFonts
 } from "pdf-lib";
-import type { FormFieldState, ImagePdfSource, OcrPageText, OutlineItem, OutlineSource, OverlayItem, SearchMatch } from "../types";
+import type {
+  FormFieldState,
+  ImagePdfSource,
+  OcrPageText,
+  OutlineItem,
+  OutlineSource,
+  OverlayItem,
+  OverlayRect,
+  SearchMatch
+} from "../types";
+import { overlayGeometry, paintedPageRects } from "./overlayGeometry";
+import { parsePersistedOverlays } from "./overlayMetadata";
 
 const pdfAssetBase = `${import.meta.env.BASE_URL}pdfjs/`;
 const pdfWorkerSrc =
@@ -456,9 +467,10 @@ export async function extractEditableOverlays(bytes: Uint8Array): Promise<Overla
       .find((encoded) => encoded !== null);
 
     if (!encoded) return [];
-    const parsed = JSON.parse(decodeBase64Json(encoded)) as OverlayItem[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((overlay) => typeof overlay.id === "string" && typeof overlay.page === "number");
+    // Anything could have written this keyword, so it is checked field by field rather than
+    // trusted for having parsed. `parsePersistedOverlays` also decides what an entry with no
+    // fragments means: the single box that every version before text anchoring wrote.
+    return parsePersistedOverlays(JSON.parse(decodeBase64Json(encoded)));
   } catch {
     return [];
   }
@@ -537,6 +549,7 @@ export async function exportPdfBytes(
     if (!page) continue;
 
     const pageHeight = page.getHeight();
+    const geometry = overlayGeometry(overlay);
     const x = overlay.x;
     const y = pageHeight - overlay.y - overlay.height;
     const width = overlay.width;
@@ -555,35 +568,49 @@ export async function exportPdfBytes(
     }
 
     if (overlay.kind === "comment") {
-      page.drawRectangle({
-        x,
-        y,
-        width,
-        height,
-        color: rgb(1, 0.88, 0.35),
-        opacity: 0.9,
-        borderColor: rgb(0.67, 0.49, 0.08),
-        borderWidth: 1
-      });
-      page.drawText(overlay.text || "Comment", {
-        x: x + 6,
-        y: y + height - 16,
-        size: 10,
-        font: helveticaBold,
-        color: rgb(0.2, 0.16, 0.05),
-        maxWidth: Math.max(10, width - 12)
-      });
+      if (geometry.shape === "textSelection") {
+        // A comment anchored to text is drawn where the text is, one line at a time. The note it
+        // carries travels as the annotation's contents; painting prose over the sentence it
+        // annotates is what this fix exists to stop.
+        for (const rect of paintedPageRects(geometry)) {
+          page.drawRectangle({
+            ...pageRectToPdfBox(pageHeight, rect),
+            color: rgb(1, 0.88, 0.1),
+            opacity: 0.35
+          });
+        }
+      } else {
+        page.drawRectangle({
+          x,
+          y,
+          width,
+          height,
+          color: rgb(1, 0.88, 0.35),
+          opacity: 0.9,
+          borderColor: rgb(0.67, 0.49, 0.08),
+          borderWidth: 1
+        });
+        page.drawText(overlay.text || "Comment", {
+          x: x + 6,
+          y: y + height - 16,
+          size: 10,
+          font: helveticaBold,
+          color: rgb(0.2, 0.16, 0.05),
+          maxWidth: Math.max(10, width - 12)
+        });
+      }
     }
 
     if (overlay.kind === "highlight") {
-      page.drawRectangle({
-        x,
-        y,
-        width,
-        height,
-        color: rgb(1, 0.88, 0.1),
-        opacity: 0.35
-      });
+      // One rectangle for a highlight the reader placed; one per line for one they dragged across
+      // text, so the blank page between two lines stays blank.
+      for (const rect of paintedPageRects(geometry)) {
+        page.drawRectangle({
+          ...pageRectToPdfBox(pageHeight, rect),
+          color: rgb(1, 0.88, 0.1),
+          opacity: 0.35
+        });
+      }
     }
 
     if (overlay.kind === "signature") {
@@ -799,12 +826,22 @@ function writeMarkPdfAnnotations(pdfDoc: PDFDocument, overlays: OverlayItem[]) {
     const page = pages[overlay.page - 1];
     if (!page) continue;
 
-    const rect = overlayToPdfRect(page.getHeight(), overlay);
+    const pageHeight = page.getHeight();
+    const geometry = overlayGeometry(overlay);
+    const rect = pageRectToPdfRect(pageHeight, geometry.bounds);
     const annots = getPageAnnotations(pdfDoc, page);
+    // A comment the reader dropped on the page is a note pinned to a point, and stays a Text
+    // annotation. A comment they made by dragging across text is about that text, so it travels as
+    // text markup: the same quadrilaterals a highlight would carry, with the note as its contents.
     const annotation =
-      overlay.kind === "comment"
+      overlay.kind === "comment" && geometry.shape === "box"
         ? createTextNoteAnnotation(pdfDoc, overlay, rect)
-        : createHighlightAnnotation(pdfDoc, overlay, rect);
+        : createHighlightAnnotation(
+            pdfDoc,
+            overlay,
+            rect,
+            paintedPageRects(geometry).map((fragment) => pageRectToPdfRect(pageHeight, fragment))
+          );
 
     annots.push(pdfDoc.context.register(annotation));
   }
@@ -866,18 +903,39 @@ function createTextNoteAnnotation(pdfDoc: PDFDocument, overlay: OverlayItem, rec
   });
 }
 
-function createHighlightAnnotation(pdfDoc: PDFDocument, overlay: OverlayItem, rect: PdfRect) {
+/**
+ * A text-markup annotation: one enclosing rectangle, and one quadrilateral per line it covers.
+ *
+ * `QuadPoints` is what every other PDF application draws from, so a selection that crossed two
+ * lines has to arrive as two quadrilaterals. Sending the enclosing rectangle alone would make the
+ * other reader paint the blank band between the lines, which is the same defect one layer down.
+ */
+function createHighlightAnnotation(
+  pdfDoc: PDFDocument,
+  overlay: OverlayItem,
+  rect: PdfRect,
+  quads: readonly PdfRect[]
+) {
   const color = hexToRgb(overlay.color ?? "#facc15");
-  const contents = overlay.text?.trim() || "Highlight";
+  const contents = overlay.text?.trim() || (overlay.kind === "comment" ? "Comment" : "Highlight");
 
   return pdfDoc.context.obj({
     Type: PDFName.of("Annot"),
     Subtype: PDFName.of("Highlight"),
     Rect: [rect.left, rect.bottom, rect.right, rect.top],
-    QuadPoints: [rect.left, rect.top, rect.right, rect.top, rect.left, rect.bottom, rect.right, rect.bottom],
+    QuadPoints: quads.flatMap((quad) => [
+      quad.left,
+      quad.top,
+      quad.right,
+      quad.top,
+      quad.left,
+      quad.bottom,
+      quad.right,
+      quad.bottom
+    ]),
     Contents: PDFString.of(contents),
     T: PDFString.of(standardAnnotationAuthor),
-    Subj: PDFString.of("Highlight"),
+    Subj: PDFString.of(overlay.kind === "comment" ? "Comment" : "Highlight"),
     NM: PDFString.of(`${standardAnnotationNamePrefix}${overlay.id}`),
     M: PDFString.fromDate(new Date()),
     C: [color.r, color.g, color.b],
@@ -893,17 +951,29 @@ interface PdfRect {
   bottom: number;
 }
 
-function overlayToPdfRect(pageHeight: number, overlay: OverlayItem): PdfRect {
-  const left = overlay.x;
-  const right = overlay.x + overlay.width;
-  const top = pageHeight - overlay.y;
-  const bottom = pageHeight - overlay.y - overlay.height;
+/** A page rectangle — measured from the top-left — as a PDF rectangle measured from the bottom. */
+function pageRectToPdfRect(pageHeight: number, rect: OverlayRect): PdfRect {
+  const left = rect.x;
+  const right = rect.x + rect.width;
+  const top = pageHeight - rect.y;
+  const bottom = pageHeight - rect.y - rect.height;
 
   return {
     left: Math.min(left, right),
     right: Math.max(left, right),
     top: Math.max(top, bottom),
     bottom: Math.min(top, bottom)
+  };
+}
+
+/** The same conversion in the corner-and-size form `drawRectangle` takes. */
+function pageRectToPdfBox(pageHeight: number, rect: OverlayRect) {
+  const pdfRect = pageRectToPdfRect(pageHeight, rect);
+  return {
+    x: pdfRect.left,
+    y: pdfRect.bottom,
+    width: pdfRect.right - pdfRect.left,
+    height: pdfRect.top - pdfRect.bottom
   };
 }
 
