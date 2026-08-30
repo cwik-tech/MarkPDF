@@ -97,6 +97,24 @@ export function pageNeedsRecognition(page: RecognisablePage): boolean {
   return page.needsOcr || page.markdown.trim().length === 0;
 }
 
+/**
+ * One page going past, as recognition reads a document.
+ *
+ * Numbers rather than a sentence, because this is what a progress bar is drawn from. The sentence
+ * comes too — a reader watching a scan wants to know which page of their document is being read,
+ * which is not the same as how far through the run it is: `page` is a place in the document,
+ * `current` a place in this run's list of targets.
+ */
+export interface OcrPageProgress {
+  /** The document page being recognised, one-based. */
+  page: number;
+  /** Which of this run's target pages it is, one-based, never above `total`. */
+  current: number;
+  /** How many pages this run will recognise. */
+  total: number;
+  message: string;
+}
+
 /** What a read asks its recognition seam for. */
 export interface ResolveOcrRequest {
   bytes: Uint8Array;
@@ -104,7 +122,7 @@ export interface ResolveOcrRequest {
   pages: readonly number[];
   signal?: AbortSignal;
   /** Progress emitted by the recognition adapter, when the caller requested it. */
-  onProgress?: (message: string) => void;
+  onProgress?: (progress: OcrPageProgress) => void;
   /**
    * Which of the requested pages are read by their regions rather than whole, and where those
    * regions are. A page named here is rendered once and the recogniser is given a crop of the
@@ -143,6 +161,14 @@ export interface ReadDocumentInput {
    * hand back a document with pages silently missing.
    */
   resolveOcr?: (request: ResolveOcrRequest) => Promise<readonly OcrPageCandidate[]>;
+  /**
+   * Where each recognised page is reported, when the caller wants to watch.
+   *
+   * Recognition is the slow part of reading a scanned document and the only part with knowable
+   * extent, so a caller that cannot see it can only report the whole read as "working". Omitting
+   * this costs nothing: the seam is simply never given anywhere to report.
+   */
+  onOcrProgress?: (progress: OcrPageProgress) => void;
   signal?: AbortSignal;
 }
 
@@ -257,6 +283,7 @@ export async function readDocumentPages(input: ReadDocumentInput): Promise<ReadD
             pages: targets,
             document: handle,
             ...(input.signal === undefined ? {} : { signal: input.signal }),
+            ...(input.onOcrProgress === undefined ? {} : { onProgress: input.onOcrProgress }),
             ...(imageRegions.length === 0 ? {} : { imageRegions }),
           });
           // Recognition is long and not preemptible, so the signal is read the instant it returns.
@@ -272,6 +299,7 @@ export async function readDocumentPages(input: ReadDocumentInput): Promise<ReadD
         bytes: input.bytes,
         pages: unread,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
+        ...(input.onOcrProgress === undefined ? {} : { onProgress: input.onOcrProgress }),
       });
       if (cancelled()) return { status: "cancelled" };
     }

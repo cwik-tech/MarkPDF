@@ -129,6 +129,44 @@ describe("turning a main-process progress event into observable state", () => {
     if (update?.kind === "model") expect(update.percent).toBe(50);
   });
 
+  it("moves a tab into the recognition phase, so the badge can say OCR rather than indexing", () => {
+    const update = semanticProgressToUpdate({
+      jobId: "tab-1",
+      kind: "index",
+      progress: { status: "ocr", current: 1, total: 3, message: "Reading page 4 with OCR" },
+    }, liveJob);
+
+    expect(update).toEqual({
+      kind: "index",
+      tabId: "tab-1",
+      patch: {
+        semanticIndexStatus: "ocr",
+        semanticIndexProgress: { status: "ocr", current: 1, total: 3, message: "Reading page 4 with OCR" },
+        semanticIndexError: undefined,
+      },
+    });
+  });
+
+  it("ignores a recognition event whose job the renderer has already cancelled", () => {
+    // Recognition of a page cannot be interrupted, so cancelling leaves events in flight for
+    // longer than any other phase. Applying one would leave a tab reading "OCR 2/9" for a job
+    // nobody is running.
+    expect(
+      semanticProgressToUpdate({
+        jobId: "tab-1",
+        kind: "index",
+        progress: { status: "ocr", current: 2, total: 9 },
+      }, cancelledJob),
+    ).toBeNull();
+    expect(
+      semanticProgressToUpdate({
+        jobId: "tab-1",
+        kind: "index",
+        progress: { status: "ocr", current: 2, total: 9 },
+      }, noJob),
+    ).toBeNull();
+  });
+
   it("does not divide by a zero total", () => {
     const update = semanticProgressToUpdate({
       jobId: "auto-model-download",

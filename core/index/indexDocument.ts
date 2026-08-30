@@ -48,8 +48,13 @@ export interface IndexProgress {
    * `downloading` covers the model fetch a job triggers when the weights are not yet on disk.
    * It belongs on the index job's own progress rather than a separate channel, because from the
    * reader's point of view the tab is busy indexing — the download is why, not a separate task.
+   *
+   * `ocr` is the same argument for the other slow prerequisite: pages the extractor could not read
+   * are recognised inside this job, before a single embedding is built. Folding it into `checking`
+   * told the reader the index was being examined while the machine was actually reading a scan,
+   * which is the longest part of preparing such a document and the one worth naming.
    */
-  status: "checking" | "downloading" | "indexing" | "ready";
+  status: "checking" | "ocr" | "downloading" | "indexing" | "ready";
   current?: number;
   total?: number;
   message?: string;

@@ -1,4 +1,4 @@
-import type { OcrImageRegion, OcrPageCandidate, OcrRegionBox } from "../extract/readDocumentPages.js";
+import type { OcrImageRegion, OcrPageCandidate, OcrPageProgress, OcrRegionBox } from "../extract/readDocumentPages.js";
 import { rasterisePdfPagesStreaming, RasterisationCancelled, type PageImage, type PdfjsDocumentHandle, type RasteriseOptions } from "./rasterisePages.js";
 import { createTesseractRecogniser, OcrEngineError, type TextRecogniser } from "./tesseractEngine.js";
 import { tableFromLines } from "./tableFromLines.js";
@@ -9,7 +9,7 @@ export interface OcrRequest {
   /** 1-based page numbers the extractor could not read. */
   pages: readonly number[];
   signal?: AbortSignal;
-  onProgress?: (message: string) => void;
+  onProgress?: (progress: OcrPageProgress) => void;
   /**
    * Pages to read by their regions rather than whole. A page named here is rendered once and
    * the recogniser is given a crop of its qualifying regions, because recognising a whole page
@@ -147,7 +147,12 @@ export async function ocrPages(request: OcrRequest, dependencies: OcrDependencie
       // signal is read between pages and nothing pretends otherwise.
       if (cancelled()) break;
       recogniser ??= await (dependencies.createRecogniser ?? (() => createTesseractRecogniser()))();
-      request.onProgress?.(`Reading page ${image.page} with OCR (${position + 1} of ${request.pages.length})`);
+      request.onProgress?.({
+        page: image.page,
+        current: position + 1,
+        total: request.pages.length,
+        message: `Reading page ${image.page} with OCR`,
+      });
       const region = regionsByPage.get(image.page);
       const target = region === undefined ? image.image : await cropToRegions(image, region);
       const recognised = await recogniser.recognise(target);

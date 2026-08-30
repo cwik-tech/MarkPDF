@@ -187,9 +187,12 @@ export function resolveOcrWithProgress(context: ToolContext): ToolContext["resol
   if (resolveOcr === undefined) return undefined;
   return async (request) => await resolveOcr({
     ...request,
-    onProgress: (message) => {
-      request.onProgress?.(message);
-      context.progress?.({ message });
+    onProgress: (page) => {
+      request.onProgress?.(page);
+      // The counters as well as the sentence. `current`/`total` count this run's pages, which is
+      // what a client's progress bar needs; the message names the page of the document, which the
+      // position in the run does not say.
+      context.progress?.({ progress: page.current, total: page.total, message: page.message });
     },
   });
 }

@@ -238,6 +238,25 @@ No compiled `dist*` directory will be edited.
 
 ## Verification
 
+The tests that cover each decision in this document:
+
+| Decision | Tests |
+|---|---|
+| Tagged text-layer contract, leaf-span indexing and range-measured highlights | `src/pdf/textLayerSearch.test.ts`; `tests/e2e/pdf-native-navigation.spec.ts` — "highlights a tagged PDF's text over the matching glyphs and steps to the next occurrence" |
+| Correct geometry under a supported rotation | `tests/e2e/pdf-native-navigation.spec.ts` — "keeps a tagged PDF's highlight over the glyphs after the page is rotated" |
+| Which annotations become links, and where each one goes | `src/pdf/internalLinks.test.ts` |
+| Following an internal link without leaving the application | `tests/e2e/pdf-native-navigation.spec.ts` — "follows an internal PDF link from the table of contents" |
+| Structured per-page recognition progress | `core/ocr/ocrPages.test.ts`; `core/extract/readDocumentPages.test.ts` |
+| Recognition as its own index phase, and its absence when unneeded | `core/index/indexPdfDocument.test.ts` |
+| Narrowing the new progress state at the boundary | `core/ipc/progress.test.ts` |
+| Tab ownership and cancellation of the new state | `src/semanticProgress.test.ts` |
+| Which preparation badge is shown, and its percentage | `src/documentPreparation.test.ts` |
+| The visible desktop outcome for a mixed document | `tests/e2e/mixed-document-ocr.spec.ts` |
+
+The deterministic fixture the renderer journeys use is
+`cli/journeys/nativeNavigationFixture.test-support.ts`. The supplied 628-page book is used for
+manual verification only.
+
 During each Red → Green → Refactor loop, run only the focused command named above. Before delivery, run:
 
 ```sh

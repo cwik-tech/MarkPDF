@@ -514,6 +514,10 @@ select {
   white-space: nowrap;
 }
 
+/* The badge carries a progress bar along its bottom edge whenever the work has a known extent. */
+.ocr-status.ocr,
+.ocr-status.indexing,
+.ocr-status.downloading,
 .ocr-status.semantic {
   overflow: hidden;
   padding-bottom: 4px;
@@ -535,16 +539,19 @@ select {
   transition: width 180ms ease;
 }
 
-.ocr-status.checking,
-.ocr-status.running {
+.ocr-status.checking-text,
+.ocr-status.checking-index,
+.ocr-status.ocr,
+.ocr-status.downloading,
+.ocr-status.indexing {
   color: var(--accent);
 }
 
-.ocr-status.ready {
-  color: var(--success);
+.ocr-status.native-text {
+  color: var(--muted);
 }
 
-.ocr-status.error {
+.ocr-status.failed {
   color: var(--danger);
 }
 
@@ -1178,14 +1185,47 @@ select {
   inset: 0;
 }
 
+/*
+ * PDF.js 5.7.284's text-layer contract, adapted to this application's class name.
+ *
+ * The library positions every glyph run as a percentage of the page box and sizes it from the
+ * `--font-height` it measured, so a stylesheet that implements only part of the contract puts the
+ * text somewhere else than the canvas drew it. Two rules carry most of that weight:
+ *
+ * - `.markedContent { display: contents }`. A tagged PDF nests each run inside a structural wrapper.
+ *   Without this rule the wrapper is an absolutely positioned, zero-sized box at the page's origin,
+ *   every percentage inside it resolves against nothing, and every run in the document collapses on
+ *   to the top-left corner.
+ * - The font size and transform on leaf runs. Without them a run is drawn at the interface's own
+ *   font size, so its width bears no relation to the glyphs underneath it.
+ *
+ * `--total-scale-factor` is set on this container from the rendered viewport scale, in the page's
+ * render effect. `--min-font-size` is set on it by the library itself; the default below covers the
+ * moment before the library has rendered.
+ */
 .text-layer {
   position: absolute;
   inset: 0;
   overflow: hidden;
   line-height: 1;
   text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
   transform-origin: 0 0;
   z-index: 1;
+
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+
+  /*
+   * The rounding step PDF.js uses when it sizes this layer from `--total-scale-factor`. It has to
+   * be declared: the library writes `round(down, …, var(--scale-round-x))`, and an undefined custom
+   * property there makes the whole declaration invalid, which silently drops the size the layer
+   * needs on a rotated page.
+   */
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
 }
 
 .text-layer span,
@@ -1195,6 +1235,48 @@ select {
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
+}
+
+/*
+ * Leaf runs: everything the library positions itself, tagged or not.
+ *
+ * Spans the recognition overlay adds are excluded. They set their own size and position in pixels
+ * from the recognised line boxes and carry no `--font-height`, so the library's sizing rule would
+ * collapse them to nothing.
+ */
+.text-layer > :not(.markedContent):not([data-ocr]),
+.text-layer .markedContent span:not(.markedContent):not([data-ocr]) {
+  z-index: 1;
+
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.text-layer .markedContent {
+  display: contents;
+}
+
+/*
+ * A rotated page.
+ *
+ * The library always lays the text layer out in the page's own unrotated box and records the view
+ * rotation on the container, because the percentages it writes are measured in that box. Turning the
+ * whole layer is what puts it back over the rotated canvas.
+ */
+.text-layer[data-main-rotation="90"] {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.text-layer[data-main-rotation="180"] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.text-layer[data-main-rotation="270"] {
+  transform: rotate(270deg) translateX(-100%);
 }
 
 .text-layer ::selection {
@@ -1225,6 +1307,46 @@ select {
   box-shadow:
     0 0 0 1px rgba(141, 80, 0, 0.95),
     0 0 0 4px rgba(255, 180, 0, 0.34);
+}
+
+/*
+ * The document's own links.
+ *
+ * Above the highlights so a link inside a search result is still clickable, and below the editing
+ * overlays so placing a comment on a linked row is not stolen by the link. The layer itself is
+ * transparent to the pointer; only the hitboxes take clicks, which keeps text selection working
+ * everywhere else on the page.
+ */
+.native-link-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.native-link {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.native-link:hover {
+  background: color-mix(in srgb, var(--accent), transparent 86%);
+}
+
+.native-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* While a drawing or annotation tool is active the page belongs to that tool, not to its links. */
+.pdf-page.editing .native-link {
+  pointer-events: none;
 }
 
 .overlay-layer {

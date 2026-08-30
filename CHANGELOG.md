@@ -4,6 +4,13 @@
 
 ### Added
 
+- Table-of-contents links in a PDF are now clickable. MarkPDF reads the document's own link annotations and moves to the page each one points at, whether it names that page directly or by a name in the document's catalogue. Links to the web are deliberately left inert for now, and an annotation that is not a link, or whose rectangle is damaged, produces nothing to click.
+- The toolbar now says which part of preparing a document is actually running: `Checking text` while the text layer is examined, `Native text detected` for a moment when it turns out no recognition is needed, `OCR 2/4` with a progress bar while pages are read by recognition — in the window or in the main process — and `Index 12/32` only once that is done. Recognition inside the index job used to be reported as "Checking index", which is how the slowest part of preparing a scanned document became invisible.
+
+### Fixed
+
+- Searching a tagged PDF now highlights the word you searched for. Highlights in documents with tagged structure — most large published books — collapsed on to the top-left corner of the page, and the view did not move to the match because it thought the marker was already on screen. Highlights are now measured from the browser's own text rectangles, so they sit over the glyphs at any zoom and after rotating the page, and partial matches inside a long line are no longer estimated from the line's width.
+
 - Long MCP calls now report bounded, monotonic progress to clients that request it, including the page currently being read by OCR and embedding-model download bytes.
 - MCP can now report the visible page of every open PDF and read the loaded contents of every open Markdown tab without revealing a file path. Long notes paginate by offset, and private snapshots follow the tab lifetime.
 - MCP document replies now say whether their text is an index snapshot and, when it is, when that exact page cache or search scope was recorded. Search scopes are timestamped independently, so changing the chunking profile or embedding model cannot make an older scope claim the newer scope's time.
@@ -238,3 +245,6 @@ Created a planning document for open-document-awareness capabilities in the MCP 
 ## 2026-08-23 14:54
 
 Implemented Phase 2 document indexing to track extraction provenance and Markdown caching, allowing the system to detect when extracted text changes between runs even when file bytes remain identical. The changes add extraction version tracking (`textExtractionVersion`, `ocrExtractionVersion`) and optional Markdown caching with engine metadata, enabling documents with variable OCR or parsing output to be properly reindexed rather than incorrectly reused. A comprehensive test suite validates the reuse logic, cache backfilling for legacy documents, page-outcome tracking, and cancellation behavior across these scenarios.
+## 2026-08-30 00:01
+
+Implemented PDF native navigation features including text layer search and internal link handling, with comprehensive test coverage at both unit and e2e levels. Created a document preparation module to coordinate PDF processing pipeline steps and added styling for the new navigation capabilities. Recorded the architectural decisions for OCR/index progress phases in an ADR and updated MCP operations to support the new features.

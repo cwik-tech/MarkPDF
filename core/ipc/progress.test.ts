@@ -38,3 +38,73 @@ describe("narrowing a progress event from the main process", () => {
     expect(event?.progress.message).toBeUndefined();
   });
 });
+
+describe("narrowing the recognition phase, which crosses the same channel", () => {
+  it("accepts an OCR event with its page counters", () => {
+    const event = parseSemanticProgressEvent({
+      jobId: "tab-1",
+      kind: "index",
+      progress: { status: "ocr", current: 1, total: 3, message: "Reading page 4 with OCR" },
+    });
+    expect(event?.progress.status).toBe("ocr");
+    expect(event?.progress.current).toBe(1);
+    expect(event?.progress.total).toBe(3);
+  });
+
+  it("rejects an OCR event with no counters, because a phase with no extent is not this one", () => {
+    // The other statuses may arrive without counts — "Checking index" has no extent to report.
+    // Recognition always does: it is emitted per page, from a known list of pages. An OCR event
+    // without them is not a phase this application emits, so it is not one to render either.
+    expect(
+      parseSemanticProgressEvent({ jobId: "t", kind: "index", progress: { status: "ocr" } }),
+    ).toBeNull();
+    expect(
+      parseSemanticProgressEvent({ jobId: "t", kind: "index", progress: { status: "ocr", current: 1 } }),
+    ).toBeNull();
+    expect(
+      parseSemanticProgressEvent({ jobId: "t", kind: "index", progress: { status: "ocr", total: 3 } }),
+    ).toBeNull();
+  });
+
+  it("rejects OCR counters that are not whole numbers of pages", () => {
+    for (const counters of [
+      { current: "1", total: 3 },
+      { current: 1, total: Number.POSITIVE_INFINITY },
+      { current: 1.5, total: 3 },
+      { current: 1, total: 3.5 },
+      { current: -1, total: 3 },
+      { current: Number.NaN, total: 3 },
+    ]) {
+      expect(
+        parseSemanticProgressEvent({ jobId: "t", kind: "index", progress: { status: "ocr", ...counters } }),
+        JSON.stringify(counters),
+      ).toBeNull();
+    }
+  });
+
+  it("rejects an OCR event whose position is outside the run it claims to be part of", () => {
+    // Pages are counted from one to the total. A zero, or a position past the end, means the event
+    // and the run disagree — and a bar drawn from it would read 0% or run off the end.
+    expect(
+      parseSemanticProgressEvent({ jobId: "t", kind: "index", progress: { status: "ocr", current: 0, total: 3 } }),
+    ).toBeNull();
+    expect(
+      parseSemanticProgressEvent({ jobId: "t", kind: "index", progress: { status: "ocr", current: 4, total: 3 } }),
+    ).toBeNull();
+    expect(
+      parseSemanticProgressEvent({ jobId: "t", kind: "index", progress: { status: "ocr", current: 1, total: 0 } }),
+    ).toBeNull();
+  });
+
+  it("still discards a status that only looks like the recognition phase", () => {
+    expect(
+      parseSemanticProgressEvent({ jobId: "t", kind: "index", progress: { status: "ocring" } }),
+    ).toBeNull();
+  });
+
+  it("leaves the other statuses free to arrive without counts", () => {
+    expect(
+      parseSemanticProgressEvent({ jobId: "t", kind: "index", progress: { status: "checking" } })?.progress.status,
+    ).toBe("checking");
+  });
+});

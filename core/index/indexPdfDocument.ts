@@ -84,6 +84,24 @@ export async function indexPdfDocument(
   const read = await readDocumentPages({
     bytes: input.bytes,
     ...(input.resolveOcr === undefined ? {} : { resolveOcr: input.resolveOcr }),
+    // Recognition, forwarded as its own phase rather than folded into the read.
+    //
+    // A page the extractor could not read is recognised here, inside this job, before any
+    // embedding exists — and on a scanned document that is where nearly all the time goes.
+    // Reporting it as `checking` told the reader their index was being examined while the machine
+    // was reading their pages; this is the one part of the read whose extent is knowable, so it is
+    // the one part that can be counted.
+    ...(input.onProgress === undefined
+      ? {}
+      : {
+          onOcrProgress: (progress) =>
+            input.onProgress?.({
+              status: "ocr",
+              current: progress.current,
+              total: progress.total,
+              message: progress.message,
+            }),
+        }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
   });
   if (read.status === "cancelled") return { status: "cancelled" };

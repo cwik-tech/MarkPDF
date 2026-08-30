@@ -62,7 +62,20 @@ import {
   movePdfPage,
   movePdfPageTo,
 } from "./pdf/document";
+import { documentPreparationBadge, preparationIndexProgress } from "./documentPreparation";
 import { detectOcrNeed, runDocumentOcr } from "./pdf/ocr";
+import {
+  clipLinkBox,
+  parseInternalLinkAnnotations,
+  resolveInternalDestinationPage,
+} from "./pdf/internalLinks";
+import {
+  buildLeafSearchIndex,
+  leafTextSpans,
+  locateMatch,
+  matchRangesByLeaf,
+  rectsForMatch,
+} from "./pdf/textLayerSearch";
 import { convertDocumentToMarkdown } from "./documentConversion/markdown";
 import type { MarkdownConversionProgress } from "./documentConversion/types";
 import { selectMarkdownEngine } from "./documentConversion/engineSelection";
@@ -396,6 +409,14 @@ function getInitialTheme(): ThemeMode {
     ? "dark"
     : "light";
 }
+
+/**
+ * How long the text-layer check's result stays on screen.
+ *
+ * Long enough to read in passing, short enough not to become part of the toolbar. It only ever
+ * covers a finished check, and the badge rule puts it behind every job that is still running.
+ */
+const NATIVE_TEXT_NOTICE_MS = 6000;
 
 export default function App() {
   const [tabs, setTabs] = useState<DocumentTab[]>([]);
@@ -846,6 +867,7 @@ export default function App() {
       updatePdfTab(tabId, {
         ocrStatus: "checking",
         ocrProgress: { status: "checking", message: "Checking text layer" },
+        ocrNoticeDismissed: false,
         ocrError: undefined,
       });
 
@@ -854,13 +876,20 @@ export default function App() {
         if (job.cancelled) return;
 
         if (!density.shouldRunOcr) {
+          // Say what was decided, then stop saying it. The check used to end in silence, which is
+          // indistinguishable from never having run — and a reader looking at a book Acrobat reads
+          // perfectly well had no way to tell that MarkPDF agreed.
           updatePdfTab(tabId, {
             ocrStatus: "skipped",
             ocrProgress: {
               status: "skipped",
-              message: "PDF text layer detected",
+              message: `Native text on ${density.pageCount - density.textlessPages} of ${density.pageCount} sampled pages`,
             },
+            ocrNoticeDismissed: false,
           });
+          window.setTimeout(() => {
+            updatePdfTab(tabId, { ocrNoticeDismissed: true });
+          }, NATIVE_TEXT_NOTICE_MS);
           return;
         }
 
@@ -2560,13 +2589,21 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activePdfTab, selectedOverlayId, updatePdfTab, focusSearch]);
 
-  const semanticToolbarProgress =
-    semanticModelDownloadProgress ??
-    (activePdfTab?.semanticIndexStatus &&
-    activePdfTab.semanticIndexStatus !== "idle" &&
-    activePdfTab.semanticIndexStatus !== "ready"
-      ? activePdfTab.semanticIndexProgress
-      : null);
+  // One badge for the whole of preparing a document: the window's text check, whichever process is
+  // recognising pages, and the embedding work. Both choices — which index-side job to describe, and
+  // which of the three phases wins — are stated and tested in `documentPreparation.ts` rather than
+  // spread through this markup.
+  const semanticToolbarProgress = preparationIndexProgress(
+    semanticModelDownloadProgress,
+    activePdfTab?.semanticIndexStatus,
+    activePdfTab?.semanticIndexProgress,
+  );
+  const preparationBadge = documentPreparationBadge({
+    ocrStatus: activePdfTab?.ocrStatus,
+    ocrProgress: activePdfTab?.ocrProgress,
+    ocrNoticeDismissed: activePdfTab?.ocrNoticeDismissed,
+    indexProgress: semanticToolbarProgress,
+  });
   const documentStage = (
     <section className="document-stage" ref={workspaceRef}>
       {!activeTab ? (
@@ -2599,6 +2636,15 @@ export default function App() {
             );
             if (nextPage !== activePdfTab.currentPage)
               updatePdfTab(activePdfTab.id, { currentPage: nextPage });
+          }}
+          onFollowInternalLink={(page) => {
+            // Through the tab's own page state, like every other way of moving in a document.
+            // A link is not allowed a private route: the current page, the scroll that follows it
+            // and which tab it belongs to all stay where they already are.
+            if (!activePdfTab) return;
+            const target = Math.min(activePdfTab.pageCount, Math.max(1, page));
+            if (target !== activePdfTab.currentPage)
+              updatePdfTab(activePdfTab.id, { currentPage: target });
           }}
         />
       )}
@@ -2871,44 +2917,27 @@ export default function App() {
             </span>
           </>
         )}
-        {activePdfTab?.ocrStatus && activePdfTab.ocrStatus !== "skipped" && (
+        {preparationBadge && (
           <span
-            className={`ocr-status ${activePdfTab.ocrStatus}`}
+            className={`ocr-status ${preparationBadge.stage}${preparationBadge.source === "index" ? " semantic" : ""}`}
             title={
-              activePdfTab.ocrError ??
-              activePdfTab.ocrProgress?.message ??
-              "OCR status"
+              (preparationBadge.source === "index"
+                ? (activePdfTab?.semanticIndexError ?? semanticToolbarProgress?.message)
+                : (activePdfTab?.ocrError ?? activePdfTab?.ocrProgress?.message)) ??
+              preparationBadge.label
             }
           >
-            <ScanText size={14} />
-            <span>{formatOcrStatus(activePdfTab)}</span>
+            {preparationBadge.stage !== "indexing" &&
+              preparationBadge.stage !== "checking-index" &&
+              preparationBadge.stage !== "downloading" && <ScanText size={14} />}
+            <span>{preparationBadge.label}</span>
+            {preparationBadge.percent !== null && (
+              <span className="status-progress-bar">
+                <span style={{ width: `${preparationBadge.percent}%` }} />
+              </span>
+            )}
           </span>
         )}
-        {semanticToolbarProgress &&
-          semanticToolbarProgress.status !== "idle" &&
-          semanticToolbarProgress.status !== "ready" &&
-          semanticToolbarProgress.status !== "error" && (
-            <span
-              className={`ocr-status semantic ${semanticToolbarProgress.status}`}
-              title={
-                activePdfTab?.semanticIndexError ??
-                semanticToolbarProgress.message ??
-                "Semantic index status"
-              }
-            >
-              <span>{formatSemanticProgress(semanticToolbarProgress)}</span>
-              {(semanticToolbarProgress.status === "downloading" ||
-                semanticToolbarProgress.status === "indexing") && (
-                <span className="status-progress-bar">
-                  <span
-                    style={{
-                      width: `${semanticProgressPercent(semanticToolbarProgress)}%`,
-                    }}
-                  />
-                </span>
-              )}
-            </span>
-          )}
       </div>
 
       <main className="workspace">
@@ -3119,44 +3148,6 @@ export default function App() {
       )}
     </div>
   );
-}
-
-function formatOcrStatus(tab: PdfTab) {
-  if (tab.ocrStatus === "ready") return "OCR ready";
-  if (tab.ocrStatus === "error") return "OCR failed";
-  if (tab.ocrStatus === "checking") return "Checking OCR";
-  const page = tab.ocrProgress?.page;
-  const totalPages = tab.ocrProgress?.totalPages;
-  return page && totalPages ? `OCR ${page}/${totalPages}` : "OCR running";
-}
-
-function formatSemanticProgress(
-  progress: NonNullable<PdfTab["semanticIndexProgress"]>,
-) {
-  if (progress.status === "error") return "Index failed";
-  if (progress.status === "downloading") return "Downloading model";
-  if (progress.status === "checking") return "Checking index";
-  const current = progress.current;
-  const total = progress.total;
-  return current && total ? `Index ${current}/${total}` : "Indexing";
-}
-
-function semanticProgressPercent(
-  progress: NonNullable<PdfTab["semanticIndexProgress"]>,
-) {
-  if (progress.status === "downloading" && progress.current && progress.total) {
-    return Math.min(
-      100,
-      Math.max(4, Math.round((progress.current / progress.total) * 100)),
-    );
-  }
-  if (progress.status === "indexing" && progress.current && progress.total) {
-    return Math.min(
-      100,
-      Math.max(4, Math.round((progress.current / progress.total) * 100)),
-    );
-  }
-  return progress.status === "error" ? 100 : 18;
 }
 
 function downloadBytes(bytes: Uint8Array, name: string) {
@@ -3777,6 +3768,7 @@ function DocumentView({
   onTextSelection,
   onClearSemanticHighlight,
   onWheelPage,
+  onFollowInternalLink,
 }: {
   tab: DocumentTab;
   theme: ThemeMode;
@@ -3804,6 +3796,7 @@ function DocumentView({
   ) => void;
   onClearSemanticHighlight: () => void;
   onWheelPage: (direction: -1 | 1) => void;
+  onFollowInternalLink: (page: number) => void;
 }) {
   if (isMarkdownTab(tab)) {
     return <MarkdownDocumentView tab={tab} theme={theme} />;
@@ -3821,6 +3814,7 @@ function DocumentView({
       onTextSelection={onTextSelection}
       onClearSemanticHighlight={onClearSemanticHighlight}
       onWheelPage={onWheelPage}
+      onFollowInternalLink={onFollowInternalLink}
     />
   );
 }
@@ -3836,6 +3830,7 @@ function PdfDocumentView({
   onTextSelection,
   onClearSemanticHighlight,
   onWheelPage,
+  onFollowInternalLink,
 }: {
   tab: PdfTab;
   tool: ToolMode;
@@ -3862,6 +3857,7 @@ function PdfDocumentView({
   ) => void;
   onClearSemanticHighlight: () => void;
   onWheelPage: (direction: -1 | 1) => void;
+  onFollowInternalLink: (page: number) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pages = tab.scrolling
@@ -3961,6 +3957,7 @@ function PdfDocumentView({
           onDeleteOverlay={onDeleteOverlay}
           onTextSelection={onTextSelection}
           onClearSemanticHighlight={onClearSemanticHighlight}
+          onFollowInternalLink={onFollowInternalLink}
         />
       ))}
     </div>
@@ -4064,6 +4061,17 @@ function viewVectorToUnrotated(dx: number, dy: number, rotation: number) {
   }
 }
 
+/** One of a page's internal links, measured into the rendered view. */
+interface RenderedInternalLink {
+  id: string;
+  /** The one-based page of this document the link goes to. */
+  targetPage: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 function PdfPage({
   pdfDoc,
   pageNumber,
@@ -4083,6 +4091,7 @@ function PdfPage({
   onDeleteOverlay,
   onTextSelection,
   onClearSemanticHighlight,
+  onFollowInternalLink,
 }: {
   pdfDoc: PDFDocumentProxy;
   pageNumber: number;
@@ -4113,6 +4122,7 @@ function PdfPage({
     } | null,
   ) => void;
   onClearSemanticHighlight: () => void;
+  onFollowInternalLink: (page: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
@@ -4120,6 +4130,7 @@ function PdfPage({
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [renderError, setRenderError] = useState<string | null>(null);
   const [textLayerRenderKey, setTextLayerRenderKey] = useState(0);
+  const [internalLinks, setInternalLinks] = useState<RenderedInternalLink[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4151,6 +4162,15 @@ function PdfPage({
           background: "white",
         });
         textLayerRef.current.replaceChildren();
+        // The scale PDF.js sizes and positions every run against. It writes each run's position as
+        // a percentage of the page box and its height as `--font-height`, and leaves this factor
+        // to the page; without it the runs are drawn at the interface's own font size and no
+        // highlight can line up with the glyphs underneath. Set as a property rather than through
+        // React's inline styles, which have no room for a custom property without a type assertion.
+        textLayerRef.current.style.setProperty(
+          "--total-scale-factor",
+          String(viewport.scale),
+        );
         textLayer = new TextLayer({
           textContentSource: page.streamTextContent({
             includeMarkedContent: true,
@@ -4182,6 +4202,62 @@ function PdfPage({
       textLayer?.cancel();
     };
   }, [pdfDoc, pageNumber, rotation, zoom, ocrPage]);
+
+  /**
+   * The page's own links, read from its annotations and placed in the rendered view.
+   *
+   * Kept apart from the page render because it answers a different question and can fail on its
+   * own: a document with unreadable annotations still has to draw. Everything the page reports is
+   * treated as external input — `parseInternalLinkAnnotations` admits only real rectangles and
+   * destinations inside this document, and a destination that cannot be resolved to a page of it
+   * produces no element at all.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    // Dropped before the new geometry is known. Reading annotations is asynchronous, and a
+    // hitbox left over from the previous zoom, rotation or page sits at the wrong place on a page
+    // that has already been redrawn — so for that moment a click would follow the wrong link.
+    setInternalLinks([]);
+
+    async function loadInternalLinks() {
+      try {
+        const page = await pdfDoc.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: zoom, rotation });
+        const annotations: unknown = await page.getAnnotations({ intent: "display" });
+        const links = parseInternalLinkAnnotations(annotations);
+        const resolved: RenderedInternalLink[] = [];
+        // One at a time. A contents page in a real book carries dozens of links — page 5 of the
+        // reference document has 47 — and resolving them all at once buys nothing: they are looked
+        // up in the same in-memory catalogue, so the work is not waiting on anything. Sequential
+        // also means a page whose links keep arriving can be abandoned the moment the view changes.
+        for (const [index, link] of links.entries()) {
+          const targetPage = await resolveInternalDestinationPage(pdfDoc, link.destination);
+          if (cancelled) return;
+          if (targetPage === null) continue;
+          const [x0, y0, x1, y1] = viewport.convertToViewportRectangle([
+            link.rect[0],
+            link.rect[1],
+            link.rect[2],
+            link.rect[3],
+          ]);
+          const box = clipLinkBox([x0, y0, x1, y1], viewport);
+          if (box === null) continue;
+          resolved.push({ id: `${pageNumber}-link-${index}`, targetPage, ...box });
+        }
+        if (cancelled) return;
+        setInternalLinks(resolved);
+      } catch {
+        // A page whose annotations cannot be read simply has no links. It is not a render failure,
+        // and reporting it as one would replace a readable page with an error box.
+        if (!cancelled) setInternalLinks([]);
+      }
+    }
+
+    void loadInternalLinks();
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfDoc, pageNumber, rotation, zoom]);
 
   useEffect(() => {
     const highlightLayer = searchHighlightLayerRef.current;
@@ -4336,6 +4412,31 @@ function PdfPage({
           ref={textLayerRef}
         />
         <div className="search-highlight-layer" ref={searchHighlightLayerRef} />
+        {internalLinks.length > 0 && (
+          <div className="native-link-layer">
+            {internalLinks.map((link) => (
+              <button
+                key={link.id}
+                type="button"
+                className="native-link"
+                aria-label={`Go to page ${link.targetPage}`}
+                title={`Go to page ${link.targetPage}`}
+                style={{
+                  left: link.left,
+                  top: link.top,
+                  width: link.width,
+                  height: link.height,
+                }}
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onFollowInternalLink(link.targetPage);
+                }}
+              />
+            ))}
+          </div>
+        )}
         {renderError && (
           <div className="render-error">
             <strong>Render failed</strong>
@@ -4368,6 +4469,13 @@ function PdfPage({
   );
 }
 
+/**
+ * Where to draw the highlights for the occurrence the reader is looking at.
+ *
+ * Two readings of the same page are tried, because PDF.js splits a run wherever the drawing
+ * operators do: the spaced reading is what a human sees, and the compact one is the only place a
+ * word broken across two runs still spells itself.
+ */
 function getSearchHighlightRects(
   textLayer: HTMLDivElement,
   highlightLayer: HTMLDivElement,
@@ -4378,51 +4486,33 @@ function getSearchHighlightRects(
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return [];
 
-  const spacedSearchIndex = buildTextLayerSearchIndex(textLayer, true);
-  const compactSearchIndex = buildTextLayerSearchIndex(textLayer, false);
-  const matchLocation =
-    findSearchMatchLocation(
-      spacedSearchIndex,
-      normalizedQuery,
-      match.index,
-      matchOrdinal,
-    ) ??
-    findSearchMatchLocation(
-      compactSearchIndex,
-      normalizedQuery,
-      match.index,
-      matchOrdinal,
+  const spans = leafTextSpans(textLayer);
+  const leaves = spans.map((span) => span.textContent ?? "");
+  const layerRect = highlightLayer.getBoundingClientRect();
+
+  for (const separateLeaves of [true, false]) {
+    const index = buildLeafSearchIndex(leaves, separateLeaves);
+    const located = locateMatch(index, normalizedQuery, match.index, matchOrdinal);
+    if (located === null) continue;
+    const ranges = matchRangesByLeaf(
+      index,
+      located.start,
+      located.start + normalizedQuery.length,
     );
-
-  if (!matchLocation) return [];
-
-  const matchEnd = matchLocation.start + normalizedQuery.length;
-  const rangesBySpan = new Map<
-    HTMLSpanElement,
-    { start: number; end: number }
-  >();
-
-  for (let index = matchLocation.start; index < matchEnd; index += 1) {
-    const position = matchLocation.searchIndex.positions[index];
-    if (!position) continue;
-    const existing = rangesBySpan.get(position.span);
-    if (existing) {
-      existing.start = Math.min(existing.start, position.offset);
-      existing.end = Math.max(existing.end, position.offset + 1);
-    } else {
-      rangesBySpan.set(position.span, {
-        start: position.offset,
-        end: position.offset + 1,
-      });
-    }
+    const rects = rectsForMatch(spans, ranges, layerRect);
+    if (rects.length > 0) return rects;
   }
 
-  const layerRect = highlightLayer.getBoundingClientRect();
-  return Array.from(rangesBySpan.entries()).map(([span, range]) =>
-    spanRangeToLayerRect(span, range.start, range.end, layerRect),
-  );
+  return [];
 }
 
+/**
+ * Where to draw the highlight for a semantic result's passage.
+ *
+ * The same measuring path as the text search, deliberately. The passage arrives as stored chunk
+ * text rather than as something the reader typed, so it is matched by progressively shorter
+ * prefixes and windows; but once a position is found, a rectangle over it is the same problem.
+ */
 function getSemanticHighlightRects(
   textLayer: HTMLDivElement,
   highlightLayer: HTMLDivElement,
@@ -4435,177 +4525,27 @@ function getSemanticHighlightRects(
     .toLowerCase();
   if (!normalizedText) return [];
 
-  const searchIndex = buildTextLayerSearchIndex(textLayer, true);
-  const layerText = searchIndex.text.toLowerCase();
+  const spans = leafTextSpans(textLayer);
+  const leaves = spans.map((span) => span.textContent ?? "");
+  const index = buildLeafSearchIndex(leaves, true);
+  const layerText = index.text.toLowerCase();
+  const words = normalizedText.split(/\s+/);
   const candidateQueries = [
-    normalizedText.split(/\s+/).slice(0, 12).join(" "),
-    normalizedText.split(/\s+/).slice(0, 8).join(" "),
-    normalizedText.split(/\s+/).slice(4, 14).join(" "),
-    normalizedText.split(/\s+/).slice(8, 18).join(" "),
+    words.slice(0, 12).join(" "),
+    words.slice(0, 8).join(" "),
+    words.slice(4, 14).join(" "),
+    words.slice(8, 18).join(" "),
   ].filter((query) => query.length > 8);
-  const start = candidateQueries
-    .map((query) => layerText.indexOf(query))
-    .find((index) => index >= 0);
-  if (typeof start !== "number" || start < 0) return [];
 
-  const queryLength =
-    candidateQueries.find((query) => layerText.indexOf(query) === start)
-      ?.length ?? 0;
-  const matchEnd = start + queryLength;
-  const rangesBySpan = new Map<
-    HTMLSpanElement,
-    { start: number; end: number }
-  >();
-
-  for (let index = start; index < matchEnd; index += 1) {
-    const position = searchIndex.positions[index];
-    if (!position) continue;
-    const existing = rangesBySpan.get(position.span);
-    if (existing) {
-      existing.start = Math.min(existing.start, position.offset);
-      existing.end = Math.max(existing.end, position.offset + 1);
-    } else {
-      rangesBySpan.set(position.span, {
-        start: position.offset,
-        end: position.offset + 1,
-      });
-    }
+  for (const query of candidateQueries) {
+    const start = layerText.indexOf(query);
+    if (start < 0) continue;
+    const ranges = matchRangesByLeaf(index, start, start + query.length);
+    const rects = rectsForMatch(spans, ranges, highlightLayer.getBoundingClientRect());
+    if (rects.length > 0) return rects;
   }
 
-  const layerRect = highlightLayer.getBoundingClientRect();
-  return Array.from(rangesBySpan.entries())
-    .map(([span, range]) =>
-      spanRangeToLayerRect(span, range.start, range.end, layerRect),
-    )
-    .map((rect) => ({
-      left: Math.max(0, Math.min(layerRect.width, rect.left)),
-      top: Math.max(0, Math.min(layerRect.height, rect.top)),
-      width: Math.max(
-        0,
-        Math.min(layerRect.width - Math.max(0, rect.left), rect.width),
-      ),
-      height: Math.max(
-        0,
-        Math.min(layerRect.height - Math.max(0, rect.top), rect.height),
-      ),
-    }))
-    .filter((rect) => rect.width > 0 && rect.height > 0);
-}
-
-function buildTextLayerSearchIndex(
-  textLayer: HTMLDivElement,
-  separateSpans: boolean,
-) {
-  const spans = Array.from(textLayer.querySelectorAll("span"));
-  const chars: string[] = [];
-  const positions: ({ span: HTMLSpanElement; offset: number } | null)[] = [];
-
-  const appendNormalizedCharacter = (
-    character: string,
-    position: { span: HTMLSpanElement; offset: number } | null,
-  ) => {
-    if (/\s/.test(character)) {
-      if (chars.length > 0 && chars[chars.length - 1] !== " ") {
-        chars.push(" ");
-        positions.push(position);
-      }
-      return;
-    }
-
-    chars.push(character);
-    positions.push(position);
-  };
-
-  spans.forEach((span, spanIndex) => {
-    const text = span.textContent ?? "";
-    for (let offset = 0; offset < text.length; offset += 1) {
-      appendNormalizedCharacter(text[offset], { span, offset });
-    }
-    if (separateSpans && spanIndex < spans.length - 1) {
-      appendNormalizedCharacter(" ", null);
-    }
-  });
-
-  while (chars[chars.length - 1] === " ") {
-    chars.pop();
-    positions.pop();
-  }
-
-  return {
-    text: chars.join(""),
-    positions,
-  };
-}
-
-function findSearchMatchLocation(
-  searchIndex: ReturnType<typeof buildTextLayerSearchIndex>,
-  normalizedQuery: string,
-  preferredStart: number,
-  ordinal: number,
-) {
-  const lowerText = searchIndex.text.toLowerCase();
-  if (
-    lowerText.slice(preferredStart, preferredStart + normalizedQuery.length) ===
-    normalizedQuery
-  ) {
-    return { searchIndex, start: preferredStart };
-  }
-
-  const ordinalStart = findNthOccurrence(lowerText, normalizedQuery, ordinal);
-  if (ordinalStart >= 0) {
-    return { searchIndex, start: ordinalStart };
-  }
-
-  const firstStart = lowerText.indexOf(normalizedQuery);
-  return firstStart >= 0 ? { searchIndex, start: firstStart } : null;
-}
-
-function findNthOccurrence(text: string, query: string, ordinal: number) {
-  let index = -1;
-  let fromIndex = 0;
-
-  for (let count = 0; count <= ordinal; count += 1) {
-    index = text.indexOf(query, fromIndex);
-    if (index < 0) return -1;
-    fromIndex = index + query.length;
-  }
-
-  return index;
-}
-
-function spanRangeToLayerRect(
-  span: HTMLSpanElement,
-  start: number,
-  end: number,
-  layerRect: DOMRect,
-) {
-  const text = span.textContent ?? "";
-  const rect = span.getBoundingClientRect();
-  const clampedStart = Math.max(0, Math.min(start, text.length));
-  const clampedEnd = Math.max(clampedStart, Math.min(end, text.length));
-  const selectedLength = Math.max(1, clampedEnd - clampedStart);
-  const textLength = Math.max(1, text.length);
-  const leftPadding = spanMatchesWholeText(
-    clampedStart,
-    clampedEnd,
-    text.length,
-  )
-    ? 0
-    : rect.width * (clampedStart / textLength);
-  const width = spanMatchesWholeText(clampedStart, clampedEnd, text.length)
-    ? rect.width
-    : rect.width * (selectedLength / textLength);
-
-  return {
-    left: rect.left - layerRect.left + leftPadding,
-    top: rect.top - layerRect.top,
-    width: Math.max(2, width),
-    height: Math.max(2, rect.height),
-  };
-}
-
-function spanMatchesWholeText(start: number, end: number, textLength: number) {
-  return start <= 0 && end >= textLength;
+  return [];
 }
 
 function scrollSearchMarkerIntoDocumentPane(marker: Element) {

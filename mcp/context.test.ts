@@ -7,6 +7,7 @@ import { defaultSemanticSearchSettings } from "../dist-core/ipc/settings.js";
 import { DETERMINISTIC_EMBEDDER_TOKEN } from "../dist-core/index/embedderSelection.js";
 import type { Embedder } from "../dist-core/index/embeddings.js";
 import { resolveOcrWithProgress } from "./operations.js";
+import type { ToolProgress } from "./progress.js";
 
 /**
  * A session's view of the application's settings, and the embedders it builds from them.
@@ -111,14 +112,17 @@ describe("one embedder per model, bounded", () => {
 });
 
 describe("operation progress producers", () => {
-  it("forwards OCR page messages to the current call without replacing the resolver listener", async () => {
-    const resolverMessages: string[] = [];
-    const callMessages: string[] = [];
+  it("forwards OCR page progress to the current call without replacing the resolver listener", async () => {
+    // The counters travel too. A client that asked for progress can now draw a bar over the pages
+    // being recognised instead of reading a sentence and guessing how much is left; the sentence is
+    // still sent, because it names the page of the document rather than the position in the run.
+    const resolverSeen: Array<{ page: number; current: number; total: number }> = [];
+    const callSeen: ToolProgress[] = [];
     const { context, close } = createToolContext(
       { dataDir, env: testEnv(dataDir), isPackaged: false },
       {
         ocr: async (request) => {
-          request.onProgress?.("Reading page 3 with OCR (1 of 1)");
+          request.onProgress?.({ page: 3, current: 1, total: 2, message: "Reading page 3 with OCR" });
           return [];
         },
       },
@@ -126,20 +130,18 @@ describe("operation progress producers", () => {
     try {
       const resolve = resolveOcrWithProgress({
         ...context,
-        progress: ({ message }) => {
-          if (message !== undefined) callMessages.push(message);
-        },
+        progress: (update) => callSeen.push(update),
       });
       if (resolve === undefined) throw new Error("OCR resolver was not configured");
 
       await resolve({
         bytes: new Uint8Array(),
-        pages: [3],
-        onProgress: (message) => resolverMessages.push(message),
+        pages: [3, 4],
+        onProgress: ({ page, current, total }) => resolverSeen.push({ page, current, total }),
       });
 
-      expect(resolverMessages).toEqual(["Reading page 3 with OCR (1 of 1)"]);
-      expect(callMessages).toEqual(["Reading page 3 with OCR (1 of 1)"]);
+      expect(resolverSeen).toEqual([{ page: 3, current: 1, total: 2 }]);
+      expect(callSeen).toEqual([{ progress: 1, total: 2, message: "Reading page 3 with OCR" }]);
     } finally {
       close();
     }

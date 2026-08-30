@@ -232,3 +232,31 @@ describe("an already-open document", () => {
     }
   }, 60_000);
 });
+
+describe("saying which page is being recognised", () => {
+  it("reports every page it reads, with its number and its place in the run", async () => {
+    // Recognition is the slow part of reading a scanned document, and the only honest way to show
+    // a reader how far it has got. A free-form sentence cannot drive a progress bar, so the
+    // position and the extent are reported as numbers rather than spelled into the message.
+    const reported: Array<{ page: number; current: number; total: number; message: string }> = [];
+
+    await ocrPages(
+      {
+        bytes: await buildTextPagePdf(),
+        pages: [2, 5],
+        onProgress: (progress) => reported.push({ ...progress }),
+      },
+      {
+        dpi: 72,
+        rasterise: blankRasteriser([]),
+        createRecogniser: async () => recogniserRecording([], () => ({ text: "words", lines: [] })),
+      },
+    );
+
+    expect(reported.map((entry) => ({ page: entry.page, current: entry.current, total: entry.total }))).toEqual([
+      { page: 2, current: 1, total: 2 },
+      { page: 5, current: 2, total: 2 },
+    ]);
+    expect(reported[0]?.message).toContain("2");
+  }, 60_000);
+});

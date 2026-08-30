@@ -137,7 +137,12 @@ export interface SemanticProgressEvent {
   jobId: string;
   kind: "index" | "model";
   progress: {
-    status: "checking" | "indexing" | "downloading" | "ready";
+    /**
+     * `ocr` is recognition of pages the extractor could not read, which happens inside the index
+     * job and before any embedding. It is a separate state from `checking` because it is the
+     * slowest part of preparing a scanned document and the only part with a knowable extent.
+     */
+    status: "checking" | "ocr" | "indexing" | "downloading" | "ready";
     current?: number;
     total?: number;
     message?: string;

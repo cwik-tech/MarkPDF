@@ -488,3 +488,23 @@ describe("a text-bearing page carrying a qualifying figure", () => {
     expect(handle.pdf.loadingTask.destroyed).toBe(true);
   }, 60_000);
 });
+
+describe("passing recognition progress back to whoever asked for the read", () => {
+  it("gives the recognition seam somewhere to report each page it reads", async () => {
+    // Without this the seam's per-page reports go nowhere: `ocrPages` produces them, the request
+    // has a field for them, and nothing was ever put in it — so a caller watching a scan being
+    // read had no way to know a page had gone by.
+    const reported: Array<{ page: number; current: number; total: number }> = [];
+
+    await readDocumentPages({
+      bytes: await buildMixedPdf(),
+      onOcrProgress: (progress) => reported.push({ page: progress.page, current: progress.current, total: progress.total }),
+      resolveOcr: async (request) => {
+        request.onProgress?.({ page: 2, current: 1, total: 1, message: "Reading page 2 with OCR" });
+        return [{ page: 2, text: "Recognised body text." }];
+      },
+    });
+
+    expect(reported).toEqual([{ page: 2, current: 1, total: 1 }]);
+  }, 60_000);
+});

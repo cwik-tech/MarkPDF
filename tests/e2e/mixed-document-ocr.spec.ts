@@ -83,6 +83,56 @@ function indexedDocumentCount(dbPath: string): number {
   }
 }
 
+/** What the window was told, and what it showed, while it prepared the document. */
+interface PreparationRecord {
+  /** Every progress event that crossed the bridge, as `kind:status:current/total`. */
+  events: string[];
+  /** Every distinct text the preparation badge displayed, in order. */
+  badges: string[];
+}
+
+/**
+ * Start recording the progress stream and the toolbar badge before indexing begins.
+ *
+ * Both halves are needed. The event stream proves the main process said what it was doing; the
+ * badge text proves the window turned that into something a reader can see, which is the half the
+ * previous defect failed — the events were fine and the toolbar said "Checking index" throughout.
+ */
+async function recordPreparation(window: Page): Promise<void> {
+  await window.evaluate(() => {
+    const record: { events: string[]; badges: string[] } = { events: [], badges: [] };
+    (globalThis as unknown as { __preparation: typeof record }).__preparation = record;
+    (
+      window as unknown as {
+        pdfReader: {
+          onSemanticProgress: (
+            cb: (event: {
+              kind: string;
+              progress: { status: string; current?: number; total?: number };
+            }) => void,
+          ) => () => void;
+        };
+      }
+    ).pdfReader.onSemanticProgress((event) => {
+      record.events.push(
+        `${event.kind}:${event.progress.status}:${String(event.progress.current)}/${String(event.progress.total)}`,
+      );
+    });
+    new MutationObserver(() => {
+      const text = document.querySelector(".ocr-status")?.textContent ?? "";
+      if (text.length > 0 && record.badges[record.badges.length - 1] !== text) {
+        record.badges.push(text);
+      }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+}
+
+async function readPreparation(window: Page): Promise<PreparationRecord> {
+  return window.evaluate(
+    () => (globalThis as unknown as { __preparation: PreparationRecord }).__preparation,
+  );
+}
+
 /**
  * Indexing has finished and the window is no longer busy with it.
  *
@@ -177,8 +227,32 @@ test("an agent reads the page that exists only as a picture, in a document MarkP
     app = await launch(fixture);
     const window = await app.firstWindow();
 
+    stage = "recording the preparation stream and the toolbar";
+    await recordPreparation(window);
+
     stage = "waiting for the document to be indexed";
     await waitForIndexing(window, fixture);
+
+    // Assert, first: the reader was told that pages were being recognised, and told it as
+    // recognition rather than as indexing. Page ten of this report exists only as a picture, so the
+    // main process must read it before a single embedding can be built — and that reading is the
+    // longest part of the wait. It used to cross as a generic "checking" event and reach the
+    // toolbar as "Checking index".
+    stage = "checking recognition was reported as its own phase";
+    const preparation = await readPreparation(window);
+    expect(
+      preparation.events.filter((event) => /^index:ocr:\d+\/\d+$/.test(event)),
+      `recognition events, from ${JSON.stringify(preparation.events)}`,
+    ).not.toHaveLength(0);
+    expect(
+      preparation.badges.some((badge) => /^OCR \d+\/\d+$/.test(badge)),
+      `an OCR badge, from ${JSON.stringify(preparation.badges)}`,
+    ).toBe(true);
+    // And it was said before the embedding work, not after it.
+    const firstOcr = preparation.events.findIndex((event) => event.startsWith("index:ocr:"));
+    const firstIndexing = preparation.events.findIndex((event) => event.startsWith("index:indexing:"));
+    expect(firstOcr, "recognition is reported").toBeGreaterThanOrEqual(0);
+    if (firstIndexing >= 0) expect(firstOcr).toBeLessThan(firstIndexing);
 
     stage = "asking the agent's server for the page";
     client = await connectAgent(fixture.userDataPath);

@@ -46,7 +46,16 @@ export interface MarkdownSearchMatch {
   snippet: string;
 }
 
-export type SemanticIndexStatus = "idle" | "checking" | "downloading" | "indexing" | "ready" | "error";
+export type SemanticIndexStatus =
+  | "idle"
+  /** Looking at what is already stored, and reading the document's pages. */
+  | "checking"
+  /** Recognising the pages the extractor could not read, before any embedding exists. */
+  | "ocr"
+  | "downloading"
+  | "indexing"
+  | "ready"
+  | "error";
 
 export interface SemanticIndexProgress {
   status: SemanticIndexStatus;
@@ -150,6 +159,14 @@ export interface PdfTab {
   semanticIndexError?: string;
   ocrStatus?: OcrStatus;
   ocrProgress?: OcrProgress;
+  /**
+   * Whether the reader has already been shown what the text-layer check decided.
+   *
+   * The result is worth saying once — a document with native text is not being recognised, and
+   * silence used to be the only way to learn that — and worth taking away again, because a
+   * permanent badge for a finished check is noise.
+   */
+  ocrNoticeDismissed?: boolean;
   ocrPages: OcrPageText[];
   ocrError?: string;
   undoStack: TabHistoryState[];

@@ -267,6 +267,51 @@ describe("indexing a PDF straight from its bytes", () => {
     expect(reading[1]).toEqual({ status: "checking", current: 3, total: 3 });
   }, 120_000);
 
+  it("reports recognition as its own phase, before any indexing, while a scan is read", async () => {
+    // The defect this closes: the window showed "Checking index" for the whole time the main
+    // process was recognising pages, so the slowest part of preparing a scanned document was
+    // reported as though nothing in particular were happening. Recognition now crosses as its own
+    // status with its own counters, and it must arrive before the first embedding event.
+    const reported: Array<{ status: string; current: number | undefined; total: number | undefined; message: string | undefined }> = [];
+
+    await indexPdfDocument(store, embedder, {
+      bytes: await buildScannedPdf(),
+      name: "scan.pdf",
+      filePath: null,
+      chunkingProfile: "balanced",
+      resolveOcr: async (request) => {
+        request.onProgress?.({ page: 2, current: 1, total: 1, message: "Reading page 2 with OCR" });
+        return request.pages.map((page) => ({ page, text: SCAN_BODY_OCR }));
+      },
+      onProgress: (progress) =>
+        reported.push({ status: progress.status, current: progress.current, total: progress.total, message: progress.message }),
+    });
+
+    expect(reported.filter((event) => event.status === "ocr")).toEqual([
+      { status: "ocr", current: 1, total: 1, message: "Reading page 2 with OCR" },
+    ]);
+    expect(
+      reported.findIndex((event) => event.status === "ocr"),
+      "recognition is reported before embedding starts",
+    ).toBeLessThan(reported.findIndex((event) => event.status === "indexing"));
+  }, 120_000);
+
+  it("invents no recognition phase for a document that never needed one", async () => {
+    // A reused or ordinary text document must not show OCR work that did not happen.
+    const reported: string[] = [];
+
+    await indexPdfDocument(store, embedder, {
+      bytes: await buildReportPdf(),
+      name: "report.pdf",
+      filePath: null,
+      chunkingProfile: "balanced",
+      resolveOcr: async (request) => request.pages.map((page) => ({ page, text: "" })),
+      onProgress: (progress) => reported.push(progress.status),
+    });
+
+    expect(reported).not.toContain("ocr");
+  }, 120_000);
+
   it("reports no page total when it was cancelled before it could read one", async () => {
     const controller = new AbortController();
     controller.abort();
