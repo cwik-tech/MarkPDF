@@ -1,9 +1,9 @@
 {
   "name": "markpdf",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
-  "description": "A standalone PDF reader with tabs, viewing controls, lightweight editing, comments, form filling, and visual signing.",
+  "description": "A standalone PDF and Markdown reader with tabs, lightweight editing,  vector search, and MCP and CLI for agentic consumption.",
   "license": "Apache-2.0",
   "homepage": "https://www.markpdf.org",
   "repository": {
