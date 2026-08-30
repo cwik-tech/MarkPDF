@@ -154,6 +154,11 @@ export function cancelSemanticJob(jobId: unknown): boolean {
   return jobs.cancel(jobId);
 }
 
+/** Stop every queued or active index job before Electron releases its process resources. */
+export function cancelAllSemanticJobs(): number {
+  return jobs.cancelAll();
+}
+
 export function listCuratedModels(): CuratedEmbeddingModel[] {
   return [...curatedEmbeddingModels];
 }

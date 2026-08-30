@@ -24,6 +24,7 @@ import {
 } from "./ai.js";
 import {
   cachedSemanticModels,
+  cancelAllSemanticJobs,
   cancelSemanticJob,
   clearSemanticDatabase,
   closeSemanticStore,
@@ -45,6 +46,12 @@ import {
   type SemanticSearchSettings,
 } from "./semantic.js";
 import { startDockPageTurn } from "./dockIcon.js";
+import {
+  createQuitState,
+  recordQuitCancellation,
+  recordQuitRequest,
+  shouldQuitAfterLastWindow,
+} from "./quitPolicy.js";
 import {
   getDefaultAppStatus,
   setAsDefaultApp,
@@ -92,6 +99,7 @@ const appIconPath = fileURLToPath(
   new URL("../build/icon.png", import.meta.url),
 );
 const confirmedCloseWindows = new WeakSet<BrowserWindow>();
+let quitState = createQuitState();
 const testUserDataPath = process.env.MARKPDF_TEST_USER_DATA;
 const isTestRun = Boolean(testUserDataPath);
 
@@ -408,6 +416,13 @@ app.whenReady().then(async () => {
   });
 });
 
+app.on("before-quit", () => {
+  quitState = recordQuitRequest(quitState);
+  // Stop expensive work as soon as Quit is requested. Waiting for `will-quit` is too late because
+  // every window must complete its close handshake before Electron emits that event.
+  cancelAllSemanticJobs();
+});
+
 // Checkpoint and release the index before the process goes away, so the WAL sidecars do not
 // outlive us and a later open cannot resurrect uncommitted state.
 app.on("will-quit", () => {
@@ -417,7 +432,7 @@ app.on("will-quit", () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (shouldQuitAfterLastWindow(process.platform, quitState)) {
     app.quit();
   }
 });
@@ -599,6 +614,10 @@ ipcMain.handle("window:close-after-confirm", async (event) => {
   if (!window) return;
   confirmedCloseWindows.add(window);
   window.close();
+});
+
+ipcMain.handle("window:cancel-close", async () => {
+  quitState = recordQuitCancellation(quitState);
 });
 
 ipcMain.handle("cli-install:status", async () => getCliInstallStatus());

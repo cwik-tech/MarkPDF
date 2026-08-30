@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Quitting MarkPDF during OCR now cancels active recognition and exits promptly after any unsaved-document confirmation instead of leaving the macOS process running behind a closed window.
 - Large PDFs now render their first page before OCR and optional metadata work begins, and raw PDF bytes no longer pass through rendered React props where development diagnostics enumerated millions of byte entries and froze the window.
 - OCR progress now reports the actual document page and complete page count, so a 628-page book cannot appear as a 59-page OCR job.
 - Selecting PDF text no longer paints selection bars for invisible line breaks at the left edge of the page.

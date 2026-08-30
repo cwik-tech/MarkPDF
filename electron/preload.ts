@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld("pdfReader", {
   isFullScreen: () => ipcRenderer.invoke("window:is-full-screen"),
   closeWindowAfterConfirm: () =>
     ipcRenderer.invoke("window:close-after-confirm"),
+  cancelWindowClose: () => ipcRenderer.invoke("window:cancel-close"),
   showItemInFolder: (filePath: string) =>
     ipcRenderer.invoke("shell:show-item", filePath),
   addRecentFile: (filePath: string) =>

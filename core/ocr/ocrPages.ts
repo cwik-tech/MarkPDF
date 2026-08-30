@@ -5,7 +5,12 @@ import type {
   ResolveOcrRequest,
 } from "../extract/readDocumentPages.js";
 import { rasterisePdfPagesStreaming, RasterisationCancelled, type PageImage, type RasteriseOptions } from "./rasterisePages.js";
-import { createTesseractRecogniser, OcrEngineError, type TextRecogniser } from "./tesseractEngine.js";
+import {
+  createTesseractRecogniser,
+  OcrEngineError,
+  type RecognisedPage,
+  type TextRecogniser,
+} from "./tesseractEngine.js";
 import { tableFromLines } from "./tableFromLines.js";
 import { ocrProfile } from "./ocrContract.js";
 
@@ -31,6 +36,36 @@ export interface OcrDependencies {
   /** Streaming seam used in production so recognition releases each page before rendering the next. */
   rasteriseStreaming?: (bytes: Uint8Array, options: RasteriseOptions) => AsyncIterable<PageImage>;
   dpi?: number;
+}
+
+async function recogniseUntilCancelled(
+  recogniser: TextRecogniser,
+  image: Uint8Array,
+  signal: AbortSignal | undefined,
+  closeRecogniser: () => Promise<void>,
+): Promise<RecognisedPage | null> {
+  if (signal === undefined) return recogniser.recognise(image);
+  if (signal.aborted) {
+    await closeRecogniser();
+    return null;
+  }
+
+  let removeAbortListener: () => void = () => undefined;
+  const cancellation = new Promise<null>((resolve, reject) => {
+    const onAbort = () => {
+      // Tesseract 7 stops its worker before its termination promise resolves. Starting the close
+      // here releases the live thread without waiting for the current recognition promise.
+      void closeRecogniser().then(() => resolve(null), reject);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+  });
+
+  try {
+    return await Promise.race([recogniser.recognise(image), cancellation]);
+  } finally {
+    removeAbortListener();
+  }
 }
 
 /** One box measurement, when it is really four finite numbers with a positive extent. */
@@ -127,14 +162,19 @@ export async function ocrPages(request: OcrRequest, dependencies: OcrDependencie
       ? await dependencies.rasterise(request.bytes, options)
       : rasterisePdfPagesStreaming(request.bytes, options);
   let recogniser: TextRecogniser | null = null;
+  let closePromise: Promise<void> | null = null;
+  const closeRecogniser = (): Promise<void> => {
+    if (recogniser === null) return Promise.resolve();
+    closePromise ??= recogniser.close();
+    return closePromise;
+  };
   const candidates: OcrPageCandidate[] = [];
   try {
     let position = 0;
     for await (const image of images) {
-      // Recognition of one page is not preemptible — the engine offers no cancellation — so the
-      // signal is read between pages and nothing pretends otherwise.
       if (cancelled()) break;
       recogniser ??= await (dependencies.createRecogniser ?? (() => createTesseractRecogniser()))();
+      if (cancelled()) break;
       request.onProgress?.({
         page: image.page,
         current: position + 1,
@@ -144,7 +184,13 @@ export async function ocrPages(request: OcrRequest, dependencies: OcrDependencie
       });
       const region = regionsByPage.get(image.page);
       const target = region === undefined ? image.image : await cropToRegions(image, region);
-      const recognised = await recogniser.recognise(target);
+      const recognised = await recogniseUntilCancelled(
+        recogniser,
+        target,
+        request.signal,
+        closeRecogniser,
+      );
+      if (recognised === null) break;
       // Reconstruction is a pure function of the recognised lines; when it declines the page
       // (no table, or no geometry at all), the engine's own internal line breaks are preserved.
       // As before, outer whitespace is trimmed before storage.
@@ -158,6 +204,6 @@ export async function ocrPages(request: OcrRequest, dependencies: OcrDependencie
     if (error instanceof RasterisationCancelled) return candidates;
     throw error;
   } finally {
-    await recogniser?.close();
+    await closeRecogniser();
   }
 }

@@ -211,6 +211,62 @@ async function closeBounded(app: ElectronApplication | null, ms: number): Promis
   }
 }
 
+async function closeGracefullyWithin(app: ElectronApplication, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const child = app.process();
+  const exited = new Promise<void>((resolve) => {
+    child.once("exit", () => resolve());
+  });
+  try {
+    // The process exit is the result under test. The evaluate call can stay pending while a window
+    // delays quitting, so awaiting it here would disable the deadline below.
+    void app.evaluate(({ app: electronApp }) => electronApp.quit()).catch(() => undefined);
+    await Promise.race([
+      exited,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`graceful close exceeded ${String(ms)} ms`)),
+          ms,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function discardUnsavedOnClose(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ ipcMain }) => {
+    // Native message boxes cannot be driven by Playwright. This test is about process shutdown,
+    // so replace only that external UI boundary and choose the same Discard result a user can.
+    ipcMain.removeHandler("dialog:confirm-unsaved");
+    ipcMain.handle("dialog:confirm-unsaved", async () => "discard");
+  });
+}
+
+test("closes promptly while OCR is reading a page", async () => {
+  test.setTimeout(120_000);
+
+  const fixture = await makeFixture();
+  let app: ElectronApplication | null = null;
+
+  try {
+    app = await launch(fixture);
+    const window = await app.firstWindow();
+    await discardUnsavedOnClose(app);
+    await expect(window.locator(".ocr-status.semantic")).toContainText("OCR", {
+      timeout: 60_000,
+    });
+
+    await closeGracefullyWithin(app, 2_000);
+    await app.close().catch(() => undefined);
+    app = null;
+  } finally {
+    await closeBounded(app, 5_000);
+    await rm(fixture.tempDir, { recursive: true, force: true });
+  }
+});
+
 test("an agent reads the page that exists only as a picture, in a document MarkPDF indexed", async () => {
   test.setTimeout(360_000);
 

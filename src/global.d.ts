@@ -298,6 +298,7 @@ declare global {
       setFullScreen: (enabled: boolean) => Promise<boolean>;
       isFullScreen: () => Promise<boolean>;
       closeWindowAfterConfirm: () => Promise<void>;
+      cancelWindowClose: () => Promise<void>;
       showItemInFolder: (filePath: string) => Promise<void>;
       addRecentFile: (filePath: string) => Promise<string[]>;
       listRecentFiles: () => Promise<string[]>;

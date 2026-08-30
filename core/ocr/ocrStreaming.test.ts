@@ -63,4 +63,46 @@ describe("streaming OCR page images", () => {
     expect(events).toEqual(["raster 1", "recognise 1"]);
     expect(candidates).toEqual([{ page: 1, text: "first page" }]);
   });
+
+  it("closes the recognition engine when cancellation arrives during a page", async () => {
+    const controller = new AbortController();
+    const events: string[] = [];
+    let recognitionStartedResolve: (() => void) | undefined;
+    const recognitionStarted = new Promise<void>((resolve) => {
+      recognitionStartedResolve = resolve;
+    });
+
+    async function* images(): AsyncIterable<PageImage> {
+      yield { page: 1, image: Uint8Array.of(1), width: 1, height: 1 };
+    }
+
+    const pending = ocrPages(
+      {
+        bytes: new Uint8Array(),
+        pages: [1],
+        totalPages: 1,
+        signal: controller.signal,
+      },
+      {
+        rasteriseStreaming: () => images(),
+        createRecogniser: async () => ({
+          async recognise() {
+            events.push("recognise");
+            recognitionStartedResolve?.();
+            return await new Promise<never>(() => undefined);
+          },
+          async close() {
+            events.push("close");
+          },
+        }),
+      },
+    );
+
+    await recognitionStarted;
+    controller.abort();
+    await Promise.resolve();
+
+    expect(events).toEqual(["recognise", "close"]);
+    await expect(pending).resolves.toEqual([]);
+  });
 });

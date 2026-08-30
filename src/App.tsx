@@ -1947,13 +1947,18 @@ export default function App() {
     return window.pdfReader.onWindowRequestClose(async () => {
       for (const tab of tabs.filter((item) => item.dirty)) {
         const action = await requestUnsavedAction(tab);
-        if (action === "cancel") return;
+        if (action === "cancel") {
+          await window.pdfReader?.cancelWindowClose();
+          return;
+        }
         if (
           action === "save" &&
           (!isPdfTab(tab) ||
             !(await saveTabWithSignaturePrompt(tab, false, false)))
-        )
+        ) {
+          await window.pdfReader?.cancelWindowClose();
           return;
+        }
       }
 
       await window.pdfReader?.closeWindowAfterConfirm();
