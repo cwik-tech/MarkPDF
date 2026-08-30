@@ -1,14 +1,17 @@
 import { readDocumentPages, type OcrPageCandidate, type ReadPage, type ResolveOcrRequest } from "../extract/readDocumentPages.js";
+import { contentHash as hashBytes } from "../hash.js";
 import type { SemanticChunkingProfile } from "../models.js";
 import type { SemanticStore } from "../store/index.js";
 import type { PageText } from "./chunking.js";
 import type { Embedder } from "./embeddings.js";
 import { indexDocument, type IndexDocumentResult, type IndexProgress } from "./indexDocument.js";
+import { activeChunkScopeContract } from "./search.js";
 import {
   MARKDOWN_ENGINE_ID,
   MARKDOWN_VERSION,
   OCR_EXTRACTION_VERSION,
   TEXT_EXTRACTION_VERSION,
+  UNKNOWN_EXTRACTION_VERSION,
 } from "../models.js";
 
 export type { OcrPageCandidate };
@@ -59,6 +62,23 @@ function toPageText(pages: readonly ReadPage[]): PageText[] {
  * what lets a caller with text already in hand — a test, a future importer — use the same
  * indexing path as this one.
  *
+ * **The preflight comes first, and it is the whole point on a scan.** Reading a document is the
+ * expensive part — rasterising, recognising, chunking — and until this existed every one of those
+ * happened before anything asked whether the answer was already stored. Opening the same 628-page
+ * book twice recognised it twice. So the bytes are hashed and the store is asked one exact
+ * question, and only a document it cannot vouch for is read. The question covers the bytes, how
+ * the text and the pictures were read, whether the cached Markdown still covers the document and
+ * can say what became of each page, and whether the chunks for this precise searchable scope were
+ * finished. Anything less is a miss and costs one indexed lookup.
+ *
+ * It runs outside `indexDocument`'s per-document lock, and that lock would not have helped anyway:
+ * it serialises jobs inside one process, while the window and the `markpdf` command share one index
+ * file. What makes the answer safe is that a completion claim is checked when it is made and
+ * retracted by anything that could invalidate it — a batch landing in the scope, or the document's
+ * text being stored again, each in the transaction that does it. So a run racing this one has
+ * either finished, in which case its result is the one being reused, or has left no claim, in which
+ * case this misses and the document is read.
+ *
  * **Cancellation, and its honest limit.** `@firecrawl/pdf-inspector` exposes no `AbortSignal`
  * and no cancellation of any kind: `extractPagesMarkdownAsync` runs the parse on the libuv
  * thread pool and returns a promise that cannot be abandoned. So the parse is not preemptible,
@@ -76,6 +96,76 @@ export async function indexPdfDocument(
 
   if (cancelled()) return { status: "cancelled" };
 
+  const contentHash = hashBytes(input.bytes);
+  // `force` is the caller saying it does not trust what is stored, so it must not be answered from
+  // what is stored — not even to skip the read.
+  const reusable =
+    input.force === true
+      ? null
+      : store.findReusableIndex({
+          contentHash,
+          textExtractionVersion: TEXT_EXTRACTION_VERSION,
+          ocrExtractionVersion: OCR_EXTRACTION_VERSION,
+          markdownEngineId: MARKDOWN_ENGINE_ID,
+          markdownVersion: MARKDOWN_VERSION,
+          // Read from the same place indexing and search read it, so the scope a document was
+          // written under and the scope this asks about cannot drift apart. The embedder is
+          // consulted for its identity and its width only; nothing here loads the weights, and an
+          // already-complete index must never trigger a download to be recognised as complete.
+          scope: activeChunkScopeContract(embedder, input.chunkingProfile),
+        });
+
+  // The lookup is several statements, so the signal is re-read before the one write this branch
+  // performs and before the progress event that tells a tab it is ready.
+  if (cancelled()) return { status: "cancelled" };
+
+  if (reusable !== null) {
+    // The only write on this path, and the same one the reuse branch inside `indexDocument` has
+    // always performed: where the file was opened from, under what name, and when. The path lookup
+    // that `search --path` and the MCP tools use reads exactly these columns and ranks rows by the
+    // last of them, so skipping it would answer a moved or renamed file with a stale row — or with
+    // a different document that happens to share its path.
+    store.upsertDocument({
+      contentHash,
+      name: input.name,
+      filePath: input.filePath,
+      fileSize: input.bytes.byteLength,
+      // The stored document's own account of itself. These bytes were read to produce it, and this
+      // path has read nothing, so it has nothing of its own to say.
+      pageCount: reusable.pageCount,
+      textSource: reusable.textSource,
+      // Nothing is claimed about how the text was read, because this path read nothing. The row
+      // already matches these contracts — that is a condition of the hit — and how its text was
+      // produced is recorded beside the cache itself, by whichever run wrote it. "Unknown" and
+      // null preserve all of it.
+      textExtractionVersion: UNKNOWN_EXTRACTION_VERSION,
+      ocrExtractionVersion: UNKNOWN_EXTRACTION_VERSION,
+      markdownEngine: null,
+      markdownVersion: null,
+    });
+
+    input.onProgress?.({
+      status: "ready",
+      current: reusable.chunkCount,
+      total: reusable.chunkCount,
+      message: "Semantic index ready",
+    });
+    return {
+      // The same word the full path would use for the same document. A stored scope with nothing
+      // in it is an empty document, not a reused index, and a caller that switches on the status
+      // should not be able to tell whether the answer came from the store or from a fresh read.
+      status: reusable.chunkCount === 0 ? "empty" : "reused",
+      contentHash,
+      documentId: reusable.documentId,
+      pageCount: reusable.pageCount,
+      chunkCount: reusable.chunkCount,
+      textSource: reusable.textSource,
+      // Always empty, and not merely empty by coincidence: a snapshot recording a page nothing
+      // read is not reusable, so a document that reaches here has an account of every page.
+      unresolvedPages: [],
+    };
+  }
+
   input.onProgress?.({ status: "checking", message: "Reading document" });
   // The callback can abort synchronously, so the signal is re-read before the native parse
   // starts rather than only before it is used.
@@ -89,16 +179,21 @@ export async function indexPdfDocument(
     // A page the extractor could not read is recognised here, inside this job, before any
     // embedding exists — and on a scanned document that is where nearly all the time goes.
     // Reporting it as `checking` told the reader their index was being examined while the machine
-    // was reading their pages. The visible counter uses the actual document page and full page
-    // count; the recognition target count remains available inside the OCR progress event.
+    // was reading their pages.
+    //
+    // The counters are the recognition queue's, because that is the work being waited on: a
+    // 628-page book with 59 pages to read shows `42/59`, not `437/628` — a bar that would stop at
+    // seven per cent and never arrive. Which document page is being read is still worth knowing,
+    // and the recogniser already says so in the message, so it is carried there rather than
+    // dropped.
     ...(input.onProgress === undefined
       ? {}
       : {
           onOcrProgress: (progress) =>
             input.onProgress?.({
               status: "ocr",
-              current: progress.page,
-              total: progress.totalPages,
+              current: progress.current,
+              total: progress.total,
               message: progress.message,
             }),
         }),

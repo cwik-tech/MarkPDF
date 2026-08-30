@@ -29,6 +29,16 @@ function connectDirectly() {
   return new Database(path);
 }
 
+/** The text a claim binds. Two pages, because `upsertDocument` below records a two-page document. */
+const CLAIM_CACHE = {
+  engineId: "pdf-inspector",
+  markdownVersion: 1,
+  pages: [
+    { page: 1, markdown: "First page." },
+    { page: 2, markdown: "Second page." },
+  ],
+};
+
 function scopeFor(documentId: number): ChunkScope {
   return { documentId, chunkingProfile: "balanced", chunkingVersion: 2, modelId: "m", modelVersion: "v", dimensions: 2 };
 }
@@ -449,21 +459,25 @@ describe("when a scope's chunks were last written", () => {
     expect(store.chunksWrittenAt(scopeFor(document.id))).toBeNull();
   });
 
-  it("records the moment a scope is marked complete, and keeps one stamp per scope", () => {
-    // Two scopes of one document — the profile a search runs under is exactly this fine — and
-    // the second write must not overwrite the first's account of itself.
+  it("records the moment a scope is claimed, one scope at a time", () => {
+    // Two scopes of one document — the profile a search runs under is exactly this fine — and a
+    // claim over one of them says nothing about the other.
     const store = open();
     const document = upsertDocument(store, "s".repeat(64));
     const balanced = scopeFor(document.id);
     const precise: ChunkScope = { ...balanced, chunkingProfile: "precise" };
 
-    store.markChunksComplete(balanced);
+    expect(store.completeChunkScope(balanced, { chunkIds: [], cache: CLAIM_CACHE })).toBe("claimed");
     expect(store.chunksWrittenAt(balanced)).toBe(FIXED_CLOCK().toISOString());
     expect(store.chunksWrittenAt(precise)).toBeNull();
 
-    store.markChunksComplete(precise);
+    expect(store.completeChunkScope(precise, { chunkIds: [], cache: CLAIM_CACHE })).toBe("claimed");
     expect(store.chunksWrittenAt(precise)).toBe(FIXED_CLOCK().toISOString());
-    expect(store.chunksWrittenAt(balanced)).toBe(FIXED_CLOCK().toISOString());
+    // And the first scope's claim is gone, because claiming the second wrote the document's text
+    // again and a claim vouches for the text as much as for the chunks. The stamps are per scope;
+    // the text they are bound to is not. That scope re-establishes its claim the next time it is
+    // read in full.
+    expect(store.chunksWrittenAt(balanced)).toBeNull();
   });
 
   it("invalidates the stamp when the scope's replacement begins, and only that scope's", () => {
@@ -474,8 +488,8 @@ describe("when a scope's chunks were last written", () => {
     const document = upsertDocument(store, "s".repeat(64));
     const balanced = scopeFor(document.id);
     const precise: ChunkScope = { ...balanced, chunkingProfile: "precise" };
-    store.markChunksComplete(balanced);
-    store.markChunksComplete(precise);
+    store.completeChunkScope(balanced, { chunkIds: [], cache: CLAIM_CACHE });
+    store.completeChunkScope(precise, { chunkIds: [], cache: CLAIM_CACHE });
 
     store.beginChunkReplace(balanced);
 
@@ -551,7 +565,10 @@ describe("migrating a database that predates scope stamps", () => {
     // Its chunks were written by a build that recorded no completion: the stamp says so.
     expect(store.chunksWrittenAt(scopeFor(document.id))).toBeNull();
     // And the new table is usable from the first run after the upgrade.
-    store.markChunksComplete(scopeFor(document.id));
+    store.completeChunkScope(scopeFor(document.id), {
+      chunkIds: [],
+      cache: { ...CLAIM_CACHE, pages: [{ page: 1, markdown: "The one page this migrated document has." }] },
+    });
     expect(store.chunksWrittenAt(scopeFor(document.id))).toBe(FIXED_CLOCK().toISOString());
   });
 });

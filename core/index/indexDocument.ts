@@ -1,11 +1,5 @@
 import { contentHash as hashBytes } from "../hash.js";
-import {
-  getCuratedEmbeddingModel,
-  modelVersion,
-  semanticChunkingVersion,
-  UNKNOWN_EXTRACTION_VERSION,
-  type SemanticChunkingProfile,
-} from "../models.js";
+import { UNKNOWN_EXTRACTION_VERSION, type SemanticChunkingProfile } from "../models.js";
 import type { MarkdownCacheInput } from "../store/index.js";
 
 /**
@@ -24,6 +18,7 @@ import type { ChunkInsert, ChunkScope, SemanticStore, TextSource } from "../stor
 import type { PageText } from "./chunking.js";
 import { chunkPagesForIndex, type IndexableChunk } from "./structuredChunking.js";
 import type { Embedder } from "./embeddings.js";
+import { activeChunkScopeContract } from "./search.js";
 import { runExclusive } from "./serialQueue.js";
 
 /**
@@ -35,6 +30,39 @@ import { runExclusive } from "./serialQueue.js";
  * than a flag on `ready` because the compiler then makes every consumer decide what to do about it.
  */
 export type IndexStatus = "ready" | "reused" | "empty" | "incomplete" | "cancelled";
+
+/**
+ * Another run rebuilt this document while this one was working on it.
+ *
+ * Thrown rather than returned, deliberately. Every member of `IndexStatus` is a description of a
+ * document that was successfully indexed one way or another, and this run cannot describe one: the
+ * scope holds chunks it did not write, its claim was refused, and it has no way to know whether
+ * what is there is finished. Saying `ready` would be a claim about somebody else's work. The
+ * document is not damaged — whichever run finishes last leaves a coherent index or none at all —
+ * so the remedy is to index it again, which the next open does anyway.
+ */
+export class ConcurrentIndexError extends Error {
+  /** The document this run was working on. Carried for diagnostics; the message stays readable. */
+  readonly contentHash: string;
+
+  constructor(contentHash: string) {
+    super("Another run indexed this document at the same time, so this one could not record what it built. Open it again to finish.");
+    this.name = "ConcurrentIndexError";
+    this.contentHash = contentHash;
+  }
+}
+
+/** Publish the scope, or say why not. `unclaimed` is not a failure; a conflict is. */
+function publishScope(
+  store: SemanticStore,
+  scope: ChunkScope,
+  contentHash: string,
+  chunkIds: readonly string[],
+  cache: ExtractionProvenance | undefined,
+): void {
+  const outcome = store.completeChunkScope(scope, { chunkIds, ...(cache === undefined ? {} : { cache }) });
+  if (outcome === "conflicted") throw new ConcurrentIndexError(contentHash);
+}
 
 function hasExactChunks(store: SemanticStore, scope: ChunkScope, chunks: readonly IndexableChunk[]): boolean {
   const stored = store.listIndexedChunkIds(scope);
@@ -231,7 +259,6 @@ async function indexDocumentExclusive(
   // this, a run cancelled from its own progress handler still leaves a document row behind.
   if (cancelled()) return { status: "cancelled" };
 
-  const model = getCuratedEmbeddingModel(embedder.modelId);
   const textSource = textSourceOf(input.pages);
   const unresolvedPages = input.unresolvedPages ?? [];
   const cache = input.markdownCache;
@@ -246,13 +273,15 @@ async function indexDocumentExclusive(
     fileSize: input.bytes.byteLength,
     pageCount: input.pageCount,
     textSource,
-    // The extraction version describes the run and is recorded here. A caller that said nothing
-    // records "unknown", which preserves whatever an earlier informed caller wrote.
-    textExtractionVersion: cache?.textExtractionVersion ?? UNKNOWN_EXTRACTION_VERSION,
-    ocrExtractionVersion: cache?.ocrExtractionVersion ?? UNKNOWN_EXTRACTION_VERSION,
-    // The engine and Markdown version are *not* stamped here. They are written by `putMarkdown`
-    // in the same transaction as the cache row itself, so a document can never advertise a cache
-    // that failed to be written. Nulls here preserve whatever is already recorded.
+    // Nothing about how the text was read is stamped here — not the engine, not the Markdown
+    // version, and not the extraction versions. All four describe the text `putMarkdown` writes,
+    // and it writes them in the same transaction as the cache row, so a document can never
+    // advertise a reading that failed to be stored. Recording an extraction version at this point
+    // was exactly that failure: a run interrupted between here and the cache left a row claiming a
+    // newer reading of the document than the cache underneath it. "Unknown" and null preserve
+    // whatever is already recorded.
+    textExtractionVersion: UNKNOWN_EXTRACTION_VERSION,
+    ocrExtractionVersion: UNKNOWN_EXTRACTION_VERSION,
     markdownEngine: null,
     markdownVersion: null,
   });
@@ -264,16 +293,11 @@ async function indexDocumentExclusive(
     input.pages.map((page) => ({ page: page.page, markdown: page.text, source: page.source })),
     input.chunkingProfile,
   );
-  const scope: ChunkScope = {
-    documentId: stored.id,
-    chunkingProfile: input.chunkingProfile,
-    chunkingVersion: semanticChunkingVersion,
-    modelId: model.id,
-    modelVersion,
-    // The embedder is the authority on its own output width; the curated catalogue entry
-    // is user-facing metadata and can disagree with what the model actually produces.
-    dimensions: embedder.dimensions,
-  };
+  // Built from the one description of a searchable scope, so what is written here, what a search
+  // reads under, and what the reuse preflight asks about cannot drift apart. The embedder is the
+  // authority on its own output width; the curated catalogue entry is user-facing metadata and can
+  // disagree with what the model actually produces.
+  const scope: ChunkScope = { documentId: stored.id, ...activeChunkScopeContract(embedder, input.chunkingProfile) };
 
   // Re-read the signal immediately after the awaited chunk build. Loading the token counter and
   // measuring a document are both asynchronous, so a cancel can land inside them — and every
@@ -282,10 +306,37 @@ async function indexDocumentExclusive(
   if (cancelled()) return { status: "cancelled" };
 
   if (chunks.length === 0) {
-    // A document that yields no chunks still has pages, and the cache is keyed to the document
-    // rather than to its chunks. Returning before writing it would leave the row stamped with an
-    // engine that cached nothing — exactly the false claim the provenance check exists to stop.
-    if (cache !== undefined) store.putMarkdown(stored.id, cache);
+    // Whether "nothing to index" is a fact about the document or only about this run.
+    //
+    // Every page accounted for means the document really has no text in it, and this run is the
+    // current reading of it. A page nothing could read means the opposite: the run discovered
+    // nothing about that page, and an index built when something *could* read it is still the best
+    // account of the document there is. Throwing it away on the strength of a missing recogniser
+    // would lose passages that are not wrong, only unconfirmed.
+    const everyPageAccountedFor = unresolvedPages.length === 0;
+
+    // The replacement comes first, and before the new text, for the same reason it does on the
+    // rebuild path below: while the old claim stands it vouches for the old passages, and a
+    // preflight arriving between the two writes would serve them against a cache that no longer
+    // contains them.
+    //
+    // Then the text and the claim go in together. Nothing to embed is a finished scope, and saying
+    // so is what stops the most expensive document in a library — a scan that recognises to
+    // nothing — from being rasterised again on every open. The claim is refused if anything landed
+    // in the scope meanwhile, which is exactly the answer wanted: another run is rebuilding this
+    // document and its result, not this one's emptiness, is what should stand.
+    if (everyPageAccountedFor) {
+      store.beginChunkReplace(scope);
+      publishScope(store, scope, contentHash, [], cache);
+    } else if (cache !== undefined) {
+      // A document that yields no chunks still has pages, and the cache is keyed to the document
+      // rather than to its chunks. Returning before writing it would leave the row stamped with an
+      // engine that cached nothing — exactly the false claim the provenance check exists to stop.
+      // This reading could not account for every page, so it establishes nothing about the scope
+      // and claims nothing; storing it does retract whatever claim stood over the old text, which
+      // is right, because that text is no longer what the document says.
+      store.putMarkdown(stored.id, cache);
+    }
     input.onProgress?.({ status: "ready", message: "No text to index" });
     return { ...settle("empty", unresolvedPages), contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: 0, textSource };
   }
@@ -300,7 +351,8 @@ async function indexDocumentExclusive(
   // that — the identifier carries a fingerprint of the text — and comparing counts does not.
   //
   if (input.force !== true && hasExactChunks(store, scope, chunks)) {
-    // Backfill, in two cases, because this path is the only one an unchanged document ever takes.
+    // Everything this run learned is recorded here, and this is where documents that the preflight
+    // cannot yet vouch for come to settle. Three of them arrive on this branch:
     //
     // A document indexed before caching existed has complete chunks and no cached text at all.
     //
@@ -311,13 +363,28 @@ async function indexDocumentExclusive(
     // at a page with nothing on it. Writing the outcomes we now know is what lets a blank page
     // settle.
     //
-    // Only when there is something better to write. A cache that already accounts for its pages is
-    // left alone, so reuse stays the cheap path it is meant to be.
-    if (cache !== undefined) {
-      const existing = store.getMarkdown(stored.id, cache.engineId, cache.markdownVersion);
-      const unaccountedFor = existing !== null && existing.provenance === null && cache.pageProvenance !== undefined;
-      if (existing === null || unaccountedFor) store.putMarkdown(stored.id, cache);
-    }
+    // And a document read by an earlier build, whose record says it was read a way this build no
+    // longer reads it, though the text turned out identical.
+    //
+    // Everything this run learned goes in as one claim: the text, its page outcomes, the extraction
+    // versions beside them, and the record that the scope is finished. Reaching here means the
+    // document was read in full a moment ago, so all of it describes that reading.
+    //
+    // Written whether or not the stored record looks stale. It used to be written only when the
+    // cache was missing or could not account for its pages, and a third case then went unnoticed:
+    // after a build raises an extraction version, a document whose new reading happens to produce
+    // the same chunks arrives here, and leaving the record saying it was read the old way means the
+    // preflight refuses it and the whole document is read again on every open, for ever. Writing
+    // every time settles that without anything having to compare versions, and it costs one row
+    // rewrite on a path that has just paid for a parse. The cheap path is the preflight, which
+    // never reaches this function.
+    //
+    // The store re-checks the chunk identities inside that transaction, which is not redundant:
+    // `hasExactChunks` read them a moment ago, and another process can rebuild this document in
+    // between. A refusal means one did, and this run cannot report reuse of chunks that are no
+    // longer there. A caller that supplied no text publishes nothing and reports success anyway:
+    // its chunks are the ones already stored, and only the claim is missing.
+    publishScope(store, scope, contentHash, chunks.map((chunk) => chunk.id), cache);
     input.onProgress?.({ status: "ready", current: chunks.length, total: chunks.length, message: "Semantic index ready" });
     return { ...settle("reused", unresolvedPages), contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: chunks.length, textSource };
   }
@@ -329,13 +396,23 @@ async function indexDocumentExclusive(
     return { status: "cancelled" };
   }
 
-  // Written here, after the last cancellation check and before anything destructive. The
-  // contract is deliberate: a run cancelled before this point writes no cache at all, and a run
-  // cancelled after it keeps one — the extraction is valid whether or not the embedding
-  // finished, and re-reading the file would be pure waste.
-  if (cache !== undefined) store.putMarkdown(stored.id, cache);
-
+  // The claim is withdrawn before the new reading is stored, and the order is the whole point.
+  //
+  // Both writes commit, so between them the database is readable by anything else holding it open.
+  // Writing the cache first left a state that is a lie: the row and its cache describe the new
+  // reading of the document while the completion marker still vouches for embeddings built from
+  // the old one. A preflight landing in that window is answered with the old passages as though
+  // they were the new ones — and it is a window another process reaches by doing nothing unusual,
+  // because the two writes are separate transactions.
+  //
+  // Nothing is awaited between the two, so no cancellation can land between them either. The
+  // contract they carry together is unchanged: a run cancelled before the replacement begins
+  // writes no cache at all, and one cancelled after it keeps the cache — the extraction is valid
+  // whether or not the embedding finished, and re-reading the file would be pure waste. What the
+  // ordering costs is that a crash between them leaves the document with no index and its previous
+  // cache: the next open reads it again, which is what it would have done anyway.
   store.beginChunkReplace(scope);
+  if (cache !== undefined) store.putMarkdown(stored.id, cache);
 
   let written = 0;
   for (let offset = 0; offset < chunks.length; offset += EMBED_BATCH) {
@@ -392,9 +469,15 @@ async function indexDocumentExclusive(
     await input.yieldControl?.();
   }
 
-  // The timestamp describes a complete searchable scope, so it is written only after the final
-  // chunk batch. `beginChunkReplace` withdrew the previous claim before clearing any chunks.
-  store.markChunksComplete(scope);
+  // The claim describes a complete searchable scope, so it is made only after the final chunk
+  // batch — and it is a claim, not a statement: the store checks that the scope still holds
+  // exactly the chunks this run wrote before it records anything, and writes this run's text in
+  // the same transaction so the two cannot be split. It is refused when another process rebuilt
+  // the same document while this one was embedding, and then the scope carries no claim at all:
+  // nothing reuses it, and the next open reads the document again. That is the honest outcome —
+  // this run cannot know whose chunks the scope now holds, so it raises rather than reporting a
+  // readiness it cannot vouch for.
+  publishScope(store, scope, contentHash, chunks.map((chunk) => chunk.id), cache);
   input.onProgress?.({ status: "ready", current: chunks.length, total: chunks.length, message: "Semantic index ready" });
   return { ...settle("ready", unresolvedPages), contentHash, documentId: stored.id, pageCount: input.pageCount, chunkCount: chunks.length, textSource };
 }

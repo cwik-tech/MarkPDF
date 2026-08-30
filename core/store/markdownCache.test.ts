@@ -107,6 +107,102 @@ describe("recording why a cached page is empty", () => {
   });
 });
 
+describe("recording how the cached text was read", () => {
+  /** The row's own account of itself, read from the file rather than through a reader that maps it. */
+  function recordedReading(documentId: number): Record<string, unknown> {
+    const db = new Database(semanticIndexPath(dataDir), { readonly: true });
+    const row = db
+      .prepare(
+        `SELECT text_extraction_version, ocr_extraction_version, markdown_engine, markdown_version
+           FROM documents WHERE id = ?`,
+      )
+      .get(documentId) as Record<string, unknown>;
+    db.close();
+    return row;
+  }
+
+  it("stamps the extraction versions in the same write as the text they describe", () => {
+    const document = makeDocument("e".repeat(64));
+
+    store.putMarkdown(document.id, {
+      engineId: "pdf-inspector",
+      markdownVersion: 1,
+      pages: PAGES,
+      textExtractionVersion: 7,
+      ocrExtractionVersion: 5,
+    });
+
+    expect(recordedReading(document.id)).toEqual({
+      text_extraction_version: 7,
+      ocr_extraction_version: 5,
+      markdown_engine: "pdf-inspector",
+      markdown_version: 1,
+    });
+  });
+
+  it("leaves the recorded versions alone when the caller does not say how the text was read", () => {
+    // Absence means "I do not know", not "there is none" — the same rule the document upsert
+    // follows. A caller handing over text from anywhere must not erase the account written by one
+    // that knew.
+    const document = makeDocument("f".repeat(64));
+
+    store.putMarkdown(document.id, { engineId: "pdf-inspector", markdownVersion: 1, pages: PAGES });
+
+    expect(recordedReading(document.id).text_extraction_version).toBe(2);
+    expect(recordedReading(document.id).ocr_extraction_version).toBe(1);
+  });
+
+  it("records no new version when the cache itself is refused", () => {
+    // The atomicity that matters. The versions describe the text in this write, so a write that
+    // does not happen must not advance them — otherwise the row claims a reading of the document
+    // that nothing stored.
+    const document = makeDocument("0".repeat(64));
+    store.putMarkdown(document.id, {
+      engineId: "pdf-inspector",
+      markdownVersion: 1,
+      pages: PAGES,
+      textExtractionVersion: 2,
+      ocrExtractionVersion: 1,
+    });
+
+    expect(() =>
+      store.putMarkdown(document.id, {
+        engineId: "pdf-inspector",
+        markdownVersion: 1,
+        // One page short of the document, so the store refuses it.
+        pages: PAGES.slice(0, 2),
+        textExtractionVersion: 9,
+        ocrExtractionVersion: 9,
+      }),
+    ).toThrow();
+
+    expect(recordedReading(document.id).text_extraction_version).toBe(2);
+    expect(recordedReading(document.id).ocr_extraction_version).toBe(1);
+    expect(store.getMarkdown(document.id, "pdf-inspector", 1)?.pages).toEqual(PAGES);
+  });
+
+  it("refuses a version that is not a positive whole number, and stores nothing", () => {
+    const document = makeDocument("1".repeat(64));
+
+    // Zero included: it is the sentinel this store uses internally for "the caller did not say",
+    // and a caller reaching for it is naming a version that means nothing. Omission is how a
+    // caller says nothing.
+    for (const bad of [0, 0.5, -1, Number.NaN]) {
+      expect(() =>
+        store.putMarkdown(document.id, {
+          engineId: "pdf-inspector",
+          markdownVersion: 1,
+          pages: PAGES,
+          textExtractionVersion: bad,
+        }),
+      ).toThrow(/textExtractionVersion/);
+    }
+
+    expect(store.getMarkdown(document.id, "pdf-inspector", 1)).toBeNull();
+    expect(recordedReading(document.id).markdown_engine).toBeNull();
+  });
+});
+
 describe("when the snapshot was recorded", () => {
   it("says when the cached pages were written, by the clock the store runs under", () => {
     // The snapshot `read_pages` actually serves is this row; its recorded time is what a reader

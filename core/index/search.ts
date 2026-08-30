@@ -1,5 +1,5 @@
 import { defaultSemanticScoreThreshold, defaultSemanticTopK, getCuratedEmbeddingModel, modelVersion, semanticChunkingVersion, type SemanticChunkingProfile } from "../models.js";
-import type { ChunkScope, HeadingEntry, SemanticStore } from "../store/index.js";
+import type { ChunkScope, ChunkScopeContract, HeadingEntry, SemanticStore } from "../store/index.js";
 import type { Embedder } from "./embeddings.js";
 import { createSnippet } from "./chunking.js";
 import { toPlainText } from "./structuredChunking.js";
@@ -37,21 +37,35 @@ export interface SearchInput {
   signal?: AbortSignal;
 }
 
-/** The exact persisted scope a search reads under. Shared with disclosure so the two cannot drift. */
-export function searchChunkScope(
-  documentId: number,
+/**
+ * The scope this build searches under, before a document is named.
+ *
+ * Separated from `searchChunkScope` because the reuse preflight has to ask about a scope while it
+ * still only has the file's bytes — the document id is what the store looks up. Both callers read
+ * the same five values from the same place, so a scope the index is written under cannot drift
+ * from the one a search or a reuse check asks about.
+ */
+export function activeChunkScopeContract(
   embedder: Embedder,
   chunkingProfile: SemanticChunkingProfile,
-): ChunkScope {
+): ChunkScopeContract {
   const model = getCuratedEmbeddingModel(embedder.modelId);
   return {
-    documentId,
     chunkingProfile,
     chunkingVersion: semanticChunkingVersion,
     modelId: model.id,
     modelVersion,
     dimensions: embedder.dimensions,
   };
+}
+
+/** The exact persisted scope a search reads under. Shared with disclosure so the two cannot drift. */
+export function searchChunkScope(
+  documentId: number,
+  embedder: Embedder,
+  chunkingProfile: SemanticChunkingProfile,
+): ChunkScope {
+  return { documentId, ...activeChunkScopeContract(embedder, chunkingProfile) };
 }
 
 export async function searchDocument(

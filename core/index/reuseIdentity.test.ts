@@ -7,7 +7,7 @@ import { openSemanticStore, type SemanticStore } from "../store/index.js";
 import type { ExtractionProvenance } from "./indexDocument.js";
 import { semanticIndexPath } from "../paths.js";
 import { indexDocument } from "./indexDocument.js";
-import { searchDocument } from "./search.js";
+import { activeChunkScopeContract, searchDocument } from "./search.js";
 import { createDeterministicEmbedder } from "./deterministicEmbedder.js";
 import { expectIndexed } from "./indexResult.test-support.js";
 import { MARKDOWN_ENGINE_ID, MARKDOWN_VERSION, OCR_EXTRACTION_VERSION, TEXT_EXTRACTION_VERSION } from "../models.js";
@@ -204,9 +204,10 @@ describe("what a Phase 2 document records about itself", () => {
     ]);
   }, 60_000);
 
-  it("leaves a cache that already knows its page outcomes alone", async () => {
-    // The backfill is for a record that cannot answer, not a licence to rewrite one that can. A
-    // reuse that rewrote every cache would turn the cheapest path in the pipeline into a write.
+  it("keeps the page outcomes a cache already had when the run reuses its chunks", async () => {
+    // This path rewrites the cache with what the run just read, so what has to hold is that the
+    // rewrite says the same thing: a document whose outcomes were already recorded must come out
+    // of a reuse with those outcomes intact rather than blanked or doubled.
     const withPages = (text: string): ExtractionProvenance => ({
       ...withProvenance(text),
       pageProvenance: [{ page: 1, status: "read" }],
@@ -328,6 +329,94 @@ describe("a document with no text at all", () => {
     expect(row.markdown_version).toBe(MARKDOWN_VERSION);
   }, 60_000);
 
+  it("records the scope as finished, so a document with nothing on its pages is not read again", async () => {
+    // Nothing to embed is a finished state, not an unanswered one. Without a record of it, the
+    // most expensive document in the library — a scan that recognises to nothing — is rasterised
+    // and recognised again every time it is opened, because nothing can say the last attempt
+    // already reached the end.
+    await indexBlank();
+
+    const stored = store.getDocument(await import("../hash.js").then((m) => m.contentHash(BYTES)));
+    expect(stored).not.toBeNull();
+    if (stored === null) return;
+    expect(store.chunksWrittenAt({ documentId: stored.id, ...activeChunkScopeContract(embedder, "balanced") })).not.toBeNull();
+  }, 60_000);
+
+  it("replaces a finished scope whose document now reads as empty, so its old passages cannot be served", async () => {
+    // The state that matters is a *completed* index for these exact bytes, not an interrupted one:
+    // the marker vouches for it, so a preflight will serve it. When the same bytes are read again
+    // and there is nothing on the page, leaving those passages behind means the next open is
+    // answered with text the current reading of the document does not contain.
+    const indexed = expectIndexed(await indexWith(FIRST_TEXT, withProvenance));
+    const contract = activeChunkScopeContract(embedder, "balanced");
+    const scope = { documentId: indexed.documentId, ...contract };
+    expect(store.countIndexedChunks(scope)).toBeGreaterThan(0);
+    expect(store.chunksWrittenAt(scope)).not.toBeNull();
+
+    const emptied = await indexDocument(store, embedder, {
+      bytes: BYTES,
+      name: "moons.pdf",
+      filePath: null,
+      pageCount: 1,
+      chunkingProfile: "balanced",
+      pages: [],
+      markdownCache: {
+        ...withProvenance(""),
+        pages: [{ page: 1, markdown: "" }],
+        pageProvenance: [{ page: 1, status: "empty" }],
+      },
+    });
+
+    expect(emptied.status).toBe("empty");
+    expect(store.countIndexedChunks(scope)).toBe(0);
+    // And what the next open would be served is the empty document, not the passages that are gone.
+    expect(
+      store.findReusableIndex({
+        contentHash: indexed.contentHash,
+        textExtractionVersion: TEXT_EXTRACTION_VERSION,
+        ocrExtractionVersion: OCR_EXTRACTION_VERSION,
+        markdownEngineId: MARKDOWN_ENGINE_ID,
+        markdownVersion: MARKDOWN_VERSION,
+        scope: contract,
+      }),
+    ).toEqual({ documentId: indexed.documentId, pageCount: 1, textSource: "none", chunkCount: 0 });
+  }, 60_000);
+
+  it("keeps a finished scope when the empty reading is only a page nothing could read", async () => {
+    // Emptiness is a fact about the document only when every page was accounted for. A run that
+    // could not read the page has discovered nothing about it, and throwing away a working index on
+    // the strength of that would lose passages to a missing recogniser.
+    const indexed = expectIndexed(await indexWith(FIRST_TEXT, withProvenance));
+    const scope = { documentId: indexed.documentId, ...activeChunkScopeContract(embedder, "balanced") };
+    const before = store.countIndexedChunks(scope);
+    expect(before).toBeGreaterThan(0);
+
+    const gap = await indexDocument(store, embedder, {
+      bytes: BYTES,
+      name: "moons.pdf",
+      filePath: null,
+      pageCount: 1,
+      chunkingProfile: "balanced",
+      pages: [],
+      unresolvedPages: [1],
+      markdownCache: {
+        ...withProvenance(""),
+        pages: [{ page: 1, markdown: "" }],
+        pageProvenance: [{ page: 1, status: "unresolved" }],
+      },
+    });
+
+    expect(gap.status).toBe("incomplete");
+    // The passages survive, which is what this protects: a missing recogniser must not cost the
+    // document its index.
+    expect(store.countIndexedChunks(scope)).toBe(before);
+    // The claim over them does not, and that is correct rather than incidental. A claim vouches for
+    // chunks *and* for the text they were built from, and the text now stored is a reading with a
+    // hole in it. The chunks stay searchable; nothing may reuse them without reading the document
+    // again, which is the same conclusion the unresolved page forces anyway.
+    expect(store.chunksWrittenAt(scope)).toBeNull();
+  }, 60_000);
+
   it("writes no cache when it was cancelled before reaching the empty result", async () => {
     const controller = new AbortController();
     const result = await indexBlank(controller.signal, () => controller.abort());
@@ -340,6 +429,250 @@ describe("a document with no text at all", () => {
     const cached = db.prepare("SELECT COUNT(*) AS count FROM document_markdown").get() as { count: number };
     db.close();
     expect(cached.count).toBe(0);
+  }, 60_000);
+});
+
+/**
+ * A real store, watched at one moment.
+ *
+ * Everything is delegated to the store under test — this replaces no behaviour. The only addition
+ * is that when the new cache is written, something else is asked what it can still see. That
+ * "something else" is a second connection to the same file, which is the view another process has,
+ * and between two committed writes it is the only place the ordering under test is observable.
+ */
+function watchedAtCacheWrite(inner: SemanticStore, observe: () => void): SemanticStore {
+  return {
+    ...inner,
+    putMarkdown(documentId, cacheInput) {
+      observe();
+      inner.putMarkdown(documentId, cacheInput);
+    },
+  };
+}
+
+describe("replacing the index of a document whose text changed", () => {
+  it("withdraws the old scope's claim before the new extraction becomes visible", async () => {
+    // The window this closes. Both writes commit, so between them any other process reading this
+    // file sees whatever combination they leave behind. Writing the new cache first left one that
+    // is a lie: the document row and its cache describe the new reading, while the completion
+    // marker still vouches for embeddings built from the old one — and a preflight landing there
+    // serves the old passages as though they were the new ones.
+    const first = expectIndexed(await indexWith(FIRST_TEXT, withProvenance));
+    const scope = { documentId: first.documentId, ...activeChunkScopeContract(embedder, "balanced") };
+    expect(store.chunksWrittenAt(scope)).not.toBeNull();
+
+    const observer = openSemanticStore({ dataDir });
+    const claimedWhenCacheWritten: Array<string | null> = [];
+    try {
+      await indexDocument(watchedAtCacheWrite(store, () => claimedWhenCacheWritten.push(observer.chunksWrittenAt(scope))), embedder, {
+        bytes: BYTES,
+        name: "moons.pdf",
+        filePath: null,
+        pageCount: 1,
+        chunkingProfile: "balanced",
+        pages: [{ page: 1, text: REVISED_TEXT, source: "pdf" }],
+        markdownCache: withProvenance(REVISED_TEXT),
+      });
+    } finally {
+      observer.close();
+    }
+
+    expect(claimedWhenCacheWritten).toEqual([null]);
+  }, 60_000);
+});
+
+/**
+ * A real store, with another run getting there first.
+ *
+ * Everything is delegated; the only addition is that the instant this run tries to publish its
+ * claim, a second connection to the same file rebuilds the scope out from under it. That is the
+ * interleaving two processes produce on their own, put where the assertion can see it.
+ */
+function rebuiltByAnotherRunAtCompletion(inner: SemanticStore, interfere: () => void): SemanticStore {
+  return {
+    ...inner,
+    completeChunkScope(scope, completion) {
+      interfere();
+      return inner.completeChunkScope(scope, completion);
+    },
+  };
+}
+
+describe("a run that cannot publish what it built", () => {
+  /** The other run's rebuild: it clears the scope and writes a chunk of its own. */
+  function otherRunRebuilds(documentId: number, vector: Float32Array): () => void {
+    return () => {
+      const other = openSemanticStore({ dataDir });
+      try {
+        const scope = { documentId, ...activeChunkScopeContract(embedder, "balanced" as const) };
+        other.beginChunkReplace(scope);
+        other.insertChunkBatch(scope, [
+          { id: "theirs:1:0", page: 1, index: 0, text: REVISED_TEXT, headingPath: [], vector },
+        ]);
+      } finally {
+        other.close();
+      }
+    };
+  }
+
+  it("reports a conflict instead of ready when another run replaced the scope it rebuilt", async () => {
+    // Reporting `ready` here would tell the reader their document is searchable under an index
+    // this run did not write and cannot vouch for. The claim was refused; the honest answer is
+    // that the run did not finish, and the next open reads the document again.
+    const first = expectIndexed(await indexWith(FIRST_TEXT, withProvenance));
+    const vector = await embedder.embed(REVISED_TEXT, "passage");
+    const watched = rebuiltByAnotherRunAtCompletion(store, otherRunRebuilds(first.documentId, vector));
+
+    await expect(
+      indexDocument(watched, embedder, {
+        bytes: BYTES,
+        name: "moons.pdf",
+        filePath: null,
+        pageCount: 1,
+        chunkingProfile: "balanced",
+        pages: [{ page: 1, text: REVISED_TEXT, source: "pdf" }],
+        markdownCache: withProvenance(REVISED_TEXT),
+      }),
+    ).rejects.toThrow(/at the same time/i);
+
+    const scope = { documentId: first.documentId, ...activeChunkScopeContract(embedder, "balanced") };
+    expect(store.chunksWrittenAt(scope)).toBeNull();
+  }, 60_000);
+
+  it("reports a conflict instead of reused when another run replaced the chunks it matched", async () => {
+    const first = expectIndexed(await indexWith(FIRST_TEXT, withProvenance));
+    const vector = await embedder.embed(REVISED_TEXT, "passage");
+    const watched = rebuiltByAnotherRunAtCompletion(store, otherRunRebuilds(first.documentId, vector));
+
+    // The same text again, so this run finds the stored chunks identical and takes the branch that
+    // reuses them — and then cannot publish, because they are no longer the chunks it matched.
+    await expect(
+      indexDocument(watched, embedder, {
+        bytes: BYTES,
+        name: "moons.pdf",
+        filePath: null,
+        pageCount: 1,
+        chunkingProfile: "balanced",
+        pages: [{ page: 1, text: FIRST_TEXT, source: "pdf" }],
+        markdownCache: withProvenance(FIRST_TEXT),
+      }),
+    ).rejects.toThrow(/at the same time/i);
+  }, 60_000);
+
+  it("reports a conflict instead of empty when another run wrote chunks into the scope it emptied", async () => {
+    const first = expectIndexed(await indexWith(FIRST_TEXT, withProvenance));
+    const vector = await embedder.embed(REVISED_TEXT, "passage");
+    const watched = rebuiltByAnotherRunAtCompletion(store, otherRunRebuilds(first.documentId, vector));
+
+    await expect(
+      indexDocument(watched, embedder, {
+        bytes: BYTES,
+        name: "moons.pdf",
+        filePath: null,
+        pageCount: 1,
+        chunkingProfile: "balanced",
+        pages: [],
+        markdownCache: {
+          ...withProvenance(""),
+          pages: [{ page: 1, markdown: "" }],
+          pageProvenance: [{ page: 1, status: "empty" }],
+        },
+      }),
+    ).rejects.toThrow(/at the same time/i);
+  }, 60_000);
+
+  it("is not a conflict when the run simply has no text to bind, and its chunks stay searchable", async () => {
+    // A caller that hands over page text without saying where it came from cannot publish a reuse
+    // claim — there is nothing to bind — and that is an ordinary outcome, not a race. Its chunks
+    // are written and searchable; only the claim is missing.
+    const indexed = expectIndexed(await indexWith(FIRST_TEXT));
+
+    expect(indexed.status).toBe("ready");
+    const scope = { documentId: indexed.documentId, ...activeChunkScopeContract(embedder, "balanced") };
+    expect(store.countIndexedChunks(scope)).toBeGreaterThan(0);
+    expect(store.chunksWrittenAt(scope)).toBeNull();
+  }, 60_000);
+});
+
+describe("advancing the extraction version a document records", () => {
+  /** The two version columns, read from the file rather than from what the pipeline returned. */
+  function recordedVersions(documentId: number): { text: unknown; ocr: unknown } {
+    const db = new Database(semanticIndexPath(dataDir), { readonly: true });
+    const row = db
+      .prepare("SELECT text_extraction_version, ocr_extraction_version FROM documents WHERE id = ?")
+      .get(documentId) as Record<string, unknown>;
+    db.close();
+    return { text: row.text_extraction_version, ocr: row.ocr_extraction_version };
+  }
+
+  it("does not advance them until the cache they describe has been written", async () => {
+    // The upgrade window. The row's versions say how the text it holds was produced, and they used
+    // to be written the moment indexing started — before the extraction they describe was cached.
+    // A run interrupted in between left a row claiming a newer reading than the cache underneath
+    // it, and anything that trusts those columns is then reading a stale cache as though it were
+    // current.
+    const first = expectIndexed(await indexWith(FIRST_TEXT, withProvenance));
+    expect(recordedVersions(first.documentId)).toEqual({
+      text: TEXT_EXTRACTION_VERSION,
+      ocr: OCR_EXTRACTION_VERSION,
+    });
+
+    // A build that reads documents a new way, stopped after the document row is touched and
+    // before its cache is written. The cancel is queued as a microtask from the progress callback,
+    // so it lands inside the awaited chunk build — the exact window — rather than at a moment a
+    // timer happened to pick.
+    const controller = new AbortController();
+    const result = await indexDocument(store, embedder, {
+      bytes: BYTES,
+      name: "moons.pdf",
+      filePath: null,
+      pageCount: 1,
+      chunkingProfile: "balanced",
+      pages: [{ page: 1, text: REVISED_TEXT, source: "pdf" }],
+      markdownCache: {
+        ...withProvenance(REVISED_TEXT),
+        textExtractionVersion: TEXT_EXTRACTION_VERSION + 1,
+        ocrExtractionVersion: OCR_EXTRACTION_VERSION + 1,
+      },
+      signal: controller.signal,
+      onProgress: () => queueMicrotask(() => controller.abort()),
+    });
+
+    expect(result).toEqual({ status: "cancelled" });
+    // The row still describes the cache it actually holds, and that cache is untouched.
+    expect(recordedVersions(first.documentId)).toEqual({
+      text: TEXT_EXTRACTION_VERSION,
+      ocr: OCR_EXTRACTION_VERSION,
+    });
+    expect(store.getMarkdown(first.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)?.pages).toEqual([
+      { page: 1, markdown: FIRST_TEXT },
+    ]);
+  }, 60_000);
+
+  it("advances them with the cache when the run completes", async () => {
+    const first = expectIndexed(await indexWith(FIRST_TEXT, withProvenance));
+
+    await indexDocument(store, embedder, {
+      bytes: BYTES,
+      name: "moons.pdf",
+      filePath: null,
+      pageCount: 1,
+      chunkingProfile: "balanced",
+      pages: [{ page: 1, text: REVISED_TEXT, source: "pdf" }],
+      markdownCache: {
+        ...withProvenance(REVISED_TEXT),
+        textExtractionVersion: TEXT_EXTRACTION_VERSION + 1,
+        ocrExtractionVersion: OCR_EXTRACTION_VERSION + 1,
+      },
+    });
+
+    expect(recordedVersions(first.documentId)).toEqual({
+      text: TEXT_EXTRACTION_VERSION + 1,
+      ocr: OCR_EXTRACTION_VERSION + 1,
+    });
+    expect(store.getMarkdown(first.documentId, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)?.pages).toEqual([
+      { page: 1, markdown: REVISED_TEXT },
+    ]);
   }, 60_000);
 });
 

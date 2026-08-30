@@ -73,6 +73,67 @@ export interface ChunkScope {
   dimensions: number;
 }
 
+/**
+ * What a run has to show before its scope may be called finished.
+ *
+ * The identifiers are every chunk the run wrote, and the only ones the scope may hold. The cache is
+ * the text they were built from, written with the claim rather than before it — see
+ * `completeChunkScope`. Without it there is nothing to claim: a claim is a statement about a
+ * pairing, and a run holding only half of one has not established anything.
+ */
+export interface ScopeCompletion {
+  chunkIds: readonly string[];
+  cache?: MarkdownCacheInput;
+}
+
+/**
+ * What became of a run's attempt to publish its scope.
+ *
+ * - `claimed` — the scope held exactly this run's chunks, its text was written beside them, and the
+ *   claim now stands. This is the only outcome a preflight can act on.
+ * - `unclaimed` — the run had no text to bind, so nothing was published and nothing was disturbed.
+ *   An ordinary outcome for a caller that was handed page text without being told where it came
+ *   from; its chunks are written and searchable, and only the reuse claim is missing.
+ * - `conflicted` — the scope no longer holds what this run wrote, because another run rebuilt the
+ *   same document while it was working. Nothing is written. The caller cannot vouch for what is
+ *   there, and neither can this store.
+ */
+export type ScopeCompletionOutcome = "claimed" | "unclaimed" | "conflicted";
+
+/**
+ * A searchable scope without the document it applies to.
+ *
+ * Travels as one value so that a caller asking about a document it has not identified yet cannot
+ * drop a clause on the way: the profile, the chunking version, the model, its version and its
+ * output width decide together which stored chunks answer a search, and four out of five is a
+ * different scope rather than a near miss.
+ */
+export type ChunkScopeContract = Omit<ChunkScope, "documentId">;
+
+/** Everything that has to match before a stored index may be served instead of rebuilt. */
+export interface ReusableIndexQuery {
+  contentHash: string;
+  textExtractionVersion: number;
+  ocrExtractionVersion: number;
+  markdownEngineId: string;
+  markdownVersion: number;
+  scope: ChunkScopeContract;
+}
+
+/**
+ * What a reusable index says about itself.
+ *
+ * There is no field for pages nothing could read, because a snapshot carrying one is not
+ * reusable: a gap is outstanding work, and answering from the cache that records it is what would
+ * make it permanent.
+ */
+export interface ReusableIndex {
+  documentId: number;
+  pageCount: number;
+  textSource: TextSource;
+  chunkCount: number;
+}
+
 /** What became of one cached page. Mirrors `PageStatus`, which is where the meanings are written. */
 export interface CachedPageProvenance {
   page: number;
@@ -83,6 +144,22 @@ export interface MarkdownCacheInput {
   engineId: string;
   markdownVersion: number;
   pages: readonly MarkdownPageRecord[];
+  /**
+   * How the text being cached was produced, when the caller knows.
+   *
+   * Recorded on `documents` in the same transaction as the cache row, because these columns
+   * describe *this* text. Written any earlier and a run interrupted in between would leave a row
+   * claiming a reading of the document that nothing had yet stored — and the next reader would
+   * take a stale cache for a current one.
+   *
+   * **Omit them** to preserve whatever is recorded: a caller that does not know how its text was
+   * produced must not erase what a caller that did know wrote. A version that is supplied has to
+   * be a real one — a positive whole number — and `UNKNOWN_EXTRACTION_VERSION` is refused rather
+   * than read as "I did not say", because a caller that names a version is making a claim and 0
+   * is not a claim anything can be checked against.
+   */
+  textExtractionVersion?: number;
+  ocrExtractionVersion?: number;
   /**
    * What became of each page, when the caller knows.
    *
@@ -168,6 +245,15 @@ export interface SemanticStore {
   readonly diagnostics: StoreDiagnostics;
   getDocument(contentHash: string): StoredDocument | null;
   /**
+   * The stored index for these exact bytes, read this exact way, under this exact scope — or
+   * `null`, meaning the caller has to read the document itself.
+   *
+   * Read-only, and deliberately narrow: it exists so that orchestration can ask one question
+   * instead of assembling an answer out of raw columns and getting a clause wrong. Every clause
+   * it checks is a way the stored snapshot could describe something other than the file in hand.
+   */
+  findReusableIndex(query: ReusableIndexQuery): ReusableIndex | null;
+  /**
    * The document recorded at this exact path, if there is one.
    *
    * An exact match on the stored spelling, deliberately: normalising the argument would mean
@@ -188,15 +274,39 @@ export interface SemanticStore {
    * Paired with `insertChunkBatch` so that embedding — which is asynchronous and slow — never
    * happens inside a transaction. Reuse completeness remains derived:
    * `listIndexedChunkIds` is compared against the identifiers the document is expected to produce,
-   * so a partial or differently-distributed set re-indexes on next open. The disclosure timestamp
-   * is withdrawn here and written only after the final batch; it never decides reuse. Counting
-   * alone is not sufficient — see `indexDocument`.
+   * so a partial or differently-distributed set re-indexes on next open. Counting alone is not
+   * sufficient — see `indexDocument`.
+   *
+   * The completion timestamp is withdrawn here and written only after the final batch, and it
+   * **does** decide reuse: `findReusableIndex` treats it as proof that a scope was finished. That
+   * is why callers withdraw it before they store a new reading of the document rather than after
+   * — between those two writes anything else holding this file open can read whatever combination
+   * they leave behind.
    */
   beginChunkReplace(scope: ChunkScope): void;
-  /** Mark the exact searchable scope complete after its final chunk batch committed. */
-  markChunksComplete(scope: ChunkScope): void;
+  /**
+   * Claim that this exact searchable scope is finished, if it still holds exactly what the run
+   * wrote — and bind the text it was built from to that claim.
+   *
+   * One transaction, and it answers rather than asserts — see `ScopeCompletionOutcome` for what
+   * each answer means. Nothing is thrown for either refusal, because a second run indexing the same
+   * file is not an error and neither is a caller that has no text to offer.
+   *
+   * **A claim is never published without `cache`.** It is the text these chunks were built from,
+   * written in this same transaction, so a claim cannot end up standing over one run's chunks
+   * beside another run's pages. A run that omits it gets `unclaimed`: the scope keeps whatever
+   * state it was in and nothing becomes reusable off the back of a pairing nobody established.
+   */
+  completeChunkScope(scope: ChunkScope, completion: ScopeCompletion): ScopeCompletionOutcome;
   /** The completion time for this exact searchable scope, or null for legacy/incomplete rows. */
   chunksWrittenAt(scope: ChunkScope): string | null;
+  /**
+   * Add embedded chunks to a scope, and retract any claim that the scope is finished.
+   *
+   * The retraction is part of the same transaction as the insert, and it is what makes the claim
+   * mean something across processes: a batch from a run that is still going cannot land on top of
+   * another run's finished index and leave the claim standing over the mixture.
+   */
   insertChunkBatch(scope: ChunkScope, chunks: readonly ChunkInsert[]): void;
   replaceChunks(scope: ChunkScope, chunks: readonly ChunkInsert[]): void;
   countIndexedChunks(scope: ChunkScope): number;
@@ -209,11 +319,16 @@ export interface SemanticStore {
   listIndexedChunkIds(scope: ChunkScope): string[];
   search(scope: ChunkScope, queryVector: Float32Array, topK: number, minScore: number): ScoredChunk[];
   /**
-   * Cache the Markdown a document was extracted to.
+   * Cache the Markdown a document was extracted to, and retract every completion claim over it.
    *
    * Raises rather than returning a flag when the pages are not exactly `1..pageCount` for this
    * document. A cache that does not describe the whole document would later be served as though
    * it did, and a boolean nobody is obliged to read is how that gets missed.
+   *
+   * The retraction is in the same transaction. A claim says a scope holds exactly one run's chunks
+   * *and* that they were built from the text stored beside them, so storing a different reading
+   * ends every claim that was relying on the old one. A run that is completing writes its text
+   * through `completeChunkScope` instead, which puts its claim back in the same transaction.
    */
   putMarkdown(documentId: number, input: MarkdownCacheInput): void;
   /** The cached Markdown, if this engine wrote it at this version and it still parses. */
@@ -273,6 +388,17 @@ function parsePageProvenance(raw: unknown, pageCount: number): CachedPageProvena
     entries.push({ page, status });
   }
   return entries;
+}
+
+/**
+ * `text_source` as one of the four values this program writes, or `null` for anything else.
+ *
+ * A miss rather than an error, consistently with the rest of the cache: a row nobody here wrote
+ * cannot be vouched for, and re-reading the document repairs it. Throwing would refuse to open a
+ * document because of a column that indexing is about to rewrite anyway.
+ */
+function toTextSource(value: string): TextSource | null {
+  return value === "pdf" || value === "ocr" || value === "mixed" || value === "none" ? value : null;
 }
 
 function toStoredDocument(value: unknown): StoredDocument {
@@ -344,6 +470,28 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
   };
 
   const getDocumentStatement = db.prepare("SELECT * FROM documents WHERE content_hash = ?");
+  // Every extraction clause in one predicate: the bytes, how their text was read, how their
+  // pictures were read, and which engine at which version wrote the cache. A row that fails any
+  // of them describes a different reading of this file, so there is nothing here to reuse.
+  const reusableDocumentStatement = db.prepare(
+    `SELECT id, page_count, text_source FROM documents
+      WHERE content_hash = ? AND text_extraction_version = ? AND ocr_extraction_version = ?
+        AND markdown_engine = ? AND markdown_version = ?`,
+  );
+  const scopeChunkIdStatement = db.prepare(
+    `SELECT c.id FROM chunk_embeddings e
+       JOIN document_chunks c ON c.id = e.chunk_id
+      WHERE c.document_id = ? AND c.chunking_profile = ? AND c.chunking_version = ?
+        AND e.model_id = ? AND e.model_version = ? AND e.dimensions = ?`,
+  );
+  const withdrawScopeClaimStatement = db.prepare(
+    `DELETE FROM chunk_scope_snapshots
+      WHERE document_id = ? AND chunking_profile = ? AND chunking_version = ?
+        AND model_id = ? AND model_version = ? AND dimensions = ?`,
+  );
+  const withdrawDocumentClaimsStatement = db.prepare(
+    "DELETE FROM chunk_scope_snapshots WHERE document_id = ?",
+  );
   const insertChunkStatement = db.prepare(
     `INSERT INTO document_chunks (id,document_id,page_number,chunk_index,text,chunking_profile,chunking_version,heading_path)
      VALUES (?,?,?,?,?,?,?,?)`,
@@ -353,7 +501,7 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
      VALUES (?,?,?,?,?,?)`,
   );
 
-  const writeMarkdown = db.transaction((documentId: number, input: MarkdownCacheInput) => {
+  function writeMarkdownRows(documentId: number, input: MarkdownCacheInput): void {
     // This is a boundary in its own right — it stamps `documents` atomically, so it cannot lean
     // on a caller having validated first. A blank engine id or a nonsensical version would be
     // written straight into the provenance that later reads key off, and `getMarkdown` would
@@ -365,6 +513,19 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
       throw new StoreDataError(
         `Cannot cache Markdown for document ${documentId}: the representation version must be a positive whole number, not ${String(input.markdownVersion)}.`,
       );
+    }
+    // The same boundary argument as the engine id. These become the row's account of how its text
+    // was read, so a nonsense value written here is a claim every later reader would trust.
+    for (const [field, value] of [
+      ["textExtractionVersion", input.textExtractionVersion],
+      ["ocrExtractionVersion", input.ocrExtractionVersion],
+    ] as const) {
+      if (value === undefined) continue;
+      if (!Number.isInteger(value) || value < 1) {
+        throw new StoreDataError(
+          `Cannot cache Markdown for document ${documentId}: ${field} must be a positive whole number, not ${String(value)}.`,
+        );
+      }
     }
 
     // The store is the only place that knows how many pages the document has, so it checks here
@@ -422,15 +583,66 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
     );
 
     // The stamp is part of the same write. Applying it before the row exists is how a document
-    // comes to advertise a cache it does not have.
-    db.prepare("UPDATE documents SET markdown_engine = ?, markdown_version = ? WHERE id = ?").run(
-      input.engineId,
-      input.markdownVersion,
+    // comes to advertise a cache it does not have — and the extraction versions travel with it for
+    // the same reason: they describe the text in this transaction, not the run that intended it.
+    // An omitted version reaches the statement as zero, which is the same sentinel the document
+    // upsert uses for "the caller did not say" and preserves what is recorded. A caller cannot
+    // send that zero itself: the check above refuses it, so preserving is something you get by
+    // saying nothing rather than by naming a version that means nothing.
+    // Named parameters, because each version is read twice and better-sqlite3 binds `?N` by name
+    // rather than by position — measured against 13.0.3, where a numbered statement bound
+    // positionally raises "Too many parameter values were provided".
+    db.prepare(
+      `UPDATE documents SET markdown_engine = @engineId, markdown_version = @markdownVersion,
+         text_extraction_version =
+           CASE WHEN @textExtractionVersion = 0 THEN text_extraction_version ELSE @textExtractionVersion END,
+         ocr_extraction_version =
+           CASE WHEN @ocrExtractionVersion = 0 THEN ocr_extraction_version ELSE @ocrExtractionVersion END
+       WHERE id = @documentId`,
+    ).run({
+      engineId: input.engineId,
+      markdownVersion: input.markdownVersion,
+      textExtractionVersion: input.textExtractionVersion ?? 0,
+      ocrExtractionVersion: input.ocrExtractionVersion ?? 0,
       documentId,
+    });
+
+    // Every claim over this document goes with the old text. A completion marker vouches for two
+    // things at once — that a scope holds exactly the chunks one run wrote, and that they were
+    // built from the text stored beside them — so a different reading of the document arriving
+    // afterwards breaks the second half of that. The cache is keyed to the document rather than to
+    // one scope, so all of them are retracted; the run that completes writes its own claim back in
+    // the same transaction as its text, and any other scope re-establishes its claim the next time
+    // it is read in full.
+    withdrawDocumentClaimsStatement.run(documentId);
+  }
+
+  const writeMarkdown = db.transaction(writeMarkdownRows);
+
+  /** Every embedded chunk identifier in this exact scope, as the completion check and the public
+   *  reader both need it. */
+  function storedChunkIds(scope: ChunkScope): string[] {
+    const context = "indexed chunk id";
+    return scopeChunkIdStatement
+      .all(scope.documentId, scope.chunkingProfile, scope.chunkingVersion, scope.modelId, scope.modelVersion, scope.dimensions)
+      .map((row) => requireString(asRow(row, context), "id", context));
+  }
+
+  function withdrawScopeClaim(scope: ChunkScope): void {
+    withdrawScopeClaimStatement.run(
+      scope.documentId, scope.chunkingProfile, scope.chunkingVersion,
+      scope.modelId, scope.modelVersion, scope.dimensions,
     );
-  });
+  }
 
   const insertBatch = db.transaction((scope: ChunkScope, chunks: readonly ChunkInsert[]) => {
+    // Any claim over this scope is withdrawn in the same transaction that changes it. Another
+    // process's run can be part way through this scope when a claim is written — its remaining
+    // batches then land on top of somebody else's finished index — and this is what stops that
+    // mixture being served: the batch that creates it also destroys the claim that would vouch
+    // for it. Withdrawing first, in the same transaction, leaves no instant where the extra rows
+    // exist under a claim that has not yet been retracted.
+    withdrawScopeClaim(scope);
     const now = clock().toISOString();
     for (const chunk of chunks) {
       insertChunkStatement.run(
@@ -458,7 +670,31 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
     ).run(scope.documentId, scope.chunkingVersion, scope.chunkingProfile, scope.chunkingVersion);
   });
 
-  const markScopeComplete = db.transaction((scope: ChunkScope) => {
+  const claimScopeComplete = db.transaction((scope: ChunkScope, completion: ScopeCompletion): ScopeCompletionOutcome => {
+    // The identities, not the count. Two runs writing into one scope can leave exactly as many
+    // chunks as either of them expected, made of a mixture neither produced; the identifier
+    // carries a fingerprint of the text, so comparing the set is what tells them apart.
+    //
+    // Checked before the text, so that a run which lost the race is told it lost rather than told
+    // it had nothing to say.
+    const stored = storedChunkIds(scope);
+    const expected = new Set(completion.chunkIds);
+    if (stored.length !== expected.size || !stored.every((id) => expected.has(id))) return "conflicted";
+
+    // No text, no claim. A claim says these chunks and this document's text came out of one
+    // reading, so a run that cannot supply the text has established nothing to publish — and
+    // publishing anyway would pair its chunks with whatever text happened to be stored, which on a
+    // document that has been read before is an earlier reading of it. Nothing is written here, in
+    // either direction: the run's own chunk writes already retracted any claim they invalidated.
+    if (completion.cache === undefined) return "unclaimed";
+
+    // The text these chunks were built from is written here, with the claim, in this transaction.
+    // Another run that stored its own reading while this one was embedding would otherwise be left
+    // paired with these chunks — its pages beside this run's passages — and nothing afterwards
+    // could tell. Writing it here also retracts every claim over the document, which is why the
+    // claim below is written last.
+    writeMarkdownRows(scope.documentId, completion.cache);
+
     db.prepare(
       `INSERT INTO chunk_scope_snapshots (
          document_id, chunking_profile, chunking_version,
@@ -475,6 +711,7 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
       scope.dimensions,
       clock().toISOString(),
     );
+    return "claimed";
   });
 
   const removeDocument = db.transaction((hash: string): boolean => {
@@ -573,13 +810,84 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
     db.exec("DELETE FROM chunk_embeddings; DELETE FROM document_chunks; DELETE FROM document_markdown; DELETE FROM documents;");
   });
 
-  return {
+  /**
+   * The reusable-index decision, taken as one read.
+   *
+   * Every clause below is read inside a single transaction so that they describe one instant.
+   * The four questions are separate statements — the document row, the cache, the completion
+   * marker, the chunk count — and another process rebuilding this document commits between
+   * them in the ordinary course of things. Composed from two snapshots, the answer can be one
+   * no database ever held: a marker from before a replacement began, over a chunk count taken
+   * half way through it.
+   */
+  const readReusableIndex = db.transaction((query: ReusableIndexQuery): ReusableIndex | null => {
+    const raw = reusableDocumentStatement.get(
+      query.contentHash,
+      query.textExtractionVersion,
+      query.ocrExtractionVersion,
+      query.markdownEngineId,
+      query.markdownVersion,
+    );
+    if (raw === undefined) return null;
+
+    const context = "reusable documents row";
+    const row = asRow(raw, context);
+    const documentId = requireInteger(row, "id", context);
+    const pageCount = requireInteger(row, "page_count", context);
+    const textSource = toTextSource(requireString(row, "text_source", context));
+    if (textSource === null) return null;
+
+    // The cache decides two things at once: that the text is still servable, and what became of
+    // each page. `getMarkdown` already refuses a row that does not parse or does not cover the
+    // document, and a row that cannot account for its pages is refused here — an empty page it
+    // cannot explain is a gap everywhere else in this program, and this is not the place to
+    // start guessing it was blank.
+    const cached = store.getMarkdown(documentId, query.markdownEngineId, query.markdownVersion);
+    if (cached === null || cached.provenance === null) return null;
+
+    // A page nothing could read is work still outstanding, so this document is not finished and
+    // must not be answered from storage. Reuse here would be self-perpetuating: the reader that
+    // could recognise the page would never be asked to, and every later open would consult the
+    // same cache and reach the same conclusion. The full read path is what repairs it.
+    if (cached.provenance.some((page) => page.status === "unresolved")) return null;
+
+    // The completion marker, and only then the count. The marker is withdrawn before a
+    // replacement clears anything and written after the last batch commits, so its presence is
+    // the one available proof that a scope was finished rather than interrupted. The count is
+    // the answer's chunk total, not the proof — chunks on disk are equally consistent with a run
+    // that stopped half way.
+    const scope: ChunkScope = { documentId, ...query.scope };
+    if (store.chunksWrittenAt(scope) === null) return null;
+    const chunkCount = store.countIndexedChunks(scope);
+    // A finished scope with nothing in it is a real state — a blank document, or a scan that
+    // recognised to nothing — and it is the one most worth not reading twice. It is only
+    // believable when the cached text is empty too: a scope whose pages carry words and whose
+    // chunks have gone is damaged, and serving it would report a searchable document with
+    // nothing in it. The test is deliberately the stricter of the two, so a document whose text
+    // merely produced no chunk is read again rather than served as empty.
+    if (chunkCount === 0 && cached.pages.some((page) => page.markdown.trim().length > 0)) return null;
+
+    return { documentId, pageCount, textSource, chunkCount };
+  });
+
+  const store: SemanticStore = {
     schemaVersion: CURRENT_SCHEMA_VERSION,
     diagnostics,
 
     getDocument(contentHash) {
       const row = getDocumentStatement.get(contentHash);
       return row === undefined ? null : toStoredDocument(row);
+    },
+
+    findReusableIndex(query) {
+      // Deferred, because this reads and never writes: it takes no write lock and cannot make
+      // another connection wait. What it does take is one snapshot — SQLite holds the read view
+      // established by the first statement until the transaction ends — so the row, the cache, the
+      // completion marker and the chunk count all describe the same instant. Without it the four
+      // statements could straddle another process's rebuild and compose an answer out of two
+      // different databases: a marker from before the replacement began and a chunk count from
+      // half way through it.
+      return readReusableIndex.deferred(query);
     },
 
     upsertDocument(input) {
@@ -617,8 +925,8 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
       clearScope.immediate(scope);
     },
 
-    markChunksComplete(scope) {
-      markScopeComplete.immediate(scope);
+    completeChunkScope(scope, completion) {
+      return claimScopeComplete.immediate(scope, completion);
     },
 
     chunksWrittenAt(scope) {
@@ -665,16 +973,7 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
     },
 
     listIndexedChunkIds(scope) {
-      const context = "indexed chunk id";
-      return db
-        .prepare(
-          `SELECT c.id FROM chunk_embeddings e
-             JOIN document_chunks c ON c.id = e.chunk_id
-            WHERE c.document_id = ? AND c.chunking_profile = ? AND c.chunking_version = ?
-              AND e.model_id = ? AND e.model_version = ? AND e.dimensions = ?`,
-        )
-        .all(scope.documentId, scope.chunkingProfile, scope.chunkingVersion, scope.modelId, scope.modelVersion, scope.dimensions)
-        .map((row) => requireString(asRow(row, context), "id", context));
+      return storedChunkIds(scope);
     },
 
     search(scope, queryVector, topK, minScore) {
@@ -804,4 +1103,5 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
       db.close();
     },
   };
+  return store;
 }

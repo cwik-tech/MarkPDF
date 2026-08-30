@@ -296,7 +296,18 @@ test("an agent reads the page that exists only as a picture, in a document MarkP
     // toolbar as "Checking index".
     stage = "checking recognition was reported as its own phase";
     const preparation = await readPreparation(window);
-    const expectedOcrPosition = `${ADVERSARIAL.imageOnlyPage}/${ADVERSARIAL.pageCount}`;
+    // The counter belongs to the recognition queue, not to the document. Four pages of this
+    // thirteen-page report have to be read: the figure on page 4, the two pages that are only
+    // pictures, and the blank page at the end. Page 10 is the second of those four, so the reader
+    // watching a bar sees it fill and finish — where `10/13` would describe a document nobody is
+    // recognising thirteen pages of.
+    const ocrTargets = [
+      ADVERSARIAL.figurePage,
+      ADVERSARIAL.imageOnlyPage,
+      ADVERSARIAL.chartPage,
+      ADVERSARIAL.blankPage,
+    ].sort((first, second) => first - second);
+    const expectedOcrPosition = `${ocrTargets.indexOf(ADVERSARIAL.imageOnlyPage) + 1}/${ocrTargets.length}`;
     expect(
       preparation.events,
       `recognition events, from ${JSON.stringify(preparation.events)}`,

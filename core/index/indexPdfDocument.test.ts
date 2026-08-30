@@ -8,8 +8,16 @@ import { createCanvas } from "@napi-rs/canvas";
 import { openSemanticStore, type SemanticStore } from "../store/index.js";
 import { semanticIndexPath } from "../paths.js";
 import { createDeterministicEmbedder } from "./deterministicEmbedder.js";
+import type { Embedder } from "./embeddings.js";
+import type { OcrPageCandidate, ResolveOcrRequest } from "../extract/readDocumentPages.js";
 import { indexPdfDocument } from "./indexPdfDocument.js";
 import { expectIndexed } from "./indexResult.test-support.js";
+import {
+  MARKDOWN_ENGINE_ID,
+  MARKDOWN_VERSION,
+  OCR_EXTRACTION_VERSION,
+  TEXT_EXTRACTION_VERSION,
+} from "../models.js";
 
 /**
  * V5's acceptance criterion, end to end: content known to be on PDF page 1 is *stored* with
@@ -121,6 +129,14 @@ async function buildStampedScanPdf(): Promise<Uint8Array> {
   return pdf.save();
 }
 
+/** Two pages with nothing on them at all: no text layer, no picture, nothing to recognise. */
+async function buildBlankPdf(): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create();
+  pdf.addPage([612, 792]);
+  pdf.addPage([612, 792]);
+  return pdf.save();
+}
+
 async function buildScannedPdf(): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -170,6 +186,16 @@ function storedChunks(): Array<{ page: number; text: string }> {
     const record = row as { page: number; text: string };
     return { page: record.page, text: record.text };
   });
+}
+
+/** The row's own account of how its text was read, from the file rather than from a return value. */
+function recordedTextExtractionVersion(documentId: number): unknown {
+  const db = new Database(semanticIndexPath(dataDir), { readonly: true });
+  const row = db
+    .prepare("SELECT text_extraction_version FROM documents WHERE id = ?")
+    .get(documentId) as Record<string, unknown>;
+  db.close();
+  return row.text_extraction_version;
 }
 
 function pagesHolding(chunks: ReadonlyArray<{ page: number; text: string }>, phrase: string): number[] {
@@ -267,11 +293,16 @@ describe("indexing a PDF straight from its bytes", () => {
     expect(reading[1]).toEqual({ status: "checking", current: 3, total: 3 });
   }, 120_000);
 
-  it("reports recognition as its own phase, before any indexing, while a scan is read", async () => {
+  it("counts recognition against the pages it has to read, and reports it before any indexing", async () => {
     // The defect this closes: the window showed "Checking index" for the whole time the main
     // process was recognising pages, so the slowest part of preparing a scanned document was
     // reported as though nothing in particular were happening. Recognition now crosses as its own
     // status with its own counters, and it must arrive before the first embedding event.
+    //
+    // The counters are the recognition queue's, because that is the work the bar is drawn from. On
+    // the measured 628-page book, document page 437 is the 42nd of 59 pages that need reading, and
+    // a reader watching `437/628` sees a bar that will stop at seven per cent and never finish. The
+    // page itself is still worth saying, so it stays in the message.
     const reported: Array<{ status: string; current: number | undefined; total: number | undefined; message: string | undefined }> = [];
 
     await indexPdfDocument(store, embedder, {
@@ -280,7 +311,7 @@ describe("indexing a PDF straight from its bytes", () => {
       filePath: null,
       chunkingProfile: "balanced",
       resolveOcr: async (request) => {
-        request.onProgress?.({ page: 2, current: 1, total: 1, totalPages: request.totalPages, message: "Reading page 2 with OCR" });
+        request.onProgress?.({ page: 437, current: 42, total: 59, totalPages: 628, message: "Reading page 437 with OCR" });
         return request.pages.map((page) => ({ page, text: SCAN_BODY_OCR }));
       },
       onProgress: (progress) =>
@@ -288,7 +319,7 @@ describe("indexing a PDF straight from its bytes", () => {
     });
 
     expect(reported.filter((event) => event.status === "ocr")).toEqual([
-      { status: "ocr", current: 2, total: 3, message: "Reading page 2 with OCR" },
+      { status: "ocr", current: 42, total: 59, message: "Reading page 437 with OCR" },
     ]);
     expect(
       reported.findIndex((event) => event.status === "ocr"),
@@ -576,5 +607,350 @@ describe("indexing a PDF straight from its bytes", () => {
     expect(await running).toEqual({ status: "cancelled" });
     expect(store.info().documentCount).toBe(0);
     expect(storedChunks()).toEqual([]);
+  }, 120_000);
+});
+
+/**
+ * An embedder that would notice being used.
+ *
+ * Reuse is supposed to answer from what is stored. Substituting the model with one that throws is
+ * how a test proves the answer did not come from a fresh embedding, rather than merely being fast.
+ */
+function refusingEmbedder(): Embedder {
+  return {
+    modelId: embedder.modelId,
+    dimensions: embedder.dimensions,
+    embed: () => {
+      throw new Error("The embedding model must not be used to answer from a stored index.");
+    },
+  };
+}
+
+/** A recognition seam that would notice being used, for the same reason. */
+function refusingOcr(): (request: ResolveOcrRequest) => Promise<readonly OcrPageCandidate[]> {
+  return () => {
+    throw new Error("Recognition must not run for a document whose stored index already matches.");
+  };
+}
+
+describe("re-indexing a document whose stored index already matches it", () => {
+  it("reports the stored index as reused without reading or recognising a page", async () => {
+    // The whole point of the preflight: opening a 628-page scan a second time must not rasterise
+    // it, recognise it, load the model, or rebuild a chunk. Both expensive seams are replaced with
+    // ones that throw, so an answer that arrives at all is an answer that came from the store.
+    const bytes = await buildScannedPdf();
+    const first = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "scan.pdf",
+        filePath: "/library/scan.pdf",
+        chunkingProfile: "balanced",
+        resolveOcr: async (request) => request.pages.map((page) => ({ page, text: SCAN_BODY_OCR })),
+      }),
+    );
+    expect(first.status).toBe("ready");
+
+    const reported: string[] = [];
+    const again = expectIndexed(
+      await indexPdfDocument(store, refusingEmbedder(), {
+        bytes,
+        name: "scan.pdf",
+        filePath: "/library/scan.pdf",
+        chunkingProfile: "balanced",
+        resolveOcr: refusingOcr(),
+        onProgress: (progress) => reported.push(progress.status),
+      }),
+    );
+
+    expect(again.status).toBe("reused");
+    expect(again.documentId).toBe(first.documentId);
+    expect(again.contentHash).toBe(first.contentHash);
+    expect(again.pageCount).toBe(first.pageCount);
+    expect(again.chunkCount).toBe(first.chunkCount);
+    expect(again.textSource).toBe(first.textSource);
+    expect(again.unresolvedPages).toEqual([]);
+    // No recognition phase, and no indexing phase either: nothing was read and nothing was built.
+    expect(reported).toEqual(["ready"]);
+  }, 120_000);
+
+  it("reads a document again when a page was never resolved, so recognition can repair it", async () => {
+    // A gap is outstanding work, not a settled state. The first run had nothing to recognise the
+    // scan with and stored the page as unread; the second has a recogniser, and it must be given
+    // the chance to use it. Answering that open from the stored snapshot would make the gap
+    // permanent — every later open would read the same cache and never go back for the page.
+    const bytes = await buildScannedPdf();
+    const first = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "scan.pdf",
+        filePath: "/library/scan.pdf",
+        chunkingProfile: "balanced",
+      }),
+    );
+    expect(first.status).toBe("incomplete");
+    expect(first.unresolvedPages).toEqual([2]);
+
+    const repaired = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "scan.pdf",
+        filePath: "/library/scan.pdf",
+        chunkingProfile: "balanced",
+        resolveOcr: async (request) => request.pages.map((page) => ({ page, text: SCAN_BODY_OCR })),
+      }),
+    );
+
+    expect(repaired.status).toBe("ready");
+    expect(repaired.unresolvedPages).toEqual([]);
+    expect(repaired.documentId).toBe(first.documentId);
+    // And the page's words are in the index, which is the point of going back for it.
+    expect(pagesHolding(storedChunks(), SCAN_BODY_OCR)).toEqual([2]);
+  }, 120_000);
+
+  it("still records the file the document was opened from, so a path finds it", async () => {
+    // Answering from the store must not leave the row describing where the file used to be. The
+    // path lookup that `search --path` and the MCP tools use reads exactly this row, and it ranks
+    // rows by when they were last opened.
+    const bytes = await buildReportPdf();
+    const first = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "report.pdf",
+        filePath: "/library/report.pdf",
+        chunkingProfile: "balanced",
+      }),
+    );
+
+    const again = expectIndexed(
+      await indexPdfDocument(store, refusingEmbedder(), {
+        bytes,
+        name: "quarterly-report.pdf",
+        filePath: "/library/quarterly-report.pdf",
+        chunkingProfile: "balanced",
+      }),
+    );
+
+    expect(again.status).toBe("reused");
+    expect(store.getDocumentByPath("/library/quarterly-report.pdf")?.id).toBe(first.documentId);
+  }, 120_000);
+
+  it("answers for a document with nothing on its pages without reading it again", async () => {
+    // A blank document is as finished as an index gets: recognition looked at every page and found
+    // nothing, so there is nothing to embed and nothing left to do. Without a record of that, the
+    // most expensive case — a scan that recognises to nothing — would be rasterised and recognised
+    // again on every open, which is the defect this whole path exists to remove.
+    const bytes = await buildBlankPdf();
+    const looked: number[] = [];
+    const first = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "blank.pdf",
+        filePath: "/library/blank.pdf",
+        chunkingProfile: "balanced",
+        resolveOcr: async (request) => {
+          looked.push(...request.pages);
+          return [];
+        },
+      }),
+    );
+
+    expect(first.status).toBe("empty");
+    expect(first.chunkCount).toBe(0);
+    expect(looked).toEqual([1, 2]);
+
+    const again = expectIndexed(
+      await indexPdfDocument(store, refusingEmbedder(), {
+        bytes,
+        name: "blank.pdf",
+        filePath: "/library/blank.pdf",
+        chunkingProfile: "balanced",
+        resolveOcr: refusingOcr(),
+      }),
+    );
+
+    expect(again.status).toBe("empty");
+    expect(again.chunkCount).toBe(0);
+    expect(again.documentId).toBe(first.documentId);
+    expect(again.pageCount).toBe(2);
+  }, 120_000);
+
+  it("brings a document read by an older build up to date, so the open after that reuses it", async () => {
+    // What raising `TEXT_EXTRACTION_VERSION` leaves behind: a document whose text happens to be
+    // identical under the new reading, recorded as having been read the old way. The preflight
+    // rightly refuses it, so the document is read again — and if that read leaves the record
+    // saying the same thing, every future open repeats the whole read for nothing.
+    const bytes = await buildReportPdf();
+    const first = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "report.pdf",
+        filePath: "/library/report.pdf",
+        chunkingProfile: "balanced",
+      }),
+    );
+
+    const seed = new Database(semanticIndexPath(dataDir));
+    seed
+      .prepare("UPDATE documents SET text_extraction_version = ? WHERE id = ?")
+      .run(TEXT_EXTRACTION_VERSION - 1, first.documentId);
+    seed.close();
+
+    // The open that has to do the work: the preflight cannot vouch for the older reading, so the
+    // document is read in full and its chunks turn out to be the ones already stored.
+    const revisited = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "report.pdf",
+        filePath: "/library/report.pdf",
+        chunkingProfile: "balanced",
+      }),
+    );
+    expect(revisited.status).toBe("reused");
+    expect(recordedTextExtractionVersion(first.documentId)).toBe(TEXT_EXTRACTION_VERSION);
+
+    // And the open after that costs nothing at all. This fixture carries a text layer on every
+    // page, so a full read would never call the recognition seam — what proves the document was
+    // not read is the progress stream, which announces a read before it starts one.
+    const reported: string[] = [];
+    const settled = expectIndexed(
+      await indexPdfDocument(store, refusingEmbedder(), {
+        bytes,
+        name: "report.pdf",
+        filePath: "/library/report.pdf",
+        chunkingProfile: "balanced",
+        resolveOcr: refusingOcr(),
+        onProgress: (progress) => reported.push(progress.status),
+      }),
+    );
+    expect(settled.status).toBe("reused");
+    expect(settled.documentId).toBe(first.documentId);
+    expect(reported).toEqual(["ready"]);
+  }, 120_000);
+
+  it("records completion for chunks an older build wrote before completion was recorded", async () => {
+    // A database migrated from before scope completion existed has a full set of chunks and
+    // nothing that says so. The preflight refuses it, correctly, and the read that follows proves
+    // by identity that the scope is complete — so it must say so, or this document is read in full
+    // on every open for the rest of its life.
+    const bytes = await buildReportPdf();
+    const first = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "report.pdf",
+        filePath: "/library/report.pdf",
+        chunkingProfile: "balanced",
+      }),
+    );
+
+    const seed = new Database(semanticIndexPath(dataDir));
+    seed.prepare("DELETE FROM chunk_scope_snapshots WHERE document_id = ?").run(first.documentId);
+    seed.close();
+
+    const revisited = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "report.pdf",
+        filePath: "/library/report.pdf",
+        chunkingProfile: "balanced",
+      }),
+    );
+    expect(revisited.status).toBe("reused");
+
+    const reported: string[] = [];
+    const settled = expectIndexed(
+      await indexPdfDocument(store, refusingEmbedder(), {
+        bytes,
+        name: "report.pdf",
+        filePath: "/library/report.pdf",
+        chunkingProfile: "balanced",
+        resolveOcr: refusingOcr(),
+        onProgress: (progress) => reported.push(progress.status),
+      }),
+    );
+    expect(settled.status).toBe("reused");
+    expect(settled.chunkCount).toBe(first.chunkCount);
+    expect(reported).toEqual(["ready"]);
+  }, 120_000);
+
+  it("reads the document again when the caller forces a rebuild", async () => {
+    const bytes = await buildScannedPdf();
+    await indexPdfDocument(store, embedder, {
+      bytes,
+      name: "scan.pdf",
+      filePath: "/library/scan.pdf",
+      chunkingProfile: "balanced",
+      resolveOcr: async (request) => request.pages.map((page) => ({ page, text: SCAN_BODY_OCR })),
+    });
+
+    const asked: number[] = [];
+    const forced = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "scan.pdf",
+        filePath: "/library/scan.pdf",
+        chunkingProfile: "balanced",
+        force: true,
+        resolveOcr: async (request) => {
+          asked.push(...request.pages);
+          return request.pages.map((page) => ({ page, text: SCAN_BODY_OCR }));
+        },
+      }),
+    );
+
+    expect(asked).toEqual([2]);
+    expect(forced.status).toBe("ready");
+  }, 120_000);
+
+  it("reads the document again when the chunking profile is not the one that was stored", async () => {
+    // The stored scope is part of the question, not context around it. A profile the index was
+    // never built under has no chunks to reuse, however unchanged the file is.
+    const bytes = await buildReportPdf();
+    await indexPdfDocument(store, embedder, {
+      bytes,
+      name: "report.pdf",
+      filePath: "/library/report.pdf",
+      chunkingProfile: "balanced",
+    });
+
+    const precise = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "report.pdf",
+        filePath: "/library/report.pdf",
+        chunkingProfile: "precise",
+      }),
+    );
+
+    expect(precise.status).toBe("ready");
+  }, 120_000);
+
+  it("writes nothing and starts no reading when the caller cancels before the preflight", async () => {
+    const bytes = await buildReportPdf();
+    const first = expectIndexed(
+      await indexPdfDocument(store, embedder, {
+        bytes,
+        name: "report.pdf",
+        filePath: "/library/report.pdf",
+        chunkingProfile: "balanced",
+      }),
+    );
+
+    const controller = new AbortController();
+    controller.abort();
+    const reported: string[] = [];
+    const cancelled = await indexPdfDocument(store, refusingEmbedder(), {
+      bytes,
+      name: "renamed.pdf",
+      filePath: "/library/renamed.pdf",
+      chunkingProfile: "balanced",
+      resolveOcr: refusingOcr(),
+      signal: controller.signal,
+      onProgress: (progress) => reported.push(progress.status),
+    });
+
+    expect(cancelled).toEqual({ status: "cancelled" });
+    expect(reported).toEqual([]);
+    // The row still describes the file the last completed run saw.
+    expect(store.getDocument(first.contentHash)?.filePath).toBe("/library/report.pdf");
   }, 120_000);
 });

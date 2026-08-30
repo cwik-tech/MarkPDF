@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Accepted. Amended on 2026-08-30: recognition counters describe the recognition queue rather than
+the document. The rest of the decision stands, and the amendment is written into the Decision and
+Consequences below rather than left to be inferred from a later record.
 
 ## Context
 
@@ -38,9 +40,22 @@ the document page being read, the position of that page in the current run, the 
 message. It also carries the complete document page count. `ocrPages` emits one per page;
 `readDocumentPages` forwards it through a new
 `onOcrProgress` input; `indexPdfDocument` translates it into an `IndexProgress` with
-`status: "ocr"`, using the document page as `current` and the complete document count as `total`.
-The target position and target count remain on the internal OCR event for scheduling detail, but
-are not presented as the document's extent.
+`status: "ocr"`.
+
+**The counters are the recognition queue's** (amended 2026-08-30). This ADR originally used the
+document page as `current` and the document's page count as `total`, so that a smaller set of OCR
+targets was never presented as the PDF's extent. Measured against a 628-page book with 59 pages to
+recognise, that reads as `437/628`: a bar that fills to seven per cent, stops, and never arrives,
+because the other 569 pages are never going to be recognised. It describes work nobody is doing.
+`indexPdfDocument` now forwards the run's own position and total — `42/59` for that page — and
+leaves the document page where the recogniser already put it, in the message.
+
+**Where the message actually appears.** The toolbar badge renders the label and the bar, and
+nothing else: `documentPreparationBadge` produces `OCR 42/59` and the page number is not in it.
+The message reaches the reader as the badge's `title` — the tooltip on hover — and as the line the
+Semantic Search panel shows while an index is being prepared (`src/App.tsx`). So the counter is
+what a reader sees at a glance, and the page is there for the reader who asks for it. Saying the
+page is "named beside the counter" would be a claim the interface does not keep.
 
 **OCR counters are required at the boundary.** Every other status may arrive without counts —
 "Checking index" is looking at a database, not working through a list — but an OCR event always
@@ -60,9 +75,12 @@ two `checking` events and no bar.
 
 ## Consequences
 
-- A reader watching page 23 of a 628-page document sees `OCR 23/628` with a bar while that page is
-  recognised, then `Index 12/32` once embedding starts. The smaller set of OCR targets is never
-  presented as the PDF's page count.
+- A reader watching the 42nd of 59 pages that need recognising sees `OCR 42/59` with a bar that
+  fills as the queue empties, then `Index 12/32` once embedding starts. Which document page is
+  being read is in the badge's tooltip and in the Semantic Search panel, not in the badge itself.
+- The counter no longer says how far through the document recognition has reached, because on a
+  mixed document that is not a quantity anything is working through. A thirteen-page report with
+  four pages to read counts `1/4` to `4/4` rather than `4/13`, `10/13`, `12/13`, `13/13`.
 - A native-text document shows "Checking text", then "Native text detected" for six seconds, and
   never claims recognition ran.
 - A reused index emits no OCR event, so it displays no recognition work.
@@ -95,9 +113,9 @@ two `checking` events and no bar.
   the full document page count".
 - Forwarding through the read: `core/extract/readDocumentPages.test.ts`, "gives the recognition seam
   somewhere to report each page it reads".
-- Translation to the index phase, and its absence when nothing needed recognising:
-  `core/index/indexPdfDocument.test.ts`, "reports recognition as its own phase, before any indexing,
-  while a scan is read" and "invents no recognition phase for a document that never needed one".
+- Translation to the index phase, its counters, and its absence when nothing needed recognising:
+  `core/index/indexPdfDocument.test.ts`, "counts recognition against the pages it has to read, and
+  reports it before any indexing" and "invents no recognition phase for a document that never needed one".
 - Boundary narrowing, including rejection of missing and malformed counters:
   `core/ipc/progress.test.ts`.
 - Tab ownership and cancellation of the new status: `src/semanticProgress.test.ts`.
@@ -108,3 +126,7 @@ two `checking` events and no bar.
   failed both `core/index/indexPdfDocument.test.ts` and the Electron journey — the journey recorded
   `index:checking:1/4` through `index:checking:4/4`, which is exactly the defect. The mapping was
   restored and both were rerun green.
+- Mutation proof for the 2026-08-30 amendment: restoring `progress.page` / `progress.totalPages` as
+  the forwarded counters failed the focused test and the Electron journey, the journey recording
+  `index:ocr:4/13`, `index:ocr:10/13`, `index:ocr:12/13` and `index:ocr:13/13` for a document with
+  four pages to recognise. The forwarding was restored and both were rerun green.
