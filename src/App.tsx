@@ -81,7 +81,6 @@ import {
 import {
   normalizeRotation,
   overlayGeometry,
-  scaleSelectionFragments,
   textSelectionGeometry,
   viewPointToUnrotated,
   type TextSelectionOverlayGeometry,
@@ -4853,7 +4852,7 @@ function OverlayBox({
           >
             <X size={12} />
           </button>
-          {!overlay.minimized && (
+          {!overlay.minimized && geometry.shape === "box" && (
             <button
               className="resize-handle"
               title="Resize"
@@ -4863,8 +4862,6 @@ function OverlayBox({
                 const startY = event.clientY;
                 const startWidth = overlay.width;
                 const startHeight = overlay.height;
-                const startFragments =
-                  geometry.shape === "textSelection" ? geometry.fragments : null;
                 const target = event.currentTarget;
                 target.setPointerCapture(event.pointerId);
                 target.onpointermove = (moveEvent) => {
@@ -4879,17 +4876,6 @@ function OverlayBox({
                     {
                       width,
                       height,
-                      // The lines move with the box they belong to, so resizing still acts on the
-                      // annotation as one object rather than leaving the paint behind.
-                      ...(startFragments
-                        ? {
-                            fragments: scaleSelectionFragments(
-                              startFragments,
-                              width / startWidth,
-                              height / startHeight,
-                            ),
-                          }
-                        : {}),
                     },
                     false,
                   );

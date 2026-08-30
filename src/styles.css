@@ -1443,6 +1443,7 @@ select {
   padding: 0;
   border-width: 0;
   background: transparent;
+  box-shadow: none;
   mix-blend-mode: normal;
 }
 
@@ -1502,6 +1503,11 @@ select {
   background: var(--panel);
   color: var(--danger);
   cursor: pointer;
+}
+
+.overlay-box.text-anchored .delete-handle {
+  top: -24px;
+  right: -24px;
 }
 
 .comment-pin,

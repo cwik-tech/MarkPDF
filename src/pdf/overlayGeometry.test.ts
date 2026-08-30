@@ -3,7 +3,6 @@ import type { OverlayItem } from "../types";
 import {
   overlayGeometry,
   paintedPageRects,
-  scaleSelectionFragments,
   textSelectionGeometry,
   type PageView,
 } from "./overlayGeometry";
@@ -179,29 +178,5 @@ describe("reading the geometry a stored overlay describes", () => {
       { x: 72, y: 80, width: 150, height: 18 },
       { x: 72, y: 140, width: 130, height: 18 },
     ]);
-  });
-});
-
-describe("resizing a text-selection overlay as a group", () => {
-  it("scales every fragment by the same factors as the outer bounds", () => {
-    expect(
-      scaleSelectionFragments(
-        [
-          { x: 0, y: 0, width: 150, height: 18 },
-          { x: 0, y: 60, width: 130, height: 18 },
-        ],
-        2,
-        0.5,
-      ),
-    ).toEqual([
-      { x: 0, y: 0, width: 300, height: 9 },
-      { x: 0, y: 30, width: 260, height: 9 },
-    ]);
-  });
-
-  it("leaves fragments alone when the factors cannot be computed", () => {
-    const fragments = [{ x: 0, y: 0, width: 150, height: 18 }];
-    expect(scaleSelectionFragments(fragments, Number.POSITIVE_INFINITY, 1)).toEqual(fragments);
-    expect(scaleSelectionFragments(fragments, Number.NaN, 1)).toEqual(fragments);
   });
 });

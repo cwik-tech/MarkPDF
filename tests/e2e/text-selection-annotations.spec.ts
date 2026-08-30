@@ -283,3 +283,45 @@ test("commenting on a recognised-text selection anchors to the recognised lines 
     await rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("selected highlight keeps its controls off the text and Delete removes it", async () => {
+  test.setTimeout(120_000);
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "markpdf-selection-delete-"));
+  const pdfPath = path.join(tempDir, "two-lines.pdf");
+  const userDataPath = path.join(tempDir, "user-data");
+  await mkdir(userDataPath, { recursive: true });
+  await createNativeTextPdf(pdfPath);
+
+  let app: ElectronApplication | null = null;
+
+  try {
+    app = await launch(pdfPath, userDataPath);
+    const window = await app.firstWindow();
+    const drawnLines = ".text-layer span:not(.markedContent)";
+    await expect(window.locator(drawnLines).first()).toBeVisible({ timeout: 60_000 });
+
+    await selectAcrossLines(window, drawnLines);
+    await window.getByRole("button", { name: "Highlight selection" }).click();
+    const deleteButton = window.getByTitle("Delete", { exact: true });
+    await expect(deleteButton).toBeVisible();
+
+    const lines = await lineRects(window, drawnLines);
+    const selectedTop = Math.min(...lines.map((line) => line.top));
+    const selectedRight = Math.max(...lines.map((line) => line.right));
+    const deleteRect = await deleteButton.boundingBox();
+    if (deleteRect === null) throw new Error("The selected highlight has no visible Delete control");
+
+    await expect(window.getByTitle("Resize", { exact: true })).toHaveCount(0);
+    expect(deleteRect.y + deleteRect.height).toBeLessThan(selectedTop);
+    expect(deleteRect.x).toBeGreaterThan(selectedRight);
+
+    await window.keyboard.press("Delete");
+
+    await expect(window.getByTitle("Delete", { exact: true })).toHaveCount(0);
+    await expect.poll(async () => paintedRects(window)).toEqual([]);
+  } finally {
+    await closeApp(app);
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});

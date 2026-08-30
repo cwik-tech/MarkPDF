@@ -34,9 +34,10 @@ area to cover. Nothing else reads the distinction, and nothing reaches for the e
 habit.
 
 Fragments are stored as offsets from the overlay's own corner rather than as page positions, so
-dragging the annotation moves its lines with it and a resize scales them by the same factors as the
-bounds. The enclosing box keeps exactly two jobs: placing the selection popover, and carrying the
-group's own interactions — selection outline, drag, resize, delete.
+dragging the annotation moves its lines with it. A text-anchored annotation has no resize control,
+because resizing selected text would make the annotation stop matching that text. Its delete control
+sits above and to the right of the selected lines. The enclosing box groups the fragments for drag
+and delete interactions, but it draws no outline of its own.
 
 `OverlayItem` gains one optional field, `fragments`. Its absence is meaningful: an overlay that has
 none is the single box it has always been, which is what every overlay written before this change
@@ -61,6 +62,8 @@ on the page is still a `Text` note pinned to a point.
   reader.
 - Manually placed highlights, free-position comments, text boxes and signatures are unchanged: they
   carry no fragments and take the same path they always did.
+- A text-anchored annotation has no resize control. Its delete control does not cover the selected
+  text. Manually placed boxes remain resizable.
 - A document saved by an earlier version opens with its annotations exactly where they were.
 - A document saved by this version is read by an earlier version as the enclosing box, because the
   older reader ignores the field it does not know. That is the previous behaviour, not a new
@@ -88,9 +91,9 @@ on the page is still a `Text` note pinned to a point.
 
 ## Verification
 
-- `tests/e2e/text-selection-annotations.spec.ts` drives the real application twice — once over
-  native text, once over recognised text on a page that is only a picture — and requires that every
-  selected line is painted and the band between lines is not.
+- `tests/e2e/text-selection-annotations.spec.ts` drives the real application for native and
+  OCR-recognized text selection, then verifies that a selected text-anchored highlight has no resize
+  control, keeps Delete outside the text, and is removed when Delete is pressed.
 - `src/pdf/overlayGeometry.test.ts` covers the arithmetic the journeys cannot vary: clipping to the
   page, zoom independence, rotation, duplicate and zero-area rectangles, and the enclosing bounds.
 - `src/pdf/overlayMetadata.test.ts` covers the persisted boundary, including an annotation saved

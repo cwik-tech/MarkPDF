@@ -135,29 +135,6 @@ export function paintedPageRects(geometry: OverlayGeometry): OverlayRect[] {
   }));
 }
 
-/**
- * Scale a selection's fragments with its bounds, so a resize moves the whole group together.
- *
- * A factor that cannot be computed — a zero starting width, an empty box — leaves the fragments
- * as they are rather than collapsing them to nothing.
- */
-export function scaleSelectionFragments(
-  fragments: readonly OverlayRect[],
-  scaleX: number,
-  scaleY: number,
-): OverlayRect[] {
-  if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY)) {
-    return fragments.map((fragment) => ({ ...fragment }));
-  }
-
-  return fragments.map((fragment) => ({
-    x: fragment.x * scaleX,
-    y: fragment.y * scaleY,
-    width: fragment.width * scaleX,
-    height: fragment.height * scaleY,
-  }));
-}
-
 /** The smallest rectangle containing all of them. */
 export function enclosingRect(rects: readonly OverlayRect[]): OverlayRect {
   const left = Math.min(...rects.map((rect) => rect.x));
