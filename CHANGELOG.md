@@ -9,6 +9,9 @@
 
 ### Fixed
 
+- Large PDFs now render their first page before OCR and optional metadata work begins, and raw PDF bytes no longer pass through rendered React props where development diagnostics enumerated millions of byte entries and froze the window.
+- OCR progress now reports the actual document page and complete page count, so a 628-page book cannot appear as a 59-page OCR job.
+- Selecting PDF text no longer paints selection bars for invisible line breaks at the left edge of the page.
 - Searching a tagged PDF now highlights the word you searched for. Highlights in documents with tagged structure — most large published books — collapsed on to the top-left corner of the page, and the view did not move to the match because it thought the marker was already on screen. Highlights are now measured from the browser's own text rectangles, so they sit over the glyphs at any zoom and after rotating the page, and partial matches inside a long line are no longer estimated from the line's width.
 
 - Long MCP calls now report bounded, monotonic progress to clients that request it, including the page currently being read by OCR and embedding-model download bytes.

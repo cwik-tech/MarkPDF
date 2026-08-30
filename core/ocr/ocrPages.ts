@@ -1,27 +1,15 @@
-import type { OcrImageRegion, OcrPageCandidate, OcrPageProgress, OcrRegionBox } from "../extract/readDocumentPages.js";
-import { rasterisePdfPagesStreaming, RasterisationCancelled, type PageImage, type PdfjsDocumentHandle, type RasteriseOptions } from "./rasterisePages.js";
+import type {
+  OcrImageRegion,
+  OcrPageCandidate,
+  OcrRegionBox,
+  ResolveOcrRequest,
+} from "../extract/readDocumentPages.js";
+import { rasterisePdfPagesStreaming, RasterisationCancelled, type PageImage, type RasteriseOptions } from "./rasterisePages.js";
 import { createTesseractRecogniser, OcrEngineError, type TextRecogniser } from "./tesseractEngine.js";
 import { tableFromLines } from "./tableFromLines.js";
 import { ocrProfile } from "./ocrContract.js";
 
-export interface OcrRequest {
-  bytes: Uint8Array;
-  /** 1-based page numbers the extractor could not read. */
-  pages: readonly number[];
-  signal?: AbortSignal;
-  onProgress?: (progress: OcrPageProgress) => void;
-  /**
-   * Pages to read by their regions rather than whole. A page named here is rendered once and
-   * the recogniser is given a crop of its qualifying regions, because recognising a whole page
-   * to read one figure is the cost this annotation exists to avoid.
-   */
-  imageRegions?: readonly OcrImageRegion[];
-  /**
-   * An already-open pdf.js document over these bytes. Rendering borrows it instead of opening
-   * the same PDF again; the caller keeps ownership and releases it.
-   */
-  document?: PdfjsDocumentHandle;
-}
+export type OcrRequest = ResolveOcrRequest;
 
 /**
  * How far a crop reaches past the regions it covers.
@@ -151,6 +139,7 @@ export async function ocrPages(request: OcrRequest, dependencies: OcrDependencie
         page: image.page,
         current: position + 1,
         total: request.pages.length,
+        totalPages: request.totalPages,
         message: `Reading page ${image.page} with OCR`,
       });
       const region = regionsByPage.get(image.page);

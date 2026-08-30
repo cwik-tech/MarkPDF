@@ -189,10 +189,9 @@ export function resolveOcrWithProgress(context: ToolContext): ToolContext["resol
     ...request,
     onProgress: (page) => {
       request.onProgress?.(page);
-      // The counters as well as the sentence. `current`/`total` count this run's pages, which is
-      // what a client's progress bar needs; the message names the page of the document, which the
-      // position in the run does not say.
-      context.progress?.({ progress: page.current, total: page.total, message: page.message });
+      // The progress bar describes the document rather than the smaller OCR target list. The
+      // target position remains on the resolver event for callers that need scheduling detail.
+      context.progress?.({ progress: page.page, total: page.totalPages, message: page.message });
     },
   });
 }

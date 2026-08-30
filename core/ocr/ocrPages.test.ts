@@ -80,6 +80,7 @@ describe("reading a qualifying region instead of the whole page", () => {
       {
         bytes: await buildTextPagePdf(),
         pages: [1],
+        totalPages: 1,
         imageRegions: regionRequest([{ x: 100, y: 200, width: 300, height: 150 }]),
       },
       {
@@ -103,6 +104,7 @@ describe("reading a qualifying region instead of the whole page", () => {
       {
         bytes: await buildTextPagePdf(),
         pages: [1],
+        totalPages: 1,
         imageRegions: regionRequest([
           { x: 50, y: 50, width: 100, height: 100 },
           { x: 300, y: 400, width: 100, height: 100 },
@@ -126,6 +128,7 @@ describe("reading a qualifying region instead of the whole page", () => {
       {
         bytes: await buildTextPagePdf(),
         pages: [1],
+        totalPages: 1,
         imageRegions: regionRequest([{ x: 0, y: 0, width: 100, height: 100 }]),
       },
       {
@@ -144,6 +147,7 @@ describe("reading a qualifying region instead of the whole page", () => {
       {
         bytes: await buildTextPagePdf(),
         pages: [1],
+        totalPages: 1,
         imageRegions: regionRequest([{ x: 60, y: 300, width: 320, height: 160 }]),
       },
       {
@@ -169,6 +173,7 @@ describe("reading a qualifying region instead of the whole page", () => {
       {
         bytes: await buildTextPagePdf(),
         pages: [1],
+        totalPages: 1,
         imageRegions: regionRequest([{ x: 60, y: 300, width: 320, height: 160 }]),
       },
       {
@@ -194,6 +199,7 @@ describe("reading a qualifying region instead of the whole page", () => {
       {
         bytes: await buildTextPagePdf(),
         pages: [1, 2],
+        totalPages: 2,
         imageRegions: regionRequest([{ x: 100, y: 200, width: 300, height: 150 }]),
       },
       {
@@ -219,7 +225,7 @@ describe("an already-open document", () => {
     const handle = await openPdfDocument(await buildTextPagePdf());
     try {
       const candidates = await ocrPages(
-        { bytes: Uint8Array.from([1, 2, 3]), pages: [1], document: handle },
+        { bytes: Uint8Array.from([1, 2, 3]), pages: [1], totalPages: 1, document: handle },
         { dpi: 72, createRecogniser: async () => recogniserRecording([], () => ({ text: "whole words", lines: [] })) },
       );
 
@@ -234,16 +240,17 @@ describe("an already-open document", () => {
 });
 
 describe("saying which page is being recognised", () => {
-  it("reports every page it reads, with its number and its place in the run", async () => {
+  it("reports every page it reads against the full document page count", async () => {
     // Recognition is the slow part of reading a scanned document, and the only honest way to show
     // a reader how far it has got. A free-form sentence cannot drive a progress bar, so the
     // position and the extent are reported as numbers rather than spelled into the message.
-    const reported: Array<{ page: number; current: number; total: number; message: string }> = [];
+    const reported: Array<{ page: number; current: number; total: number; totalPages: number; message: string }> = [];
 
     await ocrPages(
       {
         bytes: await buildTextPagePdf(),
         pages: [2, 5],
+        totalPages: 628,
         onProgress: (progress) => reported.push({ ...progress }),
       },
       {
@@ -253,9 +260,9 @@ describe("saying which page is being recognised", () => {
       },
     );
 
-    expect(reported.map((entry) => ({ page: entry.page, current: entry.current, total: entry.total }))).toEqual([
-      { page: 2, current: 1, total: 2 },
-      { page: 5, current: 2, total: 2 },
+    expect(reported.map((entry) => ({ page: entry.page, current: entry.current, total: entry.total, totalPages: entry.totalPages }))).toEqual([
+      { page: 2, current: 1, total: 2, totalPages: 628 },
+      { page: 5, current: 2, total: 2, totalPages: 628 },
     ]);
     expect(reported[0]?.message).toContain("2");
   }, 60_000);

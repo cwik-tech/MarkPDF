@@ -1283,6 +1283,10 @@ select {
   background: rgba(84, 169, 255, 0.35);
 }
 
+.text-layer br::selection {
+  background: transparent;
+}
+
 .pdf-page.selectable .text-layer {
   pointer-events: auto;
   user-select: text;

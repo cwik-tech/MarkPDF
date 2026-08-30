@@ -13,7 +13,7 @@ describe("streaming OCR page images", () => {
     }
 
     const candidates = await ocrPages(
-      { bytes: new Uint8Array(), pages: [1, 2] },
+      { bytes: new Uint8Array(), pages: [1, 2], totalPages: 2 },
       {
         rasteriseStreaming: () => images(),
         createRecogniser: async () => ({
@@ -46,7 +46,7 @@ describe("streaming OCR page images", () => {
     }
 
     const candidates = await ocrPages(
-      { bytes: new Uint8Array(), pages: [1, 2], signal: controller.signal },
+      { bytes: new Uint8Array(), pages: [1, 2], totalPages: 2, signal: controller.signal },
       {
         rasteriseStreaming: () => images(),
         createRecogniser: async () => ({

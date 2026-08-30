@@ -1,6 +1,6 @@
 # Native PDF Search, OCR Status, and Link Navigation Plan
 
-Status: Proposed  
+Status: Implemented
 Date: 2026-08-29
 
 ## Solution in brief
@@ -12,6 +12,7 @@ The solution has three independent parts:
 1. Fix MarkPDF's PDF.js text-layer integration so tagged-content wrapper spans are laid out correctly, excluded from the search index, and highlights use the browser's actual text-range rectangles.
 2. Render a narrow internal-link layer from the PDF's link annotations so table-of-contents links navigate within the open document.
 3. Report OCR as a distinct, truthful progress phase. Show the renderer's existing OCR check and recognition progress, forward main-process per-page OCR progress that currently disappears inside indexing, and only then show embedding/index progress.
+4. Keep raw PDF bytes out of rendered React props and defer OCR and optional metadata until the first page has rendered, so large books do not freeze the development application while React inspects component properties.
 
 ## What was analysed
 
@@ -51,6 +52,8 @@ The installed PDF.js contract is visible in `node_modules/pdfjs-dist/web/pdf_vie
 
 The search code then indexes every descendant span (`src/App.tsx:4495-4527`). In a tagged PDF, that includes both structural wrapper spans and their leaf text spans, so the same text is indexed more than once and the first match can point to a zero-width wrapper at the page origin. The highlight geometry compounds the problem by estimating a partial word as a proportion of the whole span width (`src/App.tsx:4576-4604`) instead of measuring the matching DOM text range. The scrolling code trusts that bad marker rectangle, sees it as already visible, and does not move to the real match (`src/App.tsx:4611-4639`).
 
+The copied text-layer rules also omitted PDF.js's transparent `br::selection` rule. PDF.js inserts absolutely positioned line-break elements; selecting across them therefore painted narrow blue bars at the text layer's origin, along the left edge of the page.
+
 This was reproduced against PDF page 5. The active highlight marker was at the page's top-left with a `2 x 14` pixel rectangle, while the real leaf span for “3. Data Management Frameworks” had the correct PDF position data. The PDF coordinates are therefore not the defect; MarkPDF's rendered text-layer contract and span selection are.
 
 ### 2. OCR work is hidden behind “Checking index”
@@ -66,6 +69,12 @@ The IPC contract has no OCR progress state (`core/ipc/progress.ts:3-16`, `src/gl
 
 The source PDF contains real link annotations. PDF page 5 alone has 47 internal links whose rectangles align with the table-of-contents rows. MarkPDF renders a canvas, text layer, search-highlight layer, and editing overlay (`src/App.tsx:4252-4368`), but it never reads page annotations and has no annotation or native-link layer. Acrobat renders those annotations; MarkPDF currently discards them.
 
+### 4. Large PDF bytes freeze the development renderer
+
+The open path stored the complete 11.3 MB `Uint8Array` in each `PdfTab` and passed that full object through rendered component props. React 19's development performance instrumentation recursively describes component props. Its traversal reached the typed array and enumerated all 11,301,466 byte entries. A renderer CPU profile attributed about 8.0 seconds to React's property traversal and about 2.0 seconds to garbage collection. The production React build did not run this diagnostic path, which is why the same PDF opened normally there.
+
+The view now receives a byte-free projection while the full tab remains authoritative application state. First-page render completion also gates renderer OCR and optional form, outline, and editable-overlay loading, so those jobs cannot delay the page the user is waiting to see.
+
 ## Scope
 
 ### Included
@@ -74,7 +83,9 @@ The source PDF contains real link annotations. PDF page 5 alone has 47 internal 
 - Correct geometry at different zoom levels and supported page rotations.
 - Clickable internal PDF links, including named and explicit destinations used by table-of-contents pages.
 - A visible sequence of document preparation phases: checking text, OCR when required, and indexing.
-- Determinate OCR progress when the target page count is known.
+- Determinate OCR progress against the complete document page count.
+- Responsive opening of large PDFs in both development and production builds.
+- Native text selection without line-break artifacts at the page edge.
 - A short, non-busy “Native text detected” result when renderer OCR is not required.
 - Strict runtime validation of annotation data and progress events at their boundaries.
 
@@ -109,7 +120,7 @@ No new dependency is required. The repository already has `pdf-lib` for determin
 
 - Opening a native-text PDF visibly transitions through “Checking text” to a brief “Native text detected” result; it does not claim OCR ran.
 - When renderer OCR runs, the toolbar shows `OCR page/total` and a whole-document progress bar. Per-page recognition progress may refine the current segment without moving the whole-document bar backwards.
-- When core OCR repairs pages before indexing, the semantic progress stream reports an explicit OCR state with `current`, `total`, and page number/message. The toolbar says `OCR current/total`, not “Checking index”.
+- When core OCR repairs pages before indexing, the semantic progress stream reports an explicit OCR state using the actual document page as `current` and the complete document page count as `total`. The toolbar says `OCR page/document pages`, not “Checking index” or the smaller OCR-target count.
 - Embedding progress is labelled `Index current/total` only after document reading and any OCR work.
 - Reused indexes do not show invented OCR work.
 - Cancellation and errors clear or replace the active indicator without allowing a late progress event to restore stale state.
@@ -189,8 +200,8 @@ This changes the progress object crossing the preload/IPC contract. Implementati
 
 #### Green
 
-1. Replace the OCR callback's free-form string with a structured core value containing page, current target, total targets, and message in `core/extract/readDocumentPages.ts` and `core/ocr/ocrPages.ts`.
-2. Have `core/index/indexPdfDocument.ts` inject that callback when it invokes the OCR resolver and translate it to an `IndexProgress` member with `status: "ocr"`, `current`, and `total`.
+1. Replace the OCR callback's free-form string with a structured core value containing document page, complete document count, current target, total targets, and message in `core/extract/readDocumentPages.ts` and `core/ocr/ocrPages.ts`.
+2. Have `core/index/indexPdfDocument.ts` inject that callback when it invokes the OCR resolver and translate it to an `IndexProgress` member with `status: "ocr"`, using document page and complete document count for `current` and `total`.
 3. Extend and validate the progress discriminant in `core/ipc/progress.ts`; mirror it in `src/global.d.ts`, `src/types.ts`, and the preload-facing contract. Keep malformed external values rejected rather than cast.
 4. Let `src/semanticProgress.ts` route OCR events through the existing job-ownership and cancellation gate.
 5. Update the toolbar presentation in `src/App.tsx` and `src/styles.css`:
@@ -251,7 +262,9 @@ The tests that cover each decision in this document:
 | Narrowing the new progress state at the boundary | `core/ipc/progress.test.ts` |
 | Tab ownership and cancellation of the new state | `src/semanticProgress.test.ts` |
 | Which preparation badge is shown, and its percentage | `src/documentPreparation.test.ts` |
-| The visible desktop outcome for a mixed document | `tests/e2e/mixed-document-ocr.spec.ts` |
+| Raw PDF bytes excluded from rendered component props | `src/pdf/pdfViewState.test.ts` |
+| First page shown before OCR and optional metadata | `src/pdf/openPdfInStages.test.ts` |
+| The visible desktop outcome and document-relative OCR count for a mixed document | `tests/e2e/mixed-document-ocr.spec.ts` |
 
 The deterministic fixture the renderer journeys use is
 `cli/journeys/nativeNavigationFixture.test-support.ts`. The supplied 628-page book is used for
@@ -275,6 +288,8 @@ Then manually open the supplied 628-page book in the built Electron application 
 2. At least three table-of-contents links on page 5 navigate to their encoded destinations.
 3. The native-text result does not falsely claim whole-document OCR.
 4. If core chooses the image-only cover as an OCR target during a forced fresh index, the toolbar shows that OCR stage before indexing.
+5. Selecting several lines paints no selection bars at the left edge of the page.
+6. Opening the book through the development server presents page 1 without a multi-second renderer long task.
 
 This repository has no lint command or checked-in ESLint configuration, so lint cannot be reported as passed.
 

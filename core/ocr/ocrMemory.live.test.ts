@@ -18,6 +18,7 @@ describe("streaming OCR memory", () => {
       {
         bytes,
         pages: Array.from({ length: PAGE_COUNT }, (_unused, index) => index + 1),
+        totalPages: PAGE_COUNT,
         onProgress: sample,
       },
       {

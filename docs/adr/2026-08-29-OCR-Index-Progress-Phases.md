@@ -35,9 +35,12 @@ boundary (`core/ipc/progress.ts`), and in the renderer's mirror of that contract
 
 Recognition progress becomes a structured value rather than a sentence. `OcrPageProgress` carries
 the document page being read, the position of that page in the current run, the run's total, and a
-message. `ocrPages` emits one per page; `readDocumentPages` forwards it through a new
+message. It also carries the complete document page count. `ocrPages` emits one per page;
+`readDocumentPages` forwards it through a new
 `onOcrProgress` input; `indexPdfDocument` translates it into an `IndexProgress` with
-`status: "ocr"`, `current` and `total`.
+`status: "ocr"`, using the document page as `current` and the complete document count as `total`.
+The target position and target count remain on the internal OCR event for scheduling detail, but
+are not presented as the document's extent.
 
 **OCR counters are required at the boundary.** Every other status may arrive without counts —
 "Checking index" is looking at a database, not working through a list — but an OCR event always
@@ -57,8 +60,9 @@ two `checking` events and no bar.
 
 ## Consequences
 
-- A reader watching a scanned document sees `OCR 2/4` with a bar while pages are recognised, then
-  `Index 12/32` once embedding starts. Those are different jobs and now read as different jobs.
+- A reader watching page 23 of a 628-page document sees `OCR 23/628` with a bar while that page is
+  recognised, then `Index 12/32` once embedding starts. The smaller set of OCR targets is never
+  presented as the PDF's page count.
 - A native-text document shows "Checking text", then "Native text detected" for six seconds, and
   never claims recognition ran.
 - A reused index emits no OCR event, so it displays no recognition work.
@@ -87,8 +91,8 @@ two `checking` events and no bar.
 
 ## Verification
 
-- Structured per-page emission: `core/ocr/ocrPages.test.ts`, "reports every page it reads, with its
-  number and its place in the run".
+- Structured per-page emission: `core/ocr/ocrPages.test.ts`, "reports every page it reads against
+  the full document page count".
 - Forwarding through the read: `core/extract/readDocumentPages.test.ts`, "gives the recognition seam
   somewhere to report each page it reads".
 - Translation to the index phase, and its absence when nothing needed recognising:

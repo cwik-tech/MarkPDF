@@ -129,7 +129,7 @@ describe("recognising the pages that could not be read", () => {
     let renderedDpi: number | undefined;
 
     await ocrPages(
-      { bytes: await buildTwoPagePdf(), pages: [1] },
+      { bytes: await buildTwoPagePdf(), pages: [1], totalPages: 2 },
       {
         rasterise: async (_bytes, options) => {
           renderedDpi = options.dpi;
@@ -143,7 +143,7 @@ describe("recognising the pages that could not be read", () => {
 
   it("returns one candidate per page, numbered as the extractor numbers them", async () => {
     const candidates = await ocrPages(
-      { bytes: await buildTwoPagePdf(), pages: [1, 2] },
+      { bytes: await buildTwoPagePdf(), pages: [1, 2], totalPages: 2 },
       { createRecogniser: async () => recogniser({ 1: "text of one", 2: "text of two" }) },
     );
 
@@ -157,7 +157,7 @@ describe("recognising the pages that could not be read", () => {
     // An empty candidate is indistinguishable from a page that was read and found blank, and the
     // indexer treats those differently.
     const candidates = await ocrPages(
-      { bytes: await buildTwoPagePdf(), pages: [1, 2] },
+      { bytes: await buildTwoPagePdf(), pages: [1, 2], totalPages: 2 },
       { createRecogniser: async () => recogniser({ 1: "   \n  ", 2: "real text" }) },
     );
 
@@ -168,7 +168,7 @@ describe("recognising the pages that could not be read", () => {
     let started = false;
 
     const candidates = await ocrPages(
-      { bytes: new Uint8Array(), pages: [] },
+      { bytes: new Uint8Array(), pages: [], totalPages: 0 },
       {
         createRecogniser: async () => {
           started = true;
@@ -192,7 +192,7 @@ describe("recognising the pages that could not be read", () => {
     };
 
     const candidates = await ocrPages(
-      { bytes: await buildTwoPagePdf(), pages: [1, 2], signal: controller.signal },
+      { bytes: await buildTwoPagePdf(), pages: [1, 2], totalPages: 2, signal: controller.signal },
       { createRecogniser: async () => engine },
     );
 
@@ -211,7 +211,7 @@ describe("recognising the pages that could not be read", () => {
     let started = false;
 
     const candidates = await ocrPages(
-      { bytes: await buildTwoPagePdf(), pages: [1], signal: controller.signal },
+      { bytes: await buildTwoPagePdf(), pages: [1], totalPages: 2, signal: controller.signal },
       {
         rasterise: async () => {
           controller.abort();
@@ -235,7 +235,7 @@ describe("recognising the pages that could not be read", () => {
     let started = false;
 
     const pending = ocrPages(
-      { bytes: await buildTwoPagePdf(), pages: [1, 2], signal: controller.signal },
+      { bytes: await buildTwoPagePdf(), pages: [1, 2], totalPages: 2, signal: controller.signal },
       {
         createRecogniser: async () => {
           started = true;
@@ -260,7 +260,7 @@ describe("recognising the pages that could not be read", () => {
       },
     };
     await expect(
-      ocrPages({ bytes: await buildTwoPagePdf(), pages: [1] }, { createRecogniser: async () => engine }),
+      ocrPages({ bytes: await buildTwoPagePdf(), pages: [1], totalPages: 2 }, { createRecogniser: async () => engine }),
     ).rejects.toThrow("the engine gave up");
     expect(closed).toBe(true);
   }, 60_000);
@@ -387,7 +387,7 @@ describe("holding the engine open", () => {
     };
 
     await expect(
-      ocrPages({ bytes: await buildTwoPagePdf(), pages: [1] }, { createRecogniser: async () => engine }),
+      ocrPages({ bytes: await buildTwoPagePdf(), pages: [1], totalPages: 2 }, { createRecogniser: async () => engine }),
     ).rejects.toThrow(OcrEngineError);
     expect(closed).toBe(true);
   }, 60_000);
@@ -523,7 +523,7 @@ describe("reading a page that carries a table", () => {
     };
 
     const candidates = await ocrPages(
-      { bytes: await buildTwoPagePdf(), pages: [1] },
+      { bytes: await buildTwoPagePdf(), pages: [1], totalPages: 2 },
       { createRecogniser: async () => engine },
     );
 
@@ -542,7 +542,7 @@ describe("reading a page that carries a table", () => {
     };
 
     const candidates = await ocrPages(
-      { bytes: await buildTwoPagePdf(), pages: [1] },
+      { bytes: await buildTwoPagePdf(), pages: [1], totalPages: 2 },
       { createRecogniser: async () => engine },
     );
 

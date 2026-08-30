@@ -103,7 +103,9 @@ export function pageNeedsRecognition(page: RecognisablePage): boolean {
  * Numbers rather than a sentence, because this is what a progress bar is drawn from. The sentence
  * comes too — a reader watching a scan wants to know which page of their document is being read,
  * which is not the same as how far through the run it is: `page` is a place in the document,
- * `current` a place in this run's list of targets.
+ * `current` a place in this run's list of targets. `totalPages` is the document extent used by
+ * user-facing progress, so recognising page 23 of a 628-page book is never presented as page 23
+ * of the smaller OCR target list.
  */
 export interface OcrPageProgress {
   /** The document page being recognised, one-based. */
@@ -112,6 +114,8 @@ export interface OcrPageProgress {
   current: number;
   /** How many pages this run will recognise. */
   total: number;
+  /** How many pages are in the complete document. */
+  totalPages: number;
   message: string;
 }
 
@@ -120,6 +124,8 @@ export interface ResolveOcrRequest {
   bytes: Uint8Array;
   /** Every page asked about, ascending — pages nothing could read, then pages read by region. */
   pages: readonly number[];
+  /** The complete document page count, including pages that do not need recognition. */
+  totalPages: number;
   signal?: AbortSignal;
   /** Progress emitted by the recognition adapter, when the caller requested it. */
   onProgress?: (progress: OcrPageProgress) => void;
@@ -281,6 +287,7 @@ export async function readDocumentPages(input: ReadDocumentInput): Promise<ReadD
           recovered = await input.resolveOcr({
             bytes: input.bytes,
             pages: targets,
+            totalPages: extracted.pageCount,
             document: handle,
             ...(input.signal === undefined ? {} : { signal: input.signal }),
             ...(input.onOcrProgress === undefined ? {} : { onProgress: input.onOcrProgress }),
@@ -298,6 +305,7 @@ export async function readDocumentPages(input: ReadDocumentInput): Promise<ReadD
       recovered = await input.resolveOcr({
         bytes: input.bytes,
         pages: unread,
+        totalPages: extracted.pageCount,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
         ...(input.onOcrProgress === undefined ? {} : { onProgress: input.onOcrProgress }),
       });

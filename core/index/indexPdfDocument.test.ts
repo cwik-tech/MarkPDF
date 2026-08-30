@@ -280,7 +280,7 @@ describe("indexing a PDF straight from its bytes", () => {
       filePath: null,
       chunkingProfile: "balanced",
       resolveOcr: async (request) => {
-        request.onProgress?.({ page: 2, current: 1, total: 1, message: "Reading page 2 with OCR" });
+        request.onProgress?.({ page: 2, current: 1, total: 1, totalPages: request.totalPages, message: "Reading page 2 with OCR" });
         return request.pages.map((page) => ({ page, text: SCAN_BODY_OCR }));
       },
       onProgress: (progress) =>
@@ -288,7 +288,7 @@ describe("indexing a PDF straight from its bytes", () => {
     });
 
     expect(reported.filter((event) => event.status === "ocr")).toEqual([
-      { status: "ocr", current: 1, total: 1, message: "Reading page 2 with OCR" },
+      { status: "ocr", current: 2, total: 3, message: "Reading page 2 with OCR" },
     ]);
     expect(
       reported.findIndex((event) => event.status === "ocr"),

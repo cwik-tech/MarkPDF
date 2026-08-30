@@ -89,16 +89,16 @@ export async function indexPdfDocument(
     // A page the extractor could not read is recognised here, inside this job, before any
     // embedding exists — and on a scanned document that is where nearly all the time goes.
     // Reporting it as `checking` told the reader their index was being examined while the machine
-    // was reading their pages; this is the one part of the read whose extent is knowable, so it is
-    // the one part that can be counted.
+    // was reading their pages. The visible counter uses the actual document page and full page
+    // count; the recognition target count remains available inside the OCR progress event.
     ...(input.onProgress === undefined
       ? {}
       : {
           onOcrProgress: (progress) =>
             input.onProgress?.({
               status: "ocr",
-              current: progress.current,
-              total: progress.total,
+              current: progress.page,
+              total: progress.totalPages,
               message: progress.message,
             }),
         }),

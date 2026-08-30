@@ -64,6 +64,8 @@ import {
 } from "./pdf/document";
 import { documentPreparationBadge, preparationIndexProgress } from "./documentPreparation";
 import { detectOcrNeed, runDocumentOcr } from "./pdf/ocr";
+import { openPdfInStages, yieldToUi } from "./pdf/openPdfInStages";
+import { withoutPdfBytes } from "./pdf/pdfViewState";
 import {
   clipLinkBox,
   parseInternalLinkAnnotations,
@@ -138,6 +140,9 @@ type SidebarMode =
   | "forms"
   | "signature"
   | "semantic";
+type PdfViewTab = Omit<PdfTab, "bytes">;
+type DocumentViewTab = PdfViewTab | MarkdownTab;
+type TabHeader = Pick<DocumentTab, "id" | "name" | "path" | "dirty">;
 
 const defaultSemanticSettings: SemanticSearchSettings = {
   enabled: true,
@@ -253,12 +258,6 @@ function mimeTypeFromImageName(name: string) {
   if (extension === "webp") return "image/webp";
   if (extension === "gif") return "image/gif";
   return "application/octet-stream";
-}
-
-function waitForUiPaint() {
-  return new Promise<void>((resolve) => {
-    window.requestAnimationFrame(() => resolve());
-  });
 }
 
 function delay(milliseconds: number) {
@@ -470,6 +469,9 @@ export default function App() {
   const autoSearchTimerRef = useRef<number | null>(null);
   const searchRequestIdRef = useRef(0);
   const ocrJobsRef = useRef(new Map<string, { cancelled: boolean }>());
+  const firstPageRenderWaitersRef = useRef(
+    new Map<string, { page: number; resolve: () => void }>(),
+  );
   const semanticJobsRef = useRef(new Map<string, { controller: AbortController }>());
   const semanticStartTimersRef = useRef(new Map<string, number>());
   const tabsRef = useRef<DocumentTab[]>([]);
@@ -483,6 +485,22 @@ export default function App() {
     [activeTabId, tabs],
   );
   const activePdfTab = isPdfTab(activeTab) ? activeTab : null;
+  const activePdfViewTab = useMemo(
+    () => (activePdfTab === null ? null : withoutPdfBytes(activePdfTab)),
+    [activePdfTab],
+  );
+  const activeDocumentViewTab: DocumentViewTab | null =
+    activePdfViewTab ?? (isMarkdownTab(activeTab) ? activeTab : null);
+  const tabHeaders = useMemo<TabHeader[]>(
+    () =>
+      tabs.map((tab) => ({
+        id: tab.id,
+        name: tab.name,
+        ...(tab.path === undefined ? {} : { path: tab.path }),
+        dirty: tab.dirty,
+      })),
+    [tabs],
+  );
   const activeMarkdownText = isMarkdownTab(activeTab)
     ? activeTab.markdown
     : null;
@@ -842,7 +860,9 @@ export default function App() {
   const showOperationProgress = useCallback(
     async (progress: OperationProgress) => {
       setOperationProgress(progress);
-      await waitForUiPaint();
+      await yieldToUi((callback) => {
+        window.setTimeout(callback, 0);
+      });
     },
     [],
   );
@@ -956,7 +976,7 @@ export default function App() {
       options: { autoOcr?: boolean; dirty?: boolean } = {},
     ) => {
       let password: string | undefined;
-      let pdfDoc!: Awaited<ReturnType<typeof loadPdfDocument>>;
+      let pdfDoc: Awaited<ReturnType<typeof loadPdfDocument>> | undefined;
 
       for (;;) {
         try {
@@ -973,52 +993,89 @@ export default function App() {
         }
       }
 
-      const formFields = await detectFormFields(bytes);
-      const outlineResult = await extractDocumentOutline(pdfDoc, bytes);
-      const overlays = await extractEditableOverlays(bytes);
-      const tab: PdfTab = {
-        kind: "pdf",
-        id: newId("tab"),
-        name,
-        path,
-        bytes,
-        pdfDoc,
-        pageCount: pdfDoc.numPages,
-        currentPage: 1,
-        zoom: 1,
-        rotation: 0,
-        viewMode: "single",
-        fitMode: "actual",
-        scrolling: false,
-        overlays,
-        formFields,
-        outline: outlineResult.outline,
-        outlineSource: outlineResult.source,
-        searchQuery: "",
-        searchMatches: [],
-        activeSearchMatch: -1,
-        semanticResults: [],
-        semanticHighlight: null,
-        semanticIndexStatus: "idle",
-        semanticIndexProgress: { status: "idle" },
-        ocrPages: [],
-        ocrStatus: options.autoOcr === false ? undefined : "checking",
-        ocrProgress:
-          options.autoOcr === false
-            ? undefined
-            : { status: "checking", message: "Checking text layer" },
-        undoStack: [],
-        redoStack: [],
-        dirty: options.dirty ?? outlineResult.generated,
-      };
+      const openedDocument = pdfDoc;
+      if (openedDocument === undefined) return;
+      const tabId = newId("tab");
+      const firstPageRendered = new Promise<void>((resolve) => {
+        firstPageRenderWaitersRef.current.set(tabId, { page: 1, resolve });
+      });
 
-      setTabs((current) => [...current, tab]);
-      setActiveTabId(tab.id);
-      if (options.autoOcr !== false) {
-        void startAutoOcr(tab.id, pdfDoc);
-      }
+      await openPdfInStages({
+        loadDocument: async () => openedDocument,
+        showDocument: (document) => {
+          const tab: PdfTab = {
+            kind: "pdf",
+            id: tabId,
+            name,
+            path,
+            bytes,
+            pdfDoc: document,
+            pageCount: document.numPages,
+            currentPage: 1,
+            zoom: 1,
+            rotation: 0,
+            viewMode: "single",
+            fitMode: "actual",
+            scrolling: false,
+            overlays: [],
+            formFields: [],
+            outline: [],
+            outlineSource: null,
+            searchQuery: "",
+            searchMatches: [],
+            activeSearchMatch: -1,
+            semanticResults: [],
+            semanticHighlight: null,
+            semanticIndexStatus: "idle",
+            semanticIndexProgress: { status: "idle" },
+            ocrPages: [],
+            ocrStatus: options.autoOcr === false ? undefined : "checking",
+            ocrProgress:
+              options.autoOcr === false
+                ? undefined
+                : { status: "checking", message: "Checking text layer" },
+            undoStack: [],
+            redoStack: [],
+            dirty: options.dirty ?? false,
+          };
+
+          setTabs((current) => [...current, tab]);
+          setActiveTabId(tab.id);
+        },
+        waitForPaint: async () => await firstPageRendered,
+        prepareDocument: async (document) => {
+          if (options.autoOcr !== false) {
+            await startAutoOcr(tabId, document);
+          }
+        },
+        loadMetadata: async (document) => {
+          const formFields = await detectFormFields(bytes);
+          await yieldToUi((callback) => {
+            window.setTimeout(callback, 0);
+          });
+          const outlineResult = await extractDocumentOutline(document, bytes);
+          await yieldToUi((callback) => {
+            window.setTimeout(callback, 0);
+          });
+          const overlays = await extractEditableOverlays(bytes);
+          return { formFields, outlineResult, overlays };
+        },
+        applyMetadata: ({ formFields, outlineResult, overlays }) => {
+          const openedOverlayIds = new Set(overlays.map((overlay) => overlay.id));
+          updatePdfTab(tabId, (tab) => ({
+            formFields,
+            overlays: [
+              ...overlays,
+              ...tab.overlays.filter((overlay) => !openedOverlayIds.has(overlay.id)),
+            ],
+            outline: outlineResult.outline,
+            outlineSource: outlineResult.source,
+            dirty: tab.dirty || outlineResult.generated,
+          }));
+        },
+      });
     },
-    [startAutoOcr],
+    [startAutoOcr, updatePdfTab],
   );
 
   const addMarkdownTab = useCallback(
@@ -1523,6 +1580,9 @@ export default function App() {
     }
 
     setTabs((current) => current.filter((item) => item.id !== tabId));
+    const renderWaiter = firstPageRenderWaitersRef.current.get(tabId);
+    firstPageRenderWaitersRef.current.delete(tabId);
+    renderWaiter?.resolve();
     const ocrJob = ocrJobsRef.current.get(tabId);
     if (ocrJob) ocrJob.cancelled = true;
     cancelSemanticJob(tabId);
@@ -2466,6 +2526,13 @@ export default function App() {
     window.requestAnimationFrame(() => searchInputRef.current?.focus());
   }, []);
 
+  const notePdfPageRendered = useCallback((tabId: string, page: number) => {
+    const waiter = firstPageRenderWaitersRef.current.get(tabId);
+    if (waiter === undefined || waiter.page !== page) return;
+    firstPageRenderWaitersRef.current.delete(tabId);
+    waiter.resolve();
+  }, []);
+
   useEffect(() => {
     if (selectedOverlay?.kind !== "comment" || !selectedOverlay.minimized)
       return undefined;
@@ -2606,7 +2673,7 @@ export default function App() {
   });
   const documentStage = (
     <section className="document-stage" ref={workspaceRef}>
-      {!activeTab ? (
+      {!activeDocumentViewTab ? (
         <EmptyState
           onOpen={openFromDialog}
           recentFiles={recentFiles}
@@ -2615,7 +2682,7 @@ export default function App() {
         />
       ) : (
         <DocumentView
-          tab={activeTab}
+          tab={activeDocumentViewTab}
           theme={theme}
           tool={tool}
           selectedOverlayId={selectedOverlayId}
@@ -2624,6 +2691,7 @@ export default function App() {
           onUpdateOverlay={updateOverlay}
           onDeleteOverlay={deleteOverlay}
           onTextSelection={setSelectionAction}
+          onPdfPageRendered={notePdfPageRendered}
           onClearSemanticHighlight={() =>
             activePdfTab &&
             updatePdfTab(activePdfTab.id, { semanticHighlight: null })
@@ -2658,7 +2726,7 @@ export default function App() {
       onDrop={handleDrop}
     >
       <TopBar
-        tabs={tabs}
+        tabs={tabHeaders}
         activeTabId={activeTabId}
         onSelectTab={setActiveTabId}
         onCloseTab={closeTab}
@@ -2741,7 +2809,7 @@ export default function App() {
             <ChevronLeft size={18} />
           </button>
           <PageBox
-            tab={activePdfTab}
+            tab={activePdfViewTab}
             onChange={(page) =>
               activePdfTab &&
               updatePdfTab(activePdfTab.id, { currentPage: page })
@@ -2813,7 +2881,7 @@ export default function App() {
             </button>
           </div>
           <FitMenu
-            activeTab={activePdfTab}
+            activeTab={activePdfViewTab}
             openMenu={openMenu}
             onOpenMenu={openToolbarMenu}
             onCloseMenu={scheduleToolbarMenuClose}
@@ -2823,7 +2891,7 @@ export default function App() {
             }}
           />
           <ViewMenu
-            activeTab={activePdfTab}
+            activeTab={activePdfViewTab}
             onChange={(patch) => {
               if (activePdfTab) updatePdfTab(activePdfTab.id, patch);
               openToolbarMenu(null);
@@ -3000,7 +3068,7 @@ export default function App() {
             >
               <Sidebar
                 mode={sidebar}
-                tab={activePdfTab}
+                tab={activePdfViewTab}
                 selectedOverlay={selectedOverlay}
                 signatureText={signatureText}
                 signatureFont={signatureFont}
@@ -3046,7 +3114,7 @@ export default function App() {
             {activePdfTab && sidebar && (
               <Sidebar
                 mode={sidebar}
-                tab={activePdfTab}
+                tab={activePdfViewTab}
                 selectedOverlay={selectedOverlay}
                 signatureText={signatureText}
                 signatureFont={signatureFont}
@@ -3237,7 +3305,7 @@ function TopBar({
   onOpenMenu,
   onCloseMenu,
 }: {
-  tabs: DocumentTab[];
+  tabs: TabHeader[];
   activeTabId: string | null;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
@@ -3428,7 +3496,7 @@ function PageBox({
   tab,
   onChange,
 }: {
-  tab: PdfTab | null;
+  tab: PdfViewTab | null;
   onChange: (page: number) => void;
 }) {
   const [value, setValue] = useState("1");
@@ -3467,7 +3535,7 @@ function FitMenu({
   onCloseMenu,
   onFit,
 }: {
-  activeTab: PdfTab | null;
+  activeTab: PdfViewTab | null;
   openMenu: ToolbarMenu | null;
   onOpenMenu: (menu: ToolbarMenu | null) => void;
   onCloseMenu: () => void;
@@ -3544,7 +3612,7 @@ function ViewMenu({
   onOpenMenu,
   onCloseMenu,
 }: {
-  activeTab: PdfTab | null;
+  activeTab: PdfViewTab | null;
   onChange: (patch: Partial<PdfTab>) => void;
   isFullScreen: boolean;
   onToggleFullScreen: () => void;
@@ -3766,11 +3834,12 @@ function DocumentView({
   onUpdateOverlay,
   onDeleteOverlay,
   onTextSelection,
+  onPdfPageRendered,
   onClearSemanticHighlight,
   onWheelPage,
   onFollowInternalLink,
 }: {
-  tab: DocumentTab;
+  tab: DocumentViewTab;
   theme: ThemeMode;
   tool: ToolMode;
   selectedOverlayId: string | null;
@@ -3794,11 +3863,12 @@ function DocumentView({
       text: string;
     } | null,
   ) => void;
+  onPdfPageRendered: (tabId: string, page: number) => void;
   onClearSemanticHighlight: () => void;
   onWheelPage: (direction: -1 | 1) => void;
   onFollowInternalLink: (page: number) => void;
 }) {
-  if (isMarkdownTab(tab)) {
+  if (tab.kind === "markdown") {
     return <MarkdownDocumentView tab={tab} theme={theme} />;
   }
 
@@ -3812,6 +3882,7 @@ function DocumentView({
       onUpdateOverlay={onUpdateOverlay}
       onDeleteOverlay={onDeleteOverlay}
       onTextSelection={onTextSelection}
+      onPdfPageRendered={onPdfPageRendered}
       onClearSemanticHighlight={onClearSemanticHighlight}
       onWheelPage={onWheelPage}
       onFollowInternalLink={onFollowInternalLink}
@@ -3828,11 +3899,12 @@ function PdfDocumentView({
   onUpdateOverlay,
   onDeleteOverlay,
   onTextSelection,
+  onPdfPageRendered,
   onClearSemanticHighlight,
   onWheelPage,
   onFollowInternalLink,
 }: {
-  tab: PdfTab;
+  tab: PdfViewTab;
   tool: ToolMode;
   selectedOverlayId: string | null;
   onPageClick: (page: number, x: number, y: number) => void;
@@ -3855,6 +3927,7 @@ function PdfDocumentView({
       text: string;
     } | null,
   ) => void;
+  onPdfPageRendered: (tabId: string, page: number) => void;
   onClearSemanticHighlight: () => void;
   onWheelPage: (direction: -1 | 1) => void;
   onFollowInternalLink: (page: number) => void;
@@ -3925,6 +3998,7 @@ function PdfDocumentView({
       {pages.map((pageNumber) => (
         <PdfPage
           key={`${tab.id}-${pageNumber}-${tab.rotation}`}
+          tabId={tab.id}
           pdfDoc={tab.pdfDoc}
           pageNumber={pageNumber}
           zoom={tab.zoom}
@@ -3956,6 +4030,7 @@ function PdfDocumentView({
           onUpdateOverlay={onUpdateOverlay}
           onDeleteOverlay={onDeleteOverlay}
           onTextSelection={onTextSelection}
+          onPdfPageRendered={onPdfPageRendered}
           onClearSemanticHighlight={onClearSemanticHighlight}
           onFollowInternalLink={onFollowInternalLink}
         />
@@ -4073,6 +4148,7 @@ interface RenderedInternalLink {
 }
 
 function PdfPage({
+  tabId,
   pdfDoc,
   pageNumber,
   zoom,
@@ -4090,9 +4166,11 @@ function PdfPage({
   onUpdateOverlay,
   onDeleteOverlay,
   onTextSelection,
+  onPdfPageRendered,
   onClearSemanticHighlight,
   onFollowInternalLink,
 }: {
+  tabId: string;
   pdfDoc: PDFDocumentProxy;
   pageNumber: number;
   zoom: number;
@@ -4121,6 +4199,7 @@ function PdfPage({
       text: string;
     } | null,
   ) => void;
+  onPdfPageRendered: (tabId: string, page: number) => void;
   onClearSemanticHighlight: () => void;
   onFollowInternalLink: (page: number) => void;
 }) {
@@ -4191,6 +4270,8 @@ function PdfPage({
             error instanceof Error ? error.message : "Page render failed.",
           );
         }
+      } finally {
+        if (!cancelled) onPdfPageRendered(tabId, pageNumber);
       }
     }
 
@@ -4201,7 +4282,7 @@ function PdfPage({
       renderTask?.cancel();
       textLayer?.cancel();
     };
-  }, [pdfDoc, pageNumber, rotation, zoom, ocrPage]);
+  }, [pdfDoc, pageNumber, rotation, zoom, ocrPage, onPdfPageRendered, tabId]);
 
   /**
    * The page's own links, read from its annotations and placed in the rendered view.
@@ -4913,7 +4994,7 @@ function Sidebar({
   onModeChange,
 }: {
   mode: SidebarMode;
-  tab: PdfTab | null;
+  tab: PdfViewTab | null;
   selectedOverlay: OverlayItem | null;
   signatureText: string;
   signatureFont: string;

@@ -240,14 +240,15 @@ test("an agent reads the page that exists only as a picture, in a document MarkP
     // toolbar as "Checking index".
     stage = "checking recognition was reported as its own phase";
     const preparation = await readPreparation(window);
+    const expectedOcrPosition = `${ADVERSARIAL.imageOnlyPage}/${ADVERSARIAL.pageCount}`;
     expect(
-      preparation.events.filter((event) => /^index:ocr:\d+\/\d+$/.test(event)),
+      preparation.events,
       `recognition events, from ${JSON.stringify(preparation.events)}`,
-    ).not.toHaveLength(0);
+    ).toContain(`index:ocr:${expectedOcrPosition}`);
     expect(
-      preparation.badges.some((badge) => /^OCR \d+\/\d+$/.test(badge)),
+      preparation.badges,
       `an OCR badge, from ${JSON.stringify(preparation.badges)}`,
-    ).toBe(true);
+    ).toContain(`OCR ${expectedOcrPosition}`);
     // And it was said before the embedding work, not after it.
     const firstOcr = preparation.events.findIndex((event) => event.startsWith("index:ocr:"));
     const firstIndexing = preparation.events.findIndex((event) => event.startsWith("index:indexing:"));

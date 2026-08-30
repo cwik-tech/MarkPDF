@@ -364,6 +364,7 @@ describe("a text-bearing page carrying a qualifying figure", () => {
     if (request === undefined) throw new Error("The resolver was never asked.");
     // Page 2 by its region, page 3 because nothing else could read it — one request, ascending.
     expect(request.pages).toEqual([2, 3]);
+    expect(request.totalPages).toBe(3);
     const regions = request.imageRegions ?? [];
     expect(regions).toHaveLength(1);
     expect(regions[0]?.page).toBe(2);
@@ -494,17 +495,22 @@ describe("passing recognition progress back to whoever asked for the read", () =
     // Without this the seam's per-page reports go nowhere: `ocrPages` produces them, the request
     // has a field for them, and nothing was ever put in it — so a caller watching a scan being
     // read had no way to know a page had gone by.
-    const reported: Array<{ page: number; current: number; total: number }> = [];
+    const reported: Array<{ page: number; current: number; total: number; totalPages: number }> = [];
 
     await readDocumentPages({
       bytes: await buildMixedPdf(),
-      onOcrProgress: (progress) => reported.push({ page: progress.page, current: progress.current, total: progress.total }),
+      onOcrProgress: (progress) => reported.push({
+        page: progress.page,
+        current: progress.current,
+        total: progress.total,
+        totalPages: progress.totalPages,
+      }),
       resolveOcr: async (request) => {
-        request.onProgress?.({ page: 2, current: 1, total: 1, message: "Reading page 2 with OCR" });
+        request.onProgress?.({ page: 2, current: 1, total: 1, totalPages: request.totalPages, message: "Reading page 2 with OCR" });
         return [{ page: 2, text: "Recognised body text." }];
       },
     });
 
-    expect(reported).toEqual([{ page: 2, current: 1, total: 1 }]);
+    expect(reported).toEqual([{ page: 2, current: 1, total: 1, totalPages: 2 }]);
   }, 60_000);
 });

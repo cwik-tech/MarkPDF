@@ -116,13 +116,13 @@ describe("operation progress producers", () => {
     // The counters travel too. A client that asked for progress can now draw a bar over the pages
     // being recognised instead of reading a sentence and guessing how much is left; the sentence is
     // still sent, because it names the page of the document rather than the position in the run.
-    const resolverSeen: Array<{ page: number; current: number; total: number }> = [];
+    const resolverSeen: Array<{ page: number; current: number; total: number; totalPages: number }> = [];
     const callSeen: ToolProgress[] = [];
     const { context, close } = createToolContext(
       { dataDir, env: testEnv(dataDir), isPackaged: false },
       {
         ocr: async (request) => {
-          request.onProgress?.({ page: 3, current: 1, total: 2, message: "Reading page 3 with OCR" });
+          request.onProgress?.({ page: 3, current: 1, total: 2, totalPages: request.totalPages, message: "Reading page 3 with OCR" });
           return [];
         },
       },
@@ -137,11 +137,12 @@ describe("operation progress producers", () => {
       await resolve({
         bytes: new Uint8Array(),
         pages: [3, 4],
-        onProgress: ({ page, current, total }) => resolverSeen.push({ page, current, total }),
+        totalPages: 628,
+        onProgress: ({ page, current, total, totalPages }) => resolverSeen.push({ page, current, total, totalPages }),
       });
 
-      expect(resolverSeen).toEqual([{ page: 3, current: 1, total: 2 }]);
-      expect(callSeen).toEqual([{ progress: 1, total: 2, message: "Reading page 3 with OCR" }]);
+      expect(resolverSeen).toEqual([{ page: 3, current: 1, total: 2, totalPages: 628 }]);
+      expect(callSeen).toEqual([{ progress: 3, total: 628, message: "Reading page 3 with OCR" }]);
     } finally {
       close();
     }
@@ -216,9 +217,9 @@ describe("resource-specific scheduling", () => {
     try {
       const resolve = context.resolveOcr;
       if (resolve === undefined) throw new Error("OCR resolver was not configured");
-      const first = resolve({ bytes: new Uint8Array(), pages: [1] });
+      const first = resolve({ bytes: new Uint8Array(), pages: [1], totalPages: 2 });
       await firstStart;
-      const second = resolve({ bytes: new Uint8Array(), pages: [2] });
+      const second = resolve({ bytes: new Uint8Array(), pages: [2], totalPages: 2 });
 
       let cheapWorkFinished = false;
       await context.scheduler.run(async () => {
