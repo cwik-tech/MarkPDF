@@ -272,11 +272,14 @@ out of that correction.
 ## UI styling policy
 
 The renderer uses React components and the global stylesheet in
-`src/styles.css`; it does not use Tailwind or shadcn. Reuse existing component
-and class patterns before adding another styling approach. Keep document and
-view calculations in TypeScript when they depend on runtime PDF geometry; keep
-static presentation in CSS. Presentational-only work follows the test exemption
-above and still requires inspection of the rendered Electron UI when practical.
+`src/styles.css`. Reuse existing component and class patterns for application
+UI. Reusable shadcn primitives live under `src/components/ui/` and use the
+Tailwind pipeline configured in `vite.config.ts`; add them through the checked-in
+`components.json` configuration instead of reimplementing the primitive in
+application CSS. Keep document and view calculations in TypeScript when they
+depend on runtime PDF geometry; keep static presentation in CSS. Presentational-only
+work follows the test exemption above and still requires inspection of the
+rendered Electron UI when practical.
 
 ## Verification commands
 

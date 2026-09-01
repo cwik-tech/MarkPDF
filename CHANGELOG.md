@@ -46,6 +46,7 @@
 
 ### Changed
 
+- CLI & MCP setup guidance now sits behind compact shadcn info tooltips instead of permanent subheadings and paragraphs.
 - OCR now rasterises and recognises one page at a time, allows only one recognition job at once, and removes cancelled work from the queue immediately; cheap index-only MCP calls remain responsive while a scan is being read.
 - The Command Line section moved from Settings › General to its own Settings › CLI & MCP page, alongside the new MCP Server instructions.
 
@@ -65,6 +66,7 @@
 
 ### Fixed
 
+- MCP client setup snippets now use MarkPDF's absolute installed command path instead of relying on the client's `PATH` to resolve `markpdf`.
 - Markdown documents once again open as a single read-only preview. MCP can still read the open document without adding an editor, Markdown Save behavior, or a second scrollbar.
 - `to_markdown` now verifies the current file contents before using cached text, so replacing a PDF at the same path returns the new document even when the replacement has exactly the same byte length. Index-only tools continue to expose the older indexed snapshot until the file is re-indexed, and identify it as such.
 - Scanned financial tables now keep their rows and columns when they enter the index. Reading the pictured page through an assistant returns a Markdown table, and semantic search can associate a value with the correct row and year instead of seeing a loose sequence of numbers.

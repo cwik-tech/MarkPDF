@@ -4,6 +4,7 @@ import {
   Copy,
   Eye,
   FileText,
+  Info,
   KeyRound,
   Plus,
   RefreshCw,
@@ -14,7 +15,9 @@ import {
   Trash2,
   XCircle
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
   AIModelInfo,
   AIProviderInput,
@@ -188,6 +191,7 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
   const [busySemanticModelId, setBusySemanticModelId] = useState<string | null>(null);
+  const [cliInstallStatus, setCliInstallStatus] = useState<CliInstallStatus | null>(null);
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
 
   const enabledModels = useMemo(
@@ -527,8 +531,12 @@ export function AISettingsDialog({ onClose, onSemanticSettingsChange, onSemantic
 
           {page === "cli-mcp" && (
             <>
-              <CommandLineSection onToast={showToast} />
-              <McpServerSection onToast={showToast} />
+              <CommandLineSection
+                status={cliInstallStatus}
+                onStatusChange={setCliInstallStatus}
+                onToast={showToast}
+              />
+              <McpServerSection commandPath={cliInstallStatus?.installPath ?? null} onToast={showToast} />
             </>
           )}
 
@@ -735,37 +743,58 @@ function GeneralSettingsPage({
   );
 }
 
+function InfoTooltip({ label, children }: { label: string; children: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button type="button" variant="ghost" size="icon-xs" aria-label={label}>
+          <Info size={14} />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent className="z-[200]" side="top" sideOffset={6}>
+        {children}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 /**
  * The `markpdf` command, and whether typing it reaches this copy of the application.
  *
- * It keeps its own state rather than threading through the settings dialog, because nothing else
- * on this page depends on it. Every sentence it shows comes from `describeCliInstall`, which is
- * a pure rule with its own tests — this component only decides where the words go.
+ * Every status sentence comes from `describeCliInstall`, which is a pure rule with its own tests.
+ * The settings dialog owns the raw status because the MCP snippets also need its install path.
  */
-function CommandLineSection({ onToast }: { onToast: (message: string) => void }) {
-  const [status, setStatus] = useState<CliInstallStatus | null>(null);
+function CommandLineSection({
+  status,
+  onStatusChange,
+  onToast,
+}: {
+  status: CliInstallStatus | null;
+  onStatusChange: (status: CliInstallStatus | null) => void;
+  onToast: (message: string) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     if (!window.pdfReader?.cliInstall) return;
     try {
-      setStatus(await window.pdfReader.cliInstall.getStatus());
+      onStatusChange(await window.pdfReader.cliInstall.getStatus());
       setProblem(null);
     } catch (error) {
       // Surfaced rather than swallowed: an unreadable status used to leave `status` null forever,
       // which rendered nothing at all — a section that silently disappears is worse than one that
       // says what went wrong.
-      setStatus(null);
+      onStatusChange(null);
       setProblem(error instanceof Error ? error.message : String(error));
     }
-  };
+  }, [onStatusChange]);
 
   useEffect(() => {
     // Fire and forget: `refresh` records both its outcomes in state, so there is nothing for a
     // caller to await and no rejection to lose.
     void refresh();
-  }, []);
+  }, [refresh]);
 
   const run = async (action: Exclude<CliInstallAction, "none">) => {
     if (!window.pdfReader?.cliInstall) return;
@@ -776,7 +805,7 @@ function CommandLineSection({ onToast }: { onToast: (message: string) => void })
         action === "remove"
           ? await window.pdfReader.cliInstall.uninstall()
           : await window.pdfReader.cliInstall.install();
-      setStatus(result.status);
+      onStatusChange(result.status);
       setProblem(result.ok ? null : result.reason ?? "That did not work.");
       if (result.ok) {
         const message =
@@ -801,9 +830,11 @@ function CommandLineSection({ onToast }: { onToast: (message: string) => void })
   return (
     <section className="settings-section">
       <div className="settings-section-heading">
-        <div>
+        <div className="settings-heading-title">
           <h3>Command Line</h3>
-          <p>Index, search, outline and convert your documents from a terminal or an agent.</p>
+          <InfoTooltip label="About the command line">
+            Index, search, outline and convert your documents from a terminal or an agent.
+          </InfoTooltip>
         </div>
         {/* Fire and forget: `refresh` puts both its outcomes in state, so nothing is dropped. */}
         <button className="secondary-button" disabled={busy} onClick={() => void refresh()}>
@@ -844,23 +875,37 @@ function CommandLineSection({ onToast }: { onToast: (message: string) => void })
   );
 }
 
-const MCP_CLAUDE_CODE_COMMAND = "claude mcp add markpdf -- markpdf mcp";
+function mcpClaudeCodeCommand(commandPath: string): string {
+  return `claude mcp add markpdf -- ${commandPath} mcp`;
+}
 
-const MCP_CLIENT_CONFIG = JSON.stringify(
-  { mcpServers: { markpdf: { command: "markpdf", args: ["mcp"] } } },
-  null,
-  2
-);
+function mcpClientConfig(commandPath: string): string {
+  return JSON.stringify(
+    { mcpServers: { markpdf: { command: commandPath, args: ["mcp"] } } },
+    null,
+    2
+  );
+}
+
+const MCP_OTHER_CLIENTS_HELP = [
+  "Add this to Claude Desktop's claude_desktop_config.json, Cursor's mcp.json or another client's MCP configuration.",
+  "The server requires the markpdf command above and reads only documents you have granted and indexed.",
+  "Grant a folder with markpdf --allow-read <folder>, then index documents with markpdf index <path>.",
+].join(" ");
 
 /**
  * How to reach the MCP server from an agent.
  *
- * Static copy, deliberately: the instructions are the installed `markpdf` command plus one
- * argument, so there is nothing here to ask the main process for. The prerequisite is the section
- * above this one — a client spawns the server through the command line, so the command has to be
- * installed first.
+ * A client does not inherit the terminal's PATH reliably, so each snippet uses the absolute path
+ * reported by the command-line installer rather than the short `markpdf` name.
  */
-function McpServerSection({ onToast }: { onToast: (message: string) => void }) {
+function McpServerSection({
+  commandPath,
+  onToast,
+}: {
+  commandPath: string | null;
+  onToast: (message: string) => void;
+}) {
   const copySnippet = async (snippet: string) => {
     try {
       await navigator.clipboard.writeText(snippet);
@@ -870,43 +915,47 @@ function McpServerSection({ onToast }: { onToast: (message: string) => void }) {
     }
   };
 
+  const claudeCodeCommand = commandPath === null ? null : mcpClaudeCodeCommand(commandPath);
+  const clientConfig = commandPath === null ? null : mcpClientConfig(commandPath);
+
   return (
     <section className="settings-section">
       <div className="settings-section-heading">
-        <div>
+        <div className="settings-heading-title">
           <h3>MCP Server</h3>
-          <p>Let an MCP client — Claude Code, Cursor, or another agent — outline, search, and read your indexed documents.</p>
+          <InfoTooltip label="About the MCP server">
+            Let an MCP client outline, search and read your indexed documents.
+          </InfoTooltip>
         </div>
       </div>
 
-      <div className="settings-subsection">
-        <h4>Claude Code</h4>
-        <p>Run this once to register the server:</p>
-        <div className="settings-code-block">
-          <code>{MCP_CLAUDE_CODE_COMMAND}</code>
-          <button className="secondary-button" onClick={() => void copySnippet(MCP_CLAUDE_CODE_COMMAND)}>
-            <Copy size={14} />
-            Copy
-          </button>
-        </div>
-      </div>
+      {claudeCodeCommand === null || clientConfig === null ? (
+        <div className="empty-row">Checking command location...</div>
+      ) : (
+        <>
+          <div className="settings-code-block">
+            <code>{claudeCodeCommand}</code>
+            <div className="settings-code-actions">
+              <InfoTooltip label="About Claude Code">Run this once to register the server with Claude Code.</InfoTooltip>
+              <button className="secondary-button" onClick={() => void copySnippet(claudeCodeCommand)}>
+                <Copy size={14} />
+                Copy
+              </button>
+            </div>
+          </div>
 
-      <div className="settings-subsection">
-        <h4>Other clients</h4>
-        <p>Add this to the client&rsquo;s MCP configuration, such as Claude Desktop&rsquo;s claude_desktop_config.json or Cursor&rsquo;s mcp.json:</p>
-        <div className="settings-code-block">
-          <pre>{MCP_CLIENT_CONFIG}</pre>
-          <button className="secondary-button" onClick={() => void copySnippet(MCP_CLIENT_CONFIG)}>
-            <Copy size={14} />
-            Copy
-          </button>
-        </div>
-      </div>
-
-      <p className="settings-note">
-        Requires the markpdf command above. The server reads only what you have granted and indexed: grant a folder with
-        markpdf --allow-read &lt;folder&gt;, then index documents with markpdf index &lt;path&gt;.
-      </p>
+          <div className="settings-code-block">
+            <pre>{clientConfig}</pre>
+            <div className="settings-code-actions">
+              <InfoTooltip label="About other clients">{MCP_OTHER_CLIENTS_HELP}</InfoTooltip>
+              <button className="secondary-button" onClick={() => void copySnippet(clientConfig)}>
+                <Copy size={14} />
+                Copy
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </section>
   );
 }

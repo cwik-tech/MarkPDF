@@ -1,3 +1,9 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(:root[data-theme="dark"] *));
+
 :root {
   color-scheme: light dark;
   font-family:
@@ -22,6 +28,37 @@
   --accent-2: #d7eaff;
   --danger: #b42318;
   --shadow: 0 20px 48px rgba(30, 36, 46, 0.16);
+  --ui-background: oklch(1 0 0);
+  --ui-foreground: oklch(0.145 0 0);
+  --ui-card: oklch(1 0 0);
+  --ui-card-foreground: oklch(0.145 0 0);
+  --ui-popover: oklch(1 0 0);
+  --ui-popover-foreground: oklch(0.145 0 0);
+  --ui-primary: oklch(0.205 0 0);
+  --ui-primary-foreground: oklch(0.985 0 0);
+  --ui-secondary: oklch(0.97 0 0);
+  --ui-secondary-foreground: oklch(0.205 0 0);
+  --ui-muted: oklch(0.97 0 0);
+  --ui-muted-foreground: oklch(0.556 0 0);
+  --ui-accent: oklch(0.97 0 0);
+  --ui-accent-foreground: oklch(0.205 0 0);
+  --ui-destructive: oklch(0.577 0.245 27.325);
+  --ui-input: oklch(0.922 0 0);
+  --ui-ring: oklch(0.708 0 0);
+  --ui-chart-1: oklch(0.87 0 0);
+  --ui-chart-2: oklch(0.556 0 0);
+  --ui-chart-3: oklch(0.439 0 0);
+  --ui-chart-4: oklch(0.371 0 0);
+  --ui-chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --ui-sidebar: oklch(0.985 0 0);
+  --ui-sidebar-foreground: oklch(0.145 0 0);
+  --ui-sidebar-primary: oklch(0.205 0 0);
+  --ui-sidebar-primary-foreground: oklch(0.985 0 0);
+  --ui-sidebar-accent: oklch(0.97 0 0);
+  --ui-sidebar-accent-foreground: oklch(0.205 0 0);
+  --ui-sidebar-border: oklch(0.922 0 0);
+  --ui-sidebar-ring: oklch(0.708 0 0);
 }
 
 :root[data-theme="dark"] {
@@ -38,6 +75,36 @@
   --accent-2: rgba(84, 169, 255, 0.16);
   --danger: #ff7b72;
   --shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+  --ui-background: oklch(0.145 0 0);
+  --ui-foreground: oklch(0.985 0 0);
+  --ui-card: oklch(0.205 0 0);
+  --ui-card-foreground: oklch(0.985 0 0);
+  --ui-popover: oklch(0.205 0 0);
+  --ui-popover-foreground: oklch(0.985 0 0);
+  --ui-primary: oklch(0.922 0 0);
+  --ui-primary-foreground: oklch(0.205 0 0);
+  --ui-secondary: oklch(0.269 0 0);
+  --ui-secondary-foreground: oklch(0.985 0 0);
+  --ui-muted: oklch(0.269 0 0);
+  --ui-muted-foreground: oklch(0.708 0 0);
+  --ui-accent: oklch(0.269 0 0);
+  --ui-accent-foreground: oklch(0.985 0 0);
+  --ui-destructive: oklch(0.704 0.191 22.216);
+  --ui-input: oklch(1 0 0 / 15%);
+  --ui-ring: oklch(0.556 0 0);
+  --ui-chart-1: oklch(0.87 0 0);
+  --ui-chart-2: oklch(0.556 0 0);
+  --ui-chart-3: oklch(0.439 0 0);
+  --ui-chart-4: oklch(0.371 0 0);
+  --ui-chart-5: oklch(0.269 0 0);
+  --ui-sidebar: oklch(0.205 0 0);
+  --ui-sidebar-foreground: oklch(0.985 0 0);
+  --ui-sidebar-primary: oklch(0.488 0.243 264.376);
+  --ui-sidebar-primary-foreground: oklch(0.985 0 0);
+  --ui-sidebar-accent: oklch(0.269 0 0);
+  --ui-sidebar-accent-foreground: oklch(0.985 0 0);
+  --ui-sidebar-border: oklch(1 0 0 / 10%);
+  --ui-sidebar-ring: oklch(0.556 0 0);
 }
 
 * {
@@ -2184,6 +2251,17 @@ select {
   align-items: flex-start;
 }
 
+.settings-heading-title,
+.settings-code-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-code-actions {
+  flex: 0 0 auto;
+}
+
 .settings-button-row,
 .provider-actions {
   display: flex;
@@ -2544,4 +2622,46 @@ select {
   .field-row.two {
     grid-template-columns: 1fr;
   }
+}
+
+@theme inline {
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --color-sidebar-ring: var(--ui-sidebar-ring);
+  --color-sidebar-border: var(--ui-sidebar-border);
+  --color-sidebar-accent-foreground: var(--ui-sidebar-accent-foreground);
+  --color-sidebar-accent: var(--ui-sidebar-accent);
+  --color-sidebar-primary-foreground: var(--ui-sidebar-primary-foreground);
+  --color-sidebar-primary: var(--ui-sidebar-primary);
+  --color-sidebar-foreground: var(--ui-sidebar-foreground);
+  --color-sidebar: var(--ui-sidebar);
+  --color-chart-5: var(--ui-chart-5);
+  --color-chart-4: var(--ui-chart-4);
+  --color-chart-3: var(--ui-chart-3);
+  --color-chart-2: var(--ui-chart-2);
+  --color-chart-1: var(--ui-chart-1);
+  --color-ring: var(--ui-ring);
+  --color-input: var(--ui-input);
+  --color-border: var(--border);
+  --color-destructive: var(--ui-destructive);
+  --color-accent-foreground: var(--ui-accent-foreground);
+  --color-accent: var(--ui-accent);
+  --color-muted-foreground: var(--ui-muted-foreground);
+  --color-muted: var(--ui-muted);
+  --color-secondary-foreground: var(--ui-secondary-foreground);
+  --color-secondary: var(--ui-secondary);
+  --color-primary-foreground: var(--ui-primary-foreground);
+  --color-primary: var(--ui-primary);
+  --color-popover-foreground: var(--ui-popover-foreground);
+  --color-popover: var(--ui-popover);
+  --color-card-foreground: var(--ui-card-foreground);
+  --color-card: var(--ui-card);
+  --color-foreground: var(--ui-foreground);
+  --color-background: var(--ui-background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }

@@ -111,11 +111,28 @@ test("installs the markpdf command from settings and removes it again", async ()
     await window.getByTitle("Settings").click();
     await window.getByRole("button", { name: "CLI & MCP" }).click();
 
-    // The other half of the page: the MCP client configuration, which needs no state of its own.
+    // The other half of the page uses the same resolved install path as the command-line status.
     const mcpSection = window.locator(".settings-section", { hasText: "MCP Server" });
     await expect(mcpSection).toBeVisible({ timeout: 15_000 });
-    await expect(mcpSection).toContainText("claude mcp add markpdf -- markpdf mcp");
-    await expect(mcpSection).toContainText('"command": "markpdf"');
+    await expect(mcpSection).toContainText(`claude mcp add markpdf -- ${commandPath} mcp`);
+    await expect(mcpSection).toContainText(`"command": "${commandPath}"`);
+    await expect(mcpSection.getByRole("heading", { name: "Other clients" })).toHaveCount(0);
+
+    const otherClientsInfo = mcpSection.getByRole("button", { name: "About other clients" });
+    await otherClientsInfo.focus();
+    const otherClientsTooltip = window.getByRole("tooltip").filter({ hasText: "Claude Desktop" });
+    await expect(otherClientsTooltip).toContainText("Claude Desktop");
+    await expect(otherClientsTooltip).toContainText("granted and indexed");
+    await expect(otherClientsTooltip).toContainText("markpdf --allow-read <folder>");
+    await expect(otherClientsTooltip).toContainText("markpdf index <path>");
+    await otherClientsInfo.hover();
+    await expect(otherClientsTooltip).toHaveAttribute("data-state", /open/);
+    const tooltipIsTopmost = await otherClientsTooltip.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const paintedElement = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return paintedElement !== null && element.contains(paintedElement);
+    });
+    expect(tooltipIsTopmost).toBe(true);
 
     const section = window.locator(".settings-section", { hasText: "Command Line" });
     await expect(section).toBeVisible({ timeout: 15_000 });
