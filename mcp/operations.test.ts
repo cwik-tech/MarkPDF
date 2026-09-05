@@ -8,6 +8,7 @@ import { indexDocument } from "../dist-core/index/indexDocument.js";
 import { createDeterministicEmbedder } from "../dist-core/index/deterministicEmbedder.js";
 import { defaultSemanticSearchSettings } from "../dist-core/ipc/settings.js";
 import { readSemanticSettings } from "../dist-core/settings/appSettings.js";
+import { openDocumentReference, type OpenDocumentsView } from "../dist-core/session/openDocuments.js";
 import {
   MARKDOWN_ENGINE_ID,
   MARKDOWN_VERSION,
@@ -268,6 +269,46 @@ describe("tools that read the index only", () => {
     if (!outcome.ok) return;
     expect((outcome.payload.results as unknown[]).length).toBeGreaterThan(0);
     expect(context.reads).toEqual([]);
+  }, 60_000);
+
+  it("searches the active indexed document by reference without reading or returning its path", async () => {
+    const contentHash = await indexTheFixture();
+    const ref = openDocumentReference(4242, 7, "tab-report");
+    const openDocuments: OpenDocumentsView = {
+      windows: 1,
+      activeRef: ref,
+      unreadableWindows: 0,
+      documents: [
+        {
+          ref,
+          process: 4242,
+          window: 7,
+          tabId: "tab-report",
+          kind: "pdf",
+          name: "annual-report.pdf",
+          path: fixture,
+          pageCount: 2,
+          currentPage: 1,
+          contentHash,
+          hasContentSnapshot: false,
+          contentChars: 0,
+          contentBytes: 0,
+          snapshotTruncated: false,
+          unsavedChanges: false,
+          activeInWindow: true,
+          active: true,
+        },
+      ],
+    };
+    const context = contextWith({ openDocuments: () => openDocuments });
+
+    const outcome = await runSearch(context, { ref: "active", query: "Enterprise 1204", min_score: 0.05 });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(searchHitsOf(outcome.payload)[0]?.page).toBe(2);
+    expect(context.reads).toEqual([]);
+    expect(JSON.stringify(outcome.payload)).not.toContain(libraryDir);
   }, 60_000);
 
   it("says a document is not indexed rather than reaching for it, even when it is granted", async () => {

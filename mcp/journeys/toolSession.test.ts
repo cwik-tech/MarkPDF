@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { buildReportPdf, PAGE_TWO_HEADING } from "../../cli/journeys/fixtures.test-support.js";
 import { DETERMINISTIC_EMBEDDER_TOKEN } from "../../dist-core/index/embedderSelection.js";
+import { writeOpenDocuments } from "../../dist-core/session/openDocuments.js";
 
 /**
  * The MCP exit criterion: a real client, over a real stdio transport, against the real server.
@@ -117,6 +118,76 @@ describe("an agent session over stdio", () => {
       const pages = read.pages as Array<{ page: number; markdown: string }>;
       expect(pages.map((page) => page.page)).toEqual([2]);
       expect(pages[0]?.markdown).toContain("Enterprise");
+    } finally {
+      await client.close();
+    }
+  }, 180_000);
+
+  it("searches the active indexed PDF by its open-document reference without disclosing its path", async () => {
+    const { jsonOf, runCli } = await import("../../cli/journeys/runCli.test-support.js");
+    expect((await runCli(["--allow-read", libraryDir], { dataDir })).code).toBe(0);
+    const indexed = await runCli(["index", fixture, "--json"], { dataDir });
+    expect(indexed.code).toBe(0);
+    const report = jsonOf(indexed);
+    const documents =
+      typeof report === "object" && report !== null && "documents" in report && Array.isArray(report.documents)
+        ? report.documents
+        : [];
+    const first = documents[0];
+    const contentHash =
+      typeof first === "object" && first !== null && "contentHash" in first && typeof first.contentHash === "string"
+        ? first.contentHash
+        : null;
+    if (contentHash === null) throw new Error("The indexed fixture did not return a content hash.");
+
+    writeOpenDocuments(dataDir, {
+      version: 2,
+      pid: process.pid,
+      windowId: 7,
+      focusedAt: 1,
+      writtenAt: "2026-09-05T12:00:00.000Z",
+      activeTabId: "tab-report",
+      documents: [
+        {
+          tabId: "tab-report",
+          kind: "pdf",
+          name: "annual-report.pdf",
+          path: fixture,
+          pageCount: 3,
+          currentPage: 1,
+          contentHash,
+          hasContentSnapshot: false,
+          contentChars: 0,
+          contentBytes: 0,
+          snapshotTruncated: false,
+          unsavedChanges: false,
+        },
+      ],
+    });
+
+    const client = await connect();
+    try {
+      const listed = payloadOf(await client.callTool({ name: "list_open_documents", arguments: {} }));
+      expect(JSON.stringify(listed)).not.toContain(libraryDir);
+
+      const searched = payloadOf(
+        await client.callTool({
+          name: "search",
+          arguments: { ref: "active", query: "Enterprise 1204 1318", min_score: 0.1 },
+        }),
+      );
+      const results = searched.results as Array<{ page: number }>;
+      expect(results[0]?.page).toBe(2);
+      expect(searched.contentHash).toBe(contentHash);
+      expect(JSON.stringify(searched)).not.toContain(libraryDir);
+
+      const read = payloadOf(
+        await client.callTool({ name: "read_pages", arguments: { id: contentHash, pages: "2" } }),
+      );
+      const pages = read.pages as Array<{ page: number; markdown: string }>;
+      expect(pages.map((page) => page.page)).toEqual([2]);
+      expect(pages[0]?.markdown).toContain("Enterprise");
+      expect(JSON.stringify(read)).not.toContain(libraryDir);
     } finally {
       await client.close();
     }

@@ -54,6 +54,13 @@ export const DOCUMENT_IDENTITY_BRANCHES: readonly SchemaBranch[] = [
   { required: ["id"], not: { required: ["path"] } },
 ];
 
+/** Search alone may resolve the same indexed document through a live MarkPDF tab. */
+export const SEARCH_IDENTITY_BRANCHES: readonly SchemaBranch[] = [
+  { required: ["path"] },
+  { required: ["id"] },
+  { required: ["ref"] },
+];
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -152,17 +159,21 @@ export const TOOLS: readonly ToolDefinition[] = [
   {
     name: "search",
     description:
-      "Find the passages of one indexed document that answer a question. Each hit carries its page and the headings above it. Reads the index only, so it needs no filesystem permission. The reply identifies the result as an index snapshot and reports when that exact search scope was recorded.",
+      "Find the passages of one indexed document that answer a question. Name it by path, content hash, or an open-document reference from list_open_documents; use ref \"active\" for the document currently in front. Each hit carries its page and the headings above it. Reads the index only, so it needs no filesystem permission. The reply identifies the result as an index snapshot and reports when that exact search scope was recorded.",
     inputSchema: {
       type: "object",
       properties: {
         ...documentIdentity(),
+        ref: {
+          type: "string",
+          description: `A reference from list_open_documents, or "${ACTIVE_DOCUMENT}" for whichever document is at the front. Give this, path, or id.`,
+        },
         query: { type: "string", description: "What to search for, in plain language." },
         top_k: propertyFromOption("search", "top-k"),
         min_score: propertyFromOption("search", "min-score"),
       },
       required: ["query"],
-      oneOf: DOCUMENT_IDENTITY_BRANCHES,
+      oneOf: SEARCH_IDENTITY_BRANCHES,
       additionalProperties: false,
     },
   },

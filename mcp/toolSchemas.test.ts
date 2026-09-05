@@ -59,10 +59,11 @@ describe("turning a command option into a schema property", () => {
  * The four tools that address a document the caller names.
  *
  * The open-document tools are deliberately not among them: they address a document the *user* has
- * in front of them, which is the whole reason they exist, so the identity rules below are about
- * these four rather than about every tool.
+ * in front of them. Search can now accept one of those opaque references too, while the other three
+ * retain the path-or-hash contract they share with the command line.
  */
 const NAMED_DOCUMENT_TOOLS = ["outline", "search", "read_pages", "to_markdown"];
+const PATH_OR_HASH_DOCUMENT_TOOLS = ["outline", "read_pages", "to_markdown"];
 
 describe("the tools this server offers", () => {
   it("is the four that name a document plus the two that reach the open application", () => {
@@ -94,13 +95,25 @@ describe("the tools this server offers", () => {
   it("publishes the exactly-one-of rule rather than only enforcing it", () => {
     // A schema leaving both optional advertises calls the server refuses, and a client validating
     // against it builds them.
-    for (const name of NAMED_DOCUMENT_TOOLS) {
+    for (const name of PATH_OR_HASH_DOCUMENT_TOOLS) {
       const tool = TOOLS.find((candidate) => candidate.name === name);
       expect(tool?.inputSchema.oneOf).toEqual([
         { required: ["path"], not: { required: ["id"] } },
         { required: ["id"], not: { required: ["path"] } },
       ]);
     }
+  });
+
+  it("lets search target an open document reference as the third exclusive identity", () => {
+    const search = TOOLS.find((tool) => tool.name === "search");
+
+    expect(search?.inputSchema.properties.ref).toMatchObject({ type: "string" });
+    expect(search?.inputSchema.properties.ref?.description).toMatch(/open document|active/i);
+    expect(search?.inputSchema.oneOf).toEqual([
+      { required: ["path"] },
+      { required: ["id"] },
+      { required: ["ref"] },
+    ]);
   });
 
   it("asks the open-document tools for no document identity at all", () => {

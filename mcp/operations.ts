@@ -20,6 +20,7 @@ import type { SemanticSearchSettings } from "../dist-core/ipc/settings.js";
 import type { OpenDocumentEntry, OpenDocumentsView } from "../dist-core/session/openDocuments.js";
 import type { SemanticStore } from "../dist-core/store/index.js";
 import type { ArgumentValue } from "./arguments.js";
+import { selectOpenDocument } from "./openDocumentSelection.js";
 import type { ToolProgress } from "./progress.js";
 
 /**
@@ -238,8 +239,27 @@ export async function runSearch(
   // Index only, always. A path the index does not hold is reported as such rather than read and
   // hashed, so this tool needs no filesystem permission under any circumstances.
   const store = context.store();
+  let requestedIdentity = identity(args);
+  const ref = text(args, "ref");
+  if (ref !== undefined) {
+    let selected;
+    try {
+      selected = selectOpenDocument(context.openDocuments(), ref);
+    } catch {
+      return {
+        ok: false,
+        message: "MarkPDF's record of which documents are open could not be read. This does not mean nothing is open; try again.",
+      };
+    }
+    if (!selected.ok) return selected;
+    if (selected.document.kind !== "pdf" || selected.document.contentHash === null) {
+      return { ok: false, message: "That open document is not an indexed PDF. Index the PDF first, then try again." };
+    }
+    // The record's path is private. Search needs only the index identity and never receives it.
+    requestedIdentity = { contentHash: selected.document.contentHash };
+  }
   const lookup = await findIndexedDocument(store, context.allowlist(), {
-    ...identity(args),
+    ...requestedIdentity,
     filesystemFallback: false,
     readFile: context.readFile,
   });

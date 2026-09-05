@@ -3,6 +3,7 @@ import { boundPages, boundTextFrom, fitReply } from "../dist-core/output/budget.
 import type { OpenDocumentEntry } from "../dist-core/session/openDocuments.js";
 import type { ArgumentValue } from "./arguments.js";
 import { bytesOfText, resolveOcrWithProgress, selectPages, type ToolContext, type ToolOutcome } from "./operations.js";
+import { selectOpenDocument } from "./openDocumentSelection.js";
 import { ACTIVE_DOCUMENT } from "./toolSchemas.js";
 
 /**
@@ -120,43 +121,21 @@ export function runListOpenDocuments(context: ToolContext, _args: Record<string,
   return Promise.resolve({ ok: true, payload: fitted.payload });
 }
 
-/** The open document a caller meant, or a sentence explaining why there is not one. */
-function chosen(context: ToolContext, args: Record<string, ArgumentValue>): OpenDocumentEntry | string {
-  const view = context.openDocuments();
-  const ref = text(args, "ref") ?? ACTIVE_DOCUMENT;
-
-  if (ref === ACTIVE_DOCUMENT) {
-    if (view.activeRef === null) {
-      return "MarkPDF has no document open. Open one, or name a document by path with read_pages.";
-    }
-    const active = view.documents.find((entry) => entry.ref === view.activeRef);
-    if (active === undefined) {
-      return "MarkPDF reported an active document it did not list. Call list_open_documents and name one.";
-    }
-    return active;
-  }
-
-  const named = view.documents.find((entry) => entry.ref === ref);
-  if (named === undefined) {
-    return `No open document has the reference ${ref}. Call list_open_documents for current references; a document that has been closed no longer has one.`;
-  }
-  return named;
-}
-
 export async function runReadOpenDocument(
   context: ToolContext,
   args: Record<string, ArgumentValue>,
   signal?: AbortSignal,
 ): Promise<ToolOutcome> {
-  let target;
+  let selected;
   try {
-    target = chosen(context, args);
+    selected = selectOpenDocument(context.openDocuments(), text(args, "ref") ?? ACTIVE_DOCUMENT);
   } catch (error) {
     // Reading the record is the first thing this does, and it can fail before there is a document
     // to talk about.
     return { ok: false, message: recordUnavailable(error) };
   }
-  if (typeof target === "string") return { ok: false, message: target };
+  if (!selected.ok) return selected;
+  const target = selected.document;
 
   const pages = text(args, "pages");
   const offsetValue = args.offset;

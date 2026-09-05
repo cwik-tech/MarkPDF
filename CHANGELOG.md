@@ -4,6 +4,8 @@
 
 ### Added
 
+- A portable `markpdf-retrieval` agent skill now documents the low-context MCP-first route, with a CLI fallback for clients that do not expose MCP.
+- MCP clients can now semantically search an indexed PDF through an open-document reference, including `ref: "active"`, without learning its filesystem path.
 - Table-of-contents links in a PDF are now clickable. MarkPDF reads the document's own link annotations and moves to the page each one points at, whether it names that page directly or by a name in the document's catalogue. Links to the web are deliberately left inert for now, and an annotation that is not a link, or whose rectangle is damaged, produces nothing to click.
 - The toolbar now says which part of preparing a document is actually running: `Checking text` while the text layer is examined, `Native text detected` for a moment when it turns out no recognition is needed, `OCR 2/4` with a progress bar while pages are read by recognition — in the window or in the main process — and `Index 12/32` only once that is done. Recognition inside the index job used to be reported as "Checking index", which is how the slowest part of preparing a scanned document became invisible.
 

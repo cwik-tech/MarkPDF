@@ -149,7 +149,7 @@ For a client that reads a JSON configuration file, the same thing as entries in 
 
 Add `MARKPDF_DATA_DIR` in `env` if you keep your index somewhere other than the default.
 
-Four tools, and no more:
+Six tools, and no more:
 
 | Tool | What it does | What it needs |
 | --- | --- | --- |
@@ -157,9 +157,14 @@ Four tools, and no more:
 | `search` | The passages of one indexed document that answer a question, each with its page and headings | Nothing — it reads the index and never opens the file |
 | `read_pages` | The text of specific pages, which is how you get from a search hit to the material around it | Nothing — index only |
 | `to_markdown` | The document as Markdown, or written to a file | Permission to read it, and separately to write, if you give `output_path` |
+| `list_open_documents` | The names, opaque references, and state of documents currently open in MarkPDF, without their paths | Nothing |
+| `read_open_document` | Specific pages from an open PDF, or a bounded slice of an open Markdown buffer | Nothing for indexed PDFs or captured Markdown; otherwise an existing read grant |
 
-Each tool names one document, by `path` or by `id` — the content hash another tool returned —
-never both.
+`outline`, `read_pages`, and `to_markdown` name one document by `path` or by `id` — the content
+hash another tool returned — never both. `search` also accepts an opaque `ref` returned by
+`list_open_documents`, including `ref: "active"`, so an assistant can search the PDF in front
+without learning its path. Open-document references are session-scoped and must not be reused after
+the tab closes.
 
 **No tool indexes, grants or forgets anything.** Permission is given at a terminal with
 `markpdf --allow-read`, where a person is present; an assistant cannot widen its own access. Index
@@ -168,6 +173,9 @@ place, because the answer comes from the index.
 
 Every reply is bounded, and says so: if a document is longer than one answer can carry you are
 told how much was left out rather than handed a shortened one that reads as complete.
+
+The reusable agent instructions for selecting the narrowest route live in
+`skills/markpdf-retrieval/SKILL.md`.
 
 ## Development
 
