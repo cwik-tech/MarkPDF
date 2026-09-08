@@ -68,9 +68,9 @@ import { openPdfInStages, yieldToUi } from "./pdf/openPdfInStages";
 import { withoutPdfBytes } from "./pdf/pdfViewState";
 import {
   clipLinkBox,
-  parseInternalLinkAnnotations,
+  parsePageLinkAnnotations,
   resolveInternalDestinationPage,
-} from "./pdf/internalLinks";
+} from "./pdf/links";
 import {
   buildLeafSearchIndex,
   leafTextSpans,
@@ -4119,11 +4119,33 @@ function viewVectorToUnrotated(dx: number, dy: number, rotation: number) {
   }
 }
 
-/** One of a page's internal links, measured into the rendered view. */
-interface RenderedInternalLink {
+/**
+ * Hand an address a document named to the reader's own applications, and say so if it did not open.
+ *
+ * The bridge answers false when the main process refused the address or the desktop had no handler
+ * for it — a `mailto:` link on a machine with no mail client is the ordinary way to meet that. A
+ * click that does nothing and reports nothing is the defect this whole path exists to remove, so
+ * the refusal is not swallowed; nor is a bridge that has gone away, which is why nothing here can
+ * reject into a click handler.
+ */
+async function openAddressFromDocument(url: string): Promise<void> {
+  try {
+    const opened = await window.pdfReader?.openExternalUrl(url);
+    if (opened === false) window.alert(`MarkPDF could not open ${url}`);
+  } catch {
+    window.alert(`MarkPDF could not open ${url}`);
+  }
+}
+
+/** Where a drawn link takes the reader: a page of this document, or out of the application. */
+type RenderedLinkTarget =
+  | { kind: "page"; page: number }
+  | { kind: "url"; url: string };
+
+/** One of a page's links, measured into the rendered view. */
+interface RenderedPageLink {
   id: string;
-  /** The one-based page of this document the link goes to. */
-  targetPage: number;
+  target: RenderedLinkTarget;
   left: number;
   top: number;
   width: number;
@@ -4189,7 +4211,7 @@ function PdfPage({
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [renderError, setRenderError] = useState<string | null>(null);
   const [textLayerRenderKey, setTextLayerRenderKey] = useState(0);
-  const [internalLinks, setInternalLinks] = useState<RenderedInternalLink[]>([]);
+  const [pageLinks, setPageLinks] = useState<RenderedPageLink[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4269,32 +4291,38 @@ function PdfPage({
    *
    * Kept apart from the page render because it answers a different question and can fail on its
    * own: a document with unreadable annotations still has to draw. Everything the page reports is
-   * treated as external input — `parseInternalLinkAnnotations` admits only real rectangles and
-   * destinations inside this document, and a destination that cannot be resolved to a page of it
-   * produces no element at all.
+   * treated as external input — `parsePageLinkAnnotations` admits only real rectangles that either
+   * name a destination in this document or an address a reader may be sent to, and a destination
+   * that cannot be resolved to a page of it produces no element at all.
    */
   useEffect(() => {
     let cancelled = false;
     // Dropped before the new geometry is known. Reading annotations is asynchronous, and a
     // hitbox left over from the previous zoom, rotation or page sits at the wrong place on a page
     // that has already been redrawn — so for that moment a click would follow the wrong link.
-    setInternalLinks([]);
+    setPageLinks([]);
 
-    async function loadInternalLinks() {
+    async function loadPageLinks() {
       try {
         const page = await pdfDoc.getPage(pageNumber);
         const viewport = page.getViewport({ scale: zoom, rotation });
         const annotations: unknown = await page.getAnnotations({ intent: "display" });
-        const links = parseInternalLinkAnnotations(annotations);
-        const resolved: RenderedInternalLink[] = [];
+        const links = parsePageLinkAnnotations(annotations);
+        const resolved: RenderedPageLink[] = [];
         // One at a time. A contents page in a real book carries dozens of links — page 5 of the
         // reference document has 47 — and resolving them all at once buys nothing: they are looked
         // up in the same in-memory catalogue, so the work is not waiting on anything. Sequential
         // also means a page whose links keep arriving can be abandoned the moment the view changes.
         for (const [index, link] of links.entries()) {
-          const targetPage = await resolveInternalDestinationPage(pdfDoc, link.destination);
-          if (cancelled) return;
-          if (targetPage === null) continue;
+          let target: RenderedLinkTarget;
+          if (link.kind === "external") {
+            target = { kind: "url", url: link.url };
+          } else {
+            const targetPage = await resolveInternalDestinationPage(pdfDoc, link.destination);
+            if (cancelled) return;
+            if (targetPage === null) continue;
+            target = { kind: "page", page: targetPage };
+          }
           const [x0, y0, x1, y1] = viewport.convertToViewportRectangle([
             link.rect[0],
             link.rect[1],
@@ -4303,18 +4331,18 @@ function PdfPage({
           ]);
           const box = clipLinkBox([x0, y0, x1, y1], viewport);
           if (box === null) continue;
-          resolved.push({ id: `${pageNumber}-link-${index}`, targetPage, ...box });
+          resolved.push({ id: `${pageNumber}-link-${index}`, target, ...box });
         }
         if (cancelled) return;
-        setInternalLinks(resolved);
+        setPageLinks(resolved);
       } catch {
         // A page whose annotations cannot be read simply has no links. It is not a render failure,
         // and reporting it as one would replace a readable page with an error box.
-        if (!cancelled) setInternalLinks([]);
+        if (!cancelled) setPageLinks([]);
       }
     }
 
-    void loadInternalLinks();
+    void loadPageLinks();
     return () => {
       cancelled = true;
     };
@@ -4475,29 +4503,41 @@ function PdfPage({
           ref={textLayerRef}
         />
         <div className="search-highlight-layer" ref={searchHighlightLayerRef} />
-        {internalLinks.length > 0 && (
+        {pageLinks.length > 0 && (
           <div className="native-link-layer">
-            {internalLinks.map((link) => (
-              <button
-                key={link.id}
-                type="button"
-                className="native-link"
-                aria-label={`Go to page ${link.targetPage}`}
-                title={`Go to page ${link.targetPage}`}
-                style={{
-                  left: link.left,
-                  top: link.top,
-                  width: link.width,
-                  height: link.height,
-                }}
-                onMouseDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onFollowInternalLink(link.targetPage);
-                }}
-              />
-            ))}
+            {pageLinks.map((link) => {
+              const description =
+                link.target.kind === "page"
+                  ? `Go to page ${link.target.page}`
+                  : `Open ${link.target.url}`;
+              return (
+                <button
+                  key={link.id}
+                  type="button"
+                  className="native-link"
+                  aria-label={description}
+                  title={description}
+                  style={{
+                    left: link.left,
+                    top: link.top,
+                    width: link.width,
+                    height: link.height,
+                  }}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (link.target.kind === "page") {
+                      onFollowInternalLink(link.target.page);
+                      return;
+                    }
+                    // Out of the application entirely, so it goes to the main process rather than
+                    // to a navigation this window could perform itself.
+                    void openAddressFromDocument(link.target.url);
+                  }}
+                />
+              );
+            })}
           </div>
         )}
         {renderError && (

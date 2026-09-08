@@ -1,20 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   clipLinkBox,
-  parseInternalLinkAnnotations,
+  parsePageLinkAnnotations,
   resolveInternalDestinationPage,
+  safeLinkUrl,
   type DestinationResolver,
   type InternalDestination,
-} from "./internalLinks";
+  type InternalPageLink,
+  type PageLink,
+} from "./links";
 
 /**
  * The boundary between a PDF's own annotation data and something the reader can click.
  *
  * Annotations are external input: they come from a file anybody can produce, and PDF.js hands them
  * over with whatever the file said in them. Everything below therefore starts from `unknown` and
- * states what is admitted rather than what is rejected — a link that is not an internal destination,
- * or whose rectangle is not a rectangle, must produce nothing at all rather than an element sitting
- * in a corner of the page waiting to be clicked.
+ * states what is admitted rather than what is rejected — a link that goes nowhere this reader can
+ * follow, or whose rectangle is not a rectangle, must produce nothing at all rather than an element
+ * sitting in a corner of the page waiting to be clicked.
  */
 
 /** A link annotation as PDF.js reports one, with only the fields this boundary reads. */
@@ -25,6 +28,26 @@ function makeAnnotation(overrides: Record<string, unknown> = {}): Record<string,
     dest: [{ num: 7, gen: 0 }, { name: "XYZ" }, 0, 792, 0],
     ...overrides,
   };
+}
+
+/** A `/URI` link annotation, as PDF.js reports one: a validated `url` beside the file's own text. */
+function makeUrlAnnotation(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    subtype: "Link",
+    rect: [72, 554, 420, 580],
+    url: "https://example.invalid/reference",
+    unsafeUrl: "https://example.invalid/reference",
+    ...overrides,
+  };
+}
+
+function isInternal(link: PageLink): link is InternalPageLink {
+  return link.kind === "internal";
+}
+
+/** Only the links that go somewhere in this document, for the rules that are about those. */
+function parseInternalLinkAnnotations(value: unknown): InternalPageLink[] {
+  return parsePageLinkAnnotations(value).filter(isInternal);
 }
 
 describe("admitting the annotations a reader may follow", () => {
@@ -47,17 +70,15 @@ describe("admitting the annotations a reader may follow", () => {
     expect(link?.rect).toEqual([72, 634, 420, 660]);
   });
 
-  it("refuses a link to the web, which needs a decision this boundary is not allowed to make", () => {
-    expect(
-      parseInternalLinkAnnotations([
-        { subtype: "Link", rect: [72, 554, 420, 580], url: "https://example.invalid/reference" },
-      ]),
-    ).toEqual([]);
+  it("does not treat a link to the web as a destination in this document", () => {
+    expect(parseInternalLinkAnnotations([makeUrlAnnotation()])).toEqual([]);
   });
 
   it("refuses a link that carries both a destination and a URL rather than guessing", () => {
+    // Neither kind: the annotation both moves the reader and sends them away, and choosing between
+    // the two halves is not a decision this boundary is entitled to make.
     expect(
-      parseInternalLinkAnnotations([makeAnnotation({ url: "https://example.invalid/reference" })]),
+      parsePageLinkAnnotations([makeAnnotation({ url: "https://example.invalid/reference" })]),
     ).toEqual([]);
   });
 
@@ -125,6 +146,113 @@ describe("admitting the annotations a reader may follow", () => {
       makeAnnotation(),
     ]);
     expect(links.map((link) => link.destination.kind)).toEqual(["named", "pageReference"]);
+  });
+});
+
+describe("admitting a link that leaves the document for the web", () => {
+  it("accepts a `/URI` link and reports the address it names", () => {
+    const [link] = parsePageLinkAnnotations([makeUrlAnnotation()]);
+    expect(link).toEqual({
+      kind: "external",
+      rect: [72, 554, 420, 580],
+      url: "https://example.invalid/reference",
+    });
+  });
+
+  it("accepts the schemes a reader can be sent to, and no others", () => {
+    for (const url of [
+      "https://example.invalid/reference",
+      "http://example.invalid/reference",
+      "mailto:records@example.invalid",
+    ]) {
+      expect(safeLinkUrl(url), url).toBe(url);
+    }
+
+    for (const url of [
+      "javascript:alert(1)",
+      "file:///etc/passwd",
+      "data:text/html,<script>alert(1)</script>",
+      "ftp://example.invalid/report.pdf",
+      "vscode://file/Users/reader/.ssh/id_rsa",
+      "smb://example.invalid/share",
+      "/etc/passwd",
+      "example.invalid/reference",
+      "",
+      "   ",
+    ]) {
+      expect(safeLinkUrl(url), url).toBeNull();
+    }
+  });
+
+  it("refuses anything that is not a string, whatever the file put in the field", () => {
+    for (const url of [null, undefined, 7, {}, ["https://example.invalid/"]]) {
+      expect(safeLinkUrl(url), JSON.stringify(url)).toBeNull();
+    }
+  });
+
+  it("refuses an address too long to be one a person means to follow", () => {
+    // A `/URI` string is whatever the file said, up to the size of the file. An address of this
+    // length is a payload aimed at whatever opens it, not a reference a reader is going to read.
+    const long = `https://example.invalid/${"a".repeat(4096)}`;
+    expect(safeLinkUrl(long)).toBeNull();
+    expect(parsePageLinkAnnotations([makeUrlAnnotation({ url: long })])).toEqual([]);
+  });
+
+  it("reads the address PDF.js validated, not the raw one the file wrote", () => {
+    // PDF.js sets `url` only for an address that passed its own parse, and always keeps the file's
+    // own text in `unsafeUrl`. Following the raw string would undo that check.
+    expect(
+      parsePageLinkAnnotations([
+        { subtype: "Link", rect: [72, 554, 420, 580], unsafeUrl: "javascript:alert(1)" },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("refuses a URL link that claims a destination too, in whatever shape the claim arrives", () => {
+    // A destination field that is not one of the two shapes the format allows is still an
+    // annotation saying it goes somewhere in this document. Reading past it to the URL would admit,
+    // as a link to the web, an annotation the destination side refuses outright.
+    for (const dest of [7, "", {}, { num: 7, gen: 0 }, [], [{ num: "7" }]]) {
+      expect(
+        parsePageLinkAnnotations([makeUrlAnnotation({ dest })]),
+        JSON.stringify(dest),
+      ).toEqual([]);
+    }
+  });
+
+  it("refuses a URL link that also does something, whatever else it says", () => {
+    for (const action of [
+      { resetForm: { fields: [], refs: [], include: true } },
+      { setOCGState: { state: [], preserveRB: true } },
+      { attachment: { filename: "notes.txt" } },
+      { action: "NextPage" },
+    ]) {
+      expect(
+        parsePageLinkAnnotations([makeUrlAnnotation(action)]),
+        JSON.stringify(action),
+      ).toEqual([]);
+    }
+  });
+
+  it("holds a web link to the same rectangle rules as any other link", () => {
+    expect(parsePageLinkAnnotations([makeUrlAnnotation({ rect: [0, 0, 0, 0] })])).toEqual([]);
+    expect(parsePageLinkAnnotations([makeUrlAnnotation({ rect: [72, 554] })])).toEqual([]);
+    expect(parsePageLinkAnnotations([makeUrlAnnotation({ subtype: "Square" })])).toEqual([]);
+  });
+
+  it("reports a page's links in the order the file lists them, whichever kind each one is", () => {
+    // The reader tabs through these in document order, so a page that mixes the two kinds must not
+    // be reordered into all of one kind followed by all of the other.
+    const links = parsePageLinkAnnotations([
+      makeUrlAnnotation({ url: "https://example.invalid/first" }),
+      makeAnnotation(),
+      makeUrlAnnotation({ url: "mailto:records@example.invalid" }),
+    ]);
+    expect(links.map((link) => (link.kind === "external" ? link.url : link.destination.kind))).toEqual([
+      "https://example.invalid/first",
+      "pageReference",
+      "mailto:records@example.invalid",
+    ]);
   });
 });
 

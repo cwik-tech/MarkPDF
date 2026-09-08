@@ -23,8 +23,8 @@ import {
  *   far apart and far down the page, so a highlight that collapses to the top-left corner is
  *   separated from a correct one by hundreds of pixels rather than by rounding.
  * - **The contents page mixes links that must work with links that must not.** One explicit
- *   destination, one named destination, one external URL, one link whose rectangle is malformed, and
- *   one annotation that is not a link at all.
+ *   destination, one named destination, one external URL that must leave the application, one link
+ *   whose rectangle is malformed, and one annotation that is not a link at all.
  *
  * Every expectation is a property of this builder, declared in `NATIVE_NAVIGATION` below and never
  * copied back from what a renderer produced.
@@ -84,7 +84,7 @@ export const NATIVE_NAVIGATION = Object.freeze({
     rect: Object.freeze([72, 594, 420, 620] as const),
   }),
 
-  /** A link to the web. Out of scope by decision: it must produce no interactive element. */
+  /** A link to the web. It must open in the reader's browser, never inside MarkPDF. */
   externalRow: Object.freeze({
     text: "External reference site",
     url: "https://example.invalid/reference",
@@ -97,8 +97,8 @@ export const NATIVE_NAVIGATION = Object.freeze({
   /** A non-link annotation over visible text. It must produce no element. */
   squareRow: Object.freeze({ text: "Annotated but not linked" }),
 
-  /** How many link hitboxes the contents page must end up with. */
-  expectedLinkCount: 2,
+  /** How many link hitboxes the contents page must end up with: two internal, one to the web. */
+  expectedLinkCount: 3,
 
   /** Headings, so a destination page can be recognised by what it says. */
   headings: Object.freeze({

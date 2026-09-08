@@ -24,7 +24,7 @@ import {
  *
  * What each journey deliberately leaves alone: which annotation shapes are admitted, and how a match
  * is split across the runs that drew it. Those are rules with many cases, and they belong to
- * `src/pdf/internalLinks.test.ts` and `src/pdf/textLayerSearch.test.ts` rather than to a matrix
+ * `src/pdf/links.test.ts` and `src/pdf/textLayerSearch.test.ts` rather than to a matrix
  * repeated through the whole application.
  */
 
@@ -370,6 +370,180 @@ test("follows an internal PDF link from the table of contents", async () => {
     // document rather than on the address a `/URI` annotation names.
     expect(app.windows(), "extra windows opened by following a link").toHaveLength(1);
     expect(window.url()).not.toContain(NATIVE_NAVIGATION.externalRow.url);
+  } finally {
+    await closeApp(app);
+    await rm(fixture.tempDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Record what the application asks the desktop to open, instead of opening it.
+ *
+ * Replaces `shell.openExternal` in the running main process. The journey is otherwise real — the
+ * annotation, the hitbox, the preload bridge, and the main-process rule all take part — but a
+ * passing test must not put a browser window in front of whoever is running it.
+ */
+async function captureExternalOpens(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ shell }) => {
+    const opened: string[] = [];
+    Reflect.set(globalThis, "markpdfOpenedExternally", opened);
+    Object.defineProperty(shell, "openExternal", {
+      configurable: true,
+      writable: true,
+      value: async (url: string) => {
+        opened.push(url);
+      },
+    });
+  });
+}
+
+/**
+ * Make the desktop refuse the next address, the way a machine with no handler for a scheme does.
+ *
+ * This is the path where a link can do more damage than not opening: `shell.openExternal` rejects,
+ * and an unhandled rejection in the main process ends the application.
+ */
+async function refuseExternalOpens(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ shell }) => {
+    const opened: unknown = Reflect.get(globalThis, "markpdfOpenedExternally");
+    Object.defineProperty(shell, "openExternal", {
+      configurable: true,
+      writable: true,
+      // Still records the attempt, so a refusal that was never asked for cannot pass as one
+      // the application handled.
+      value: async (url: string) => {
+        if (Array.isArray(opened)) opened.push(url);
+        throw new Error("No application is registered for this address.");
+      },
+    });
+  });
+}
+
+/**
+ * Watch the main process for promises nothing handled.
+ *
+ * Whether an unhandled rejection ends the process depends on the Node flags a given Electron build
+ * runs under, so that is not the contract worth asserting. This is: a link in a document must not
+ * be able to produce one at all.
+ */
+async function watchUnhandledRejections(app: ElectronApplication): Promise<void> {
+  await app.evaluate(() => {
+    const seen: string[] = [];
+    Reflect.set(globalThis, "markpdfUnhandledRejections", seen);
+    process.on("unhandledRejection", (reason: unknown) => {
+      seen.push(reason instanceof Error ? reason.message : String(reason));
+    });
+  });
+}
+
+/** What the main process left unhandled, if anything. */
+async function unhandledRejections(app: ElectronApplication): Promise<string[]> {
+  const seen: unknown = await app.evaluate(() =>
+    Reflect.get(globalThis, "markpdfUnhandledRejections"),
+  );
+  if (!Array.isArray(seen)) return [];
+  return seen.filter((entry): entry is string => typeof entry === "string");
+}
+
+/** The addresses handed to the desktop so far, in the order they were handed over. */
+async function externalOpens(app: ElectronApplication): Promise<string[]> {
+  const opened: unknown = await app.evaluate(() =>
+    Reflect.get(globalThis, "markpdfOpenedExternally"),
+  );
+  if (!Array.isArray(opened)) return [];
+  return opened.filter((entry): entry is string => typeof entry === "string");
+}
+
+test("opens a PDF's web link in the reader's browser instead of inside MarkPDF", async () => {
+  test.setTimeout(120_000);
+
+  const fixture = await makeFixture();
+  let app: ElectronApplication | null = null;
+
+  try {
+    // Arrange: the same contents page, which carries one `/URI` annotation among its links.
+    app = await launch(fixture);
+    const window = await app.firstWindow();
+    await expect(window.getByTestId("text-layer-1")).toBeVisible({ timeout: 30_000 });
+    await captureExternalOpens(app);
+    await watchUnhandledRejections(app);
+
+    const links = window.locator(
+      `.page-wrap[data-page-number="${NATIVE_NAVIGATION.contentsPage}"] .native-link-layer .native-link`,
+    );
+    await expect(links).toHaveCount(NATIVE_NAVIGATION.expectedLinkCount, { timeout: 30_000 });
+
+    // The web link is a hitbox over the row that names it, not somewhere else on the page.
+    const webLink = window.getByRole("button", {
+      name: `Open ${NATIVE_NAVIGATION.externalRow.url}`,
+    });
+    await expect(webLink).toHaveCount(1);
+    const box = await webLink.boundingBox();
+    const row = await window
+      .getByTestId(`text-layer-${NATIVE_NAVIGATION.contentsPage}`)
+      .getByText(NATIVE_NAVIGATION.externalRow.text, { exact: false })
+      .first()
+      .boundingBox();
+    expect(box, "the web link's hitbox").not.toBeNull();
+    expect(row, "the row the link is drawn over").not.toBeNull();
+    expect(Math.abs(box!.y - row!.y), "the hitbox sits on its own row").toBeLessThan(
+      NATIVE_NAVIGATION.bodySize * 2,
+    );
+
+    // Act: click it.
+    await webLink.click();
+
+    // Assert: the address the file named went to the desktop, exactly once and unchanged.
+    await expect
+      .poll(() => externalOpens(app!), { timeout: 15_000 })
+      .toEqual([NATIVE_NAVIGATION.externalRow.url]);
+
+    // And nothing about the reader's own document moved: no second window, still page 1, still
+    // showing MarkPDF rather than the address.
+    expect(app.windows(), "extra windows opened by following a web link").toHaveLength(1);
+    await expect(window.locator(".page-box input")).toHaveValue(
+      String(NATIVE_NAVIGATION.contentsPage),
+    );
+    expect(window.url()).not.toContain("example.invalid");
+
+    // Act: click the same link on a machine whose desktop refuses the address.
+    const refusals: string[] = [];
+    window.on("dialog", (dialog) => {
+      refusals.push(dialog.message());
+      void dialog.dismiss();
+    });
+    await refuseExternalOpens(app);
+    await webLink.click();
+
+    // Assert: the reader is told, rather than left clicking a link that says nothing.
+    await expect
+      .poll(() => refusals, { timeout: 15_000 })
+      .toEqual([`MarkPDF could not open ${NATIVE_NAVIGATION.externalRow.url}`]);
+
+    // Act: the other way a document's address reaches the desktop — a link asking for a new window,
+    // which is what every link in the Markdown preview is. Nothing awaits this one, so a rejection
+    // has nowhere to go but the main process.
+    await window.evaluate(() => {
+      window.open("https://example.invalid/new-window", "_blank");
+    });
+
+    // Assert: the application survived a desktop that refuses. An unhandled rejection in the main
+    // process ends it and takes the reader's open documents with it, so it is checked still
+    // answering rather than merely still on screen — and no window was made for the address.
+    await expect
+      .poll(() => externalOpens(app!), { timeout: 10_000 })
+      .toEqual([
+        NATIVE_NAVIGATION.externalRow.url,
+        NATIVE_NAVIGATION.externalRow.url,
+        "https://example.invalid/new-window",
+      ]);
+    expect(await unhandledRejections(app), "promises the main process left unhandled").toEqual([]);
+    expect(
+      await app.evaluate(({ app: electronApp }) => electronApp.isReady()),
+      "the main process after a refused address",
+    ).toBe(true);
+    expect(app.windows(), "windows after a refused address").toHaveLength(1);
+    await goToPage(window, NATIVE_NAVIGATION.explicitRow.destinationPage);
   } finally {
     await closeApp(app);
     await rm(fixture.tempDir, { recursive: true, force: true });

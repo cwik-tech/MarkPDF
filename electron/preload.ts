@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld("pdfReader", {
   cancelWindowClose: () => ipcRenderer.invoke("window:cancel-close"),
   showItemInFolder: (filePath: string) =>
     ipcRenderer.invoke("shell:show-item", filePath),
+  // An address a document named. Main decides which schemes may reach the desktop.
+  openExternalUrl: (url: string) =>
+    ipcRenderer.invoke("shell:open-external", url),
   addRecentFile: (filePath: string) =>
     ipcRenderer.invoke("recent:add", filePath),
   listRecentFiles: () => ipcRenderer.invoke("recent:list"),

@@ -58,6 +58,7 @@ import {
   type DefaultAppFileTypeId,
 } from "./defaultApp.js";
 import { getCliInstallStatus, installCli, uninstallCli } from "./cliInstall.js";
+import { openableExternalUrl } from "./externalUrl.js";
 import {
   forgetAllOpenDocuments,
   noteWindowFocused,
@@ -281,6 +282,30 @@ async function openPathsInApp(filePaths: string[]) {
   sendOpenPathsToWindow(targetWindow, filePaths);
 }
 
+/**
+ * Open an address from a document in whatever the reader uses for it, and say whether it opened.
+ *
+ * The address is a string a PDF or a Markdown file supplied, so it is checked here and not only in
+ * the window that asked: `openableExternalUrl` admits a page to read and a message to send, and
+ * refuses every scheme that would start a program instead.
+ *
+ * Total on purpose. `shell.openExternal` rejects when the system has no handler for a scheme, and a
+ * `mailto:` link on a machine with no mail client is the ordinary way to meet that — not an edge
+ * case. Both callers are places a rejection would do real damage: an unhandled one in the main
+ * process ends the application, and the other is a click handler in a window. So a link in a
+ * document cannot throw here; it can only fail to open, and the answer says which.
+ */
+async function openAddressExternally(url: unknown): Promise<boolean> {
+  const address = openableExternalUrl(url);
+  if (address === null) return false;
+  try {
+    await shell.openExternal(address);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const createWindow = async (filePaths: string[] = []) => {
   const window = new BrowserWindow({
     width: 1360,
@@ -303,6 +328,19 @@ const createWindow = async (filePaths: string[] = []) => {
   // made — MarkPDF shows and focuses every window it opens — and so its first `did-start-loading`
   // records it as present and holding nothing yet.
   registerOpenDocumentWindow(window);
+
+  /**
+   * A document's own links never open a second MarkPDF window.
+   *
+   * Without a handler here, Electron answers `window.open` — which is what a `target="_blank"` link
+   * in the Markdown preview is — by building another BrowserWindow with these same privileges,
+   * including this preload. An address a document chose would then be loaded next to the bridge.
+   * Every one goes to the desktop instead, through the same rule the link IPC applies.
+   */
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    void openAddressExternally(url);
+    return { action: "deny" };
+  });
 
   window.on("close", (event) => {
     if (confirmedCloseWindows.has(window)) {
@@ -637,6 +675,10 @@ ipcMain.handle(
 ipcMain.handle("shell:show-item", async (_event, filePath: string) => {
   shell.showItemInFolder(filePath);
 });
+
+ipcMain.handle("shell:open-external", async (_event, url: unknown) =>
+  openAddressExternally(url),
+);
 
 ipcMain.handle("recent:list", async () => store.get("recentFiles", []));
 

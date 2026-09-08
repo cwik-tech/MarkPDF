@@ -300,6 +300,8 @@ declare global {
       closeWindowAfterConfirm: () => Promise<void>;
       cancelWindowClose: () => Promise<void>;
       showItemInFolder: (filePath: string) => Promise<void>;
+      /** Opens a web or mail address in the reader's own applications. False if it was refused. */
+      openExternalUrl: (url: string) => Promise<boolean>;
       addRecentFile: (filePath: string) => Promise<string[]>;
       listRecentFiles: () => Promise<string[]>;
       removeRecentFile: (filePath: string) => Promise<string[]>;

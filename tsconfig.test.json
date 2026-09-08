@@ -13,11 +13,14 @@
     "declarationMap": false,
     "sourceMap": false
   },
-  "include": ["core/**/*.ts", "cli/**/*.ts", "mcp/**/*.ts"],
+  "include": ["core/**/*.ts", "cli/**/*.ts", "mcp/**/*.ts", "electron/**/*.test.ts"],
   "exclude": [
     // Deliberately spans two module-resolution regimes: it compares core's catalogue against
     // the renderer's copy, and the renderer half is written for Vite's bundler resolution. Only
     // Vite can resolve both halves, so this one file is checked by running it, not by tsc.
-    "core/modelParity.test.ts"
+    "core/modelParity.test.ts",
+    // The same reason: it compares the main process's rule for opening an address against the
+    // window's copy, and the window half is written for Vite's bundler resolution.
+    "electron/externalUrl.test.ts"
   ]
 }
