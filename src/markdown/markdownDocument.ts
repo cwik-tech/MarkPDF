@@ -214,6 +214,20 @@ export function parseMarkdown(markdown: string): Block[] {
   return blocks;
 }
 
+/**
+ * A link's destination, with the angle brackets CommonMark allows around one removed.
+ *
+ * `[next](<#What's next?>)` is how a destination containing spaces is written, and the tokenizer
+ * hands the brackets over with it. Anything reading a destination has to remove them, and it has to
+ * remove them the same way, or two readers disagree about where one link points.
+ */
+export function cleanMarkdownUrl(url: string): string {
+  const trimmed = url.trim();
+  return trimmed.startsWith("<") && trimmed.endsWith(">")
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
+}
+
 export function tokenizeInline(text: string): InlineToken[] {
   return text.split(INLINE_PATTERN).map((token): InlineToken => {
     const codeMatch = token.match(/^`([^`]+)`$/);

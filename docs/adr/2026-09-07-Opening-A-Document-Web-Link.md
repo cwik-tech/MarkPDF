@@ -83,17 +83,15 @@ The scheme rule now exists in two files. A parity test is what keeps that safe; 
 need the same treatment or a shared module, and `core/` is the wrong home for it because the rule is
 about a desktop capability rather than about documents.
 
-**Relative links in the Markdown preview now do nothing, and this is a gap rather than a decision
-about them.** `MarkdownPreview` resolves a relative link against the document's own directory, so
-`[notes](notes.md)` becomes a `file:` address, and every preview link carries `target="_blank"`.
-Electron used to answer that by loading the file in a second window carrying this preload — which is
-exactly what the window-open handler exists to stop — so the click now produces silence instead of
-an over-privileged window. Neither is right. What a reader wants is for the linked document to open
-in MarkPDF, through the same path as any other file it opens, and that is a capability with its own
-decisions to make about which paths a document may name. It is not made here.
-
-In-document anchors (`#section`) are unaffected in practice: the preview renders no `id` on its
-headings, so those links have never had anywhere to go.
+**A relative link to another file in the Markdown preview does nothing, and this is a gap rather
+than a decision about it.** `MarkdownPreview` resolves such a link against the document's own
+directory, so `[notes](notes.md)` becomes a `file:` address, and a link that leaves the document
+carries `target="_blank"`. Electron used to answer that by loading the file in a second window
+carrying this preload — which is exactly what the window-open handler exists to stop — so the click
+now produces silence instead of an over-privileged window. Neither is right. What a reader wants is
+for the linked document to open in MarkPDF, through the same path as any other file it opens, and
+that is a capability with its own decisions to make about which paths a document may name. It is
+not made here.
 
 ## Alternatives Considered
 

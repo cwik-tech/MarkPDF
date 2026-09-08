@@ -1,7 +1,9 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useRef, type MouseEvent, type ReactNode } from "react";
 import type { ThemeMode } from "../types";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { anchorTargetId, headingAnchorIds } from "./headingAnchors";
 import {
+  cleanMarkdownUrl,
   isMermaidBlock,
   parseMarkdown,
   tokenizeInline,
@@ -63,13 +65,6 @@ function splitBySearch(text: string, highlight: HighlightRun | null): ReactNode[
   return nodes.length ? nodes : [text];
 }
 
-function cleanMarkdownUrl(url: string) {
-  const trimmed = url.trim();
-  return trimmed.startsWith("<") && trimmed.endsWith(">")
-    ? trimmed.slice(1, -1).trim()
-    : trimmed;
-}
-
 function resolveMarkdownUrl(url: string, baseUrl?: string) {
   const cleanedUrl = cleanMarkdownUrl(url);
   if (
@@ -110,7 +105,18 @@ function inlineMarkdown(
             loading="lazy"
           />
         );
-      case "link":
+      case "link": {
+        // A link to a heading of this document stays in it. It carries no `target`, because asking
+        // for a new window is what a link out of the document does, and the preview is where this
+        // one lands; the heading it names travels on the element for the one handler that scrolls.
+        const anchor = anchorTargetId(token.url);
+        if (anchor !== null) {
+          return (
+            <a key={index} href={`#${anchor}`} data-markdown-anchor={anchor}>
+              {splitBySearch(token.text, highlight)}
+            </a>
+          );
+        }
         return (
           <a
             key={index}
@@ -121,9 +127,36 @@ function inlineMarkdown(
             {splitBySearch(token.text, highlight)}
           </a>
         );
+      }
       default:
         return <Fragment key={index}>{splitBySearch(token.text, highlight)}</Fragment>;
     }
+  });
+}
+
+/** How much of the page is left above a heading a link arrived at, so it does not touch the edge. */
+const HEADING_SCROLL_MARGIN = 16;
+
+/**
+ * Bring a heading a link named to the top of the pane the document scrolls in.
+ *
+ * The pane rather than the heading's own nearest scrolling ancestor: `scrollIntoView` would also
+ * scroll whatever else happens to be scrollable around it, and the reader asked for one thing to
+ * move. Falls back to the browser's own behaviour if the preview is not inside a pane, which is
+ * what a test rendering the component on its own does.
+ */
+function scrollHeadingIntoView(heading: Element): void {
+  const pane = heading.closest(".markdown-document-scroll");
+  if (!(pane instanceof HTMLElement)) {
+    heading.scrollIntoView({ block: "start" });
+    return;
+  }
+
+  const headingRect = heading.getBoundingClientRect();
+  const paneRect = pane.getBoundingClientRect();
+  pane.scrollTo({
+    top: pane.scrollTop + headingRect.top - paneRect.top - HEADING_SCROLL_MARGIN,
+    behavior: "smooth",
   });
 }
 
@@ -135,17 +168,47 @@ export function MarkdownPreview({
   baseUrl,
 }: MarkdownPreviewProps) {
   const blocks = parseMarkdown(markdown);
+  const headingIds = headingAnchorIds(blocks);
   const query = searchQuery?.trim();
   const highlight: HighlightRun | null = query
     ? { query, activeIndex: activeMatchIndex ?? -1, nextOrdinal: 0 }
     : null;
+  const previewRef = useRef<HTMLElement | null>(null);
+
+  /**
+   * One handler for every link to a heading, rather than one per link.
+   *
+   * A document's table of contents is as many links as it has sections, and each of them does the
+   * same thing. The heading is looked for inside this preview: two documents open at once can name
+   * a section the same way, and the reader means the one they are reading.
+   */
+  const followAnchor = (event: MouseEvent<HTMLElement>) => {
+    // `Element`, not `HTMLElement`: `closest` is on every element, and a click can land on one that
+    // is not HTML. Nothing the preview renders puts such an element inside a link today, and a guard
+    // that is narrower than the lookup it protects is how a click stops being claimed later.
+    if (!(event.target instanceof Element)) return;
+    const link = event.target.closest("a[data-markdown-anchor]");
+    if (!(link instanceof HTMLElement)) return;
+    const anchor = link.dataset.markdownAnchor;
+    if (anchor === undefined || anchor.length === 0) return;
+
+    // Claimed whether or not the heading is there. The address bar has nowhere to go in this
+    // application, and a link to a heading the document does not have must not become a navigation.
+    event.preventDefault();
+    const heading = previewRef.current?.querySelector(`[id="${CSS.escape(anchor)}"]`);
+    if (heading !== null && heading !== undefined) scrollHeadingIntoView(heading);
+  };
 
   return (
-    <article className="markdown-preview">
+    <article className="markdown-preview" ref={previewRef} onClick={followAnchor}>
       {blocks.map((block, index) => {
         if (block.kind === "heading") {
           const Heading = `h${block.level}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
-          return <Heading key={index}>{inlineMarkdown(block.text, highlight, baseUrl)}</Heading>;
+          return (
+            <Heading key={index} id={headingIds.get(index)}>
+              {inlineMarkdown(block.text, highlight, baseUrl)}
+            </Heading>
+          );
         }
 
         if (block.kind === "paragraph") {

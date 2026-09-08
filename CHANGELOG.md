@@ -6,7 +6,8 @@
 
 - A portable `markpdf-retrieval` agent skill now documents the low-context MCP-first route, with a CLI fallback for clients that do not expose MCP.
 - MCP clients can now semantically search an indexed PDF through an open-document reference, including `ref: "active"`, without learning its filesystem path.
-- Links in a PDF are now clickable. MarkPDF reads the document's own link annotations: a table-of-contents row moves to the page it points at, whether it names that page directly or by a name in the document's catalogue, and a link to the web opens in your own browser or mail app while MarkPDF stays on the page you were reading. Only web and mail addresses are opened — a link in any other scheme, an annotation that is not a link, or one whose rectangle is damaged, produces nothing to click, because a document must not be able to decide what your machine opens next. A document's links can no longer open a second MarkPDF window, which is what a link in the Markdown preview used to do — one consequence is that a relative link between Markdown files, which used to open a bare window showing the raw file, now does nothing until MarkPDF learns to open the linked document properly.
+- Links in a PDF are now clickable. MarkPDF reads the document's own link annotations: a table-of-contents row moves to the page it points at, whether it names that page directly or by a name in the document's catalogue, and a link to the web opens in your own browser or mail app while MarkPDF stays on the page you were reading. Only web and mail addresses are opened — a link in any other scheme, an annotation that is not a link, or one whose rectangle is damaged, produces nothing to click, because a document must not be able to decide what your machine opens next. A document's links can no longer open a second MarkPDF window, which is what a link in the Markdown preview used to do.
+- A Markdown document's own table of contents now works. Clicking `[Installation](#installation)` moves to that section instead of opening an empty second window, and any link a document makes to its own headings does the same. A heading answers to the words it says, so a link written the way you would write it on GitHub arrives; two sections with the same title are still told apart. A relative link to a different file — `[notes](notes.md)` — still does nothing, and is the next thing to fix here.
 - The toolbar now says which part of preparing a document is actually running: `Checking text` while the text layer is examined, `Native text detected` for a moment when it turns out no recognition is needed, `OCR 2/4` with a progress bar while pages are read by recognition — in the window or in the main process — and `Index 12/32` only once that is done. Recognition inside the index job used to be reported as "Checking index", which is how the slowest part of preparing a scanned document became invisible.
 
 ### Fixed
@@ -264,4 +265,8 @@ Implemented PDF native navigation features including text layer search and inter
 ## 2026-09-07 21:25
 
 Added tests for external URL handling in the Electron main process (`electron/externalUrl.test.ts`) and documented the architectural approach for opening web links from PDF documents in a new ADR (`docs/adr/2026-09-07-Opening-A-Document-Web-Link.md`). This establishes how MarkPDF manages external link interactions across the document viewer.
+
+## 2026-09-07 21:55
+
+Implemented markdown section link functionality with anchor generation logic in `headingAnchors.ts`, accompanied by unit tests and a React component test in `markdownAnchors.test.tsx`. The feature was validated through end-to-end testing and documented in an ADR that outlines the approach for enabling direct navigation to markdown sections within documents.
 
