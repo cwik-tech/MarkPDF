@@ -258,6 +258,9 @@ function isMarkdownTab(
   return tab?.kind === "markdown";
 }
 
+/** The Markdown sheet's unscaled outer width, mirroring `.markdown-preview` in src/styles.css. */
+const MARKDOWN_SHEET_WIDTH = 880;
+
 function mimeTypeFromImageName(name: string) {
   const extension = extensionFromName(name);
   if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
@@ -647,6 +650,7 @@ export default function App() {
       } else if (activeMarkdownTab) {
         updateMarkdownTab(activeMarkdownTab.id, {
           zoom: adjust(activeMarkdownTab.zoom),
+          fitMode: "actual",
         });
       }
     },
@@ -1113,6 +1117,7 @@ export default function App() {
         baseUrl,
         markdown,
         zoom: 1,
+        fitMode: "actual",
         searchQuery: "",
         searchMatches: [],
         activeSearchMatch: -1,
@@ -1619,6 +1624,20 @@ export default function App() {
   };
 
   const applyFitMode = async (fitMode: FitMode) => {
+    if (activeMarkdownTab) {
+      if (!workspaceRef.current) return;
+      const bounds = workspaceRef.current.getBoundingClientRect();
+      const availableWidth = Math.max(320, bounds.width - 80);
+      // The sheet's unscaled outer width, kept in step with `.markdown-preview`
+      // in src/styles.css; fitting to width scales that sheet to the workspace.
+      const zoom =
+        fitMode === "width" ? availableWidth / MARKDOWN_SHEET_WIDTH : 1;
+      updateMarkdownTab(activeMarkdownTab.id, {
+        fitMode: fitMode === "width" ? "width" : "actual",
+        zoom: Number(zoom.toFixed(2)),
+      });
+      return;
+    }
     if (!activePdfTab || !workspaceRef.current) return;
     const page = await activePdfTab.pdfDoc.getPage(activePdfTab.currentPage);
     const viewport = page.getViewport({
@@ -2899,7 +2918,8 @@ export default function App() {
             </button>
           </div>
           <FitMenu
-            activeTab={activePdfViewTab}
+            activeTab={activePdfViewTab ?? activeMarkdownTab}
+            pageFits={activeMarkdownTab === null}
             openMenu={openMenu}
             onOpenMenu={openToolbarMenu}
             onCloseMenu={scheduleToolbarMenuClose}
@@ -3548,12 +3568,15 @@ function PageBox({
 
 function FitMenu({
   activeTab,
+  pageFits,
   openMenu,
   onOpenMenu,
   onCloseMenu,
   onFit,
 }: {
-  activeTab: PdfViewTab | null;
+  activeTab: { fitMode: FitMode } | null;
+  /** Whether the document has pages; a continuous Markdown scroll offers no page or height fit. */
+  pageFits: boolean;
   openMenu: ToolbarMenu | null;
   onOpenMenu: (menu: ToolbarMenu | null) => void;
   onCloseMenu: () => void;
@@ -3595,13 +3618,15 @@ function FitMenu({
         >
           Actual size
         </MenuItem>
-        <MenuItem
-          active={activeMode === "page"}
-          icon={<Maximize2 size={15} />}
-          onClick={() => onFit("page")}
-        >
-          Fit to page
-        </MenuItem>
+        {pageFits && (
+          <MenuItem
+            active={activeMode === "page"}
+            icon={<Maximize2 size={15} />}
+            onClick={() => onFit("page")}
+          >
+            Fit to page
+          </MenuItem>
+        )}
         <MenuItem
           active={activeMode === "width"}
           icon={<StretchHorizontal size={15} />}
@@ -3609,13 +3634,15 @@ function FitMenu({
         >
           Fit to width
         </MenuItem>
-        <MenuItem
-          active={activeMode === "height"}
-          icon={<StretchVertical size={15} />}
-          onClick={() => onFit("height")}
-        >
-          Fit height
-        </MenuItem>
+        {pageFits && (
+          <MenuItem
+            active={activeMode === "height"}
+            icon={<StretchVertical size={15} />}
+            onClick={() => onFit("height")}
+          >
+            Fit height
+          </MenuItem>
+        )}
       </div>
     </div>
   );

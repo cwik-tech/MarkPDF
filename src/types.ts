@@ -200,6 +200,8 @@ export interface MarkdownTab {
   baseUrl?: string;
   markdown: string;
   zoom: number;
+  /** A Markdown document is one continuous scroll, so only actual size and fit-to-width apply. */
+  fitMode: "actual" | "width";
   searchQuery: string;
   searchMatches: MarkdownSearchMatch[];
   activeSearchMatch: number;
