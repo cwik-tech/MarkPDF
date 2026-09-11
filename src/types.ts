@@ -199,6 +199,7 @@ export interface MarkdownTab {
   path?: string;
   baseUrl?: string;
   markdown: string;
+  zoom: number;
   searchQuery: string;
   searchMatches: MarkdownSearchMatch[];
   activeSearchMatch: number;

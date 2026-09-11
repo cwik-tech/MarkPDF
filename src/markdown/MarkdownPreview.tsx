@@ -17,6 +17,8 @@ interface MarkdownPreviewProps {
   /** Position of the highlight to mark as current, counted from the top. */
   activeMatchIndex?: number;
   baseUrl?: string;
+  /** Document scale; 1 is actual size. Scales the sheet, its text and its diagrams together. */
+  zoom?: number;
 }
 
 // Highlights are numbered as they are rendered, so the counter is created once
@@ -166,6 +168,7 @@ export function MarkdownPreview({
   searchQuery,
   activeMatchIndex,
   baseUrl,
+  zoom = 1,
 }: MarkdownPreviewProps) {
   const blocks = parseMarkdown(markdown);
   const headingIds = headingAnchorIds(blocks);
@@ -200,7 +203,12 @@ export function MarkdownPreview({
   };
 
   return (
-    <article className="markdown-preview" ref={previewRef} onClick={followAnchor}>
+    <article
+      className="markdown-preview"
+      ref={previewRef}
+      onClick={followAnchor}
+      style={{ zoom }}
+    >
       {blocks.map((block, index) => {
         if (block.kind === "heading") {
           const Heading = `h${block.level}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";

@@ -490,6 +490,8 @@ export default function App() {
     [activeTabId, tabs],
   );
   const activePdfTab = isPdfTab(activeTab) ? activeTab : null;
+  const activeMarkdownTab = isMarkdownTab(activeTab) ? activeTab : null;
+  const activeZoomTab = activePdfTab ?? activeMarkdownTab;
   const activePdfViewTab = useMemo(
     () => (activePdfTab === null ? null : withoutPdfBytes(activePdfTab)),
     [activePdfTab],
@@ -631,6 +633,24 @@ export default function App() {
       );
     },
     [],
+  );
+
+  // Both document kinds zoom; a PDF zoom also pins the fit mode to actual size,
+  // because a chosen scale and a computed fit cannot both be true.
+  const setActiveTabZoom = useCallback(
+    (adjust: (zoom: number) => number) => {
+      if (activePdfTab) {
+        updatePdfTab(activePdfTab.id, {
+          zoom: adjust(activePdfTab.zoom),
+          fitMode: "actual",
+        });
+      } else if (activeMarkdownTab) {
+        updateMarkdownTab(activeMarkdownTab.id, {
+          zoom: adjust(activeMarkdownTab.zoom),
+        });
+      }
+    },
+    [activePdfTab, activeMarkdownTab, updatePdfTab, updateMarkdownTab],
   );
 
   const clearTabSearch = useCallback(
@@ -1092,6 +1112,7 @@ export default function App() {
         path,
         baseUrl,
         markdown,
+        zoom: 1,
         searchQuery: "",
         searchMatches: [],
         activeSearchMatch: -1,
@@ -2606,28 +2627,19 @@ export default function App() {
 
       if (shortcut && (event.key === "+" || event.key === "=")) {
         event.preventDefault();
-        if (!activePdfTab) return;
-        updatePdfTab(activePdfTab.id, {
-          zoom: Math.min(4, activePdfTab.zoom + 0.1),
-          fitMode: "actual",
-        });
+        setActiveTabZoom((zoom) => Math.min(4, zoom + 0.1));
         return;
       }
 
       if (shortcut && event.key === "-") {
         event.preventDefault();
-        if (!activePdfTab) return;
-        updatePdfTab(activePdfTab.id, {
-          zoom: Math.max(0.25, activePdfTab.zoom - 0.1),
-          fitMode: "actual",
-        });
+        setActiveTabZoom((zoom) => Math.max(0.25, zoom - 0.1));
         return;
       }
 
       if (shortcut && event.key === "0") {
         event.preventDefault();
-        if (!activePdfTab) return;
-        updatePdfTab(activePdfTab.id, { zoom: 1, fitMode: "actual" });
+        setActiveTabZoom(() => 1);
         return;
       }
 
@@ -2668,7 +2680,7 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activePdfTab, selectedOverlayId, updatePdfTab, focusSearch]);
+  }, [activePdfTab, selectedOverlayId, updatePdfTab, focusSearch, setActiveTabZoom]);
 
   // One badge for the whole of preparing a document: the window's text check, whichever process is
   // recognising pages, and the embedding work. Both choices — which index-side job to describe, and
@@ -2863,32 +2875,24 @@ export default function App() {
             <button
               className="icon-button"
               title="Zoom out"
-              disabled={!activePdfTab}
+              disabled={!activeZoomTab}
               onClick={() =>
-                activePdfTab &&
-                updatePdfTab(activePdfTab.id, {
-                  zoom: Math.max(0.25, activePdfTab.zoom - 0.1),
-                  fitMode: "actual",
-                })
+                setActiveTabZoom((zoom) => Math.max(0.25, zoom - 0.1))
               }
             >
               <Minus size={18} />
             </button>
             <span className="zoom-label">
-              {activePdfTab
-                ? `${Math.round(activePdfTab.zoom * 100)}%`
+              {activeZoomTab
+                ? `${Math.round(activeZoomTab.zoom * 100)}%`
                 : "100%"}
             </span>
             <button
               className="icon-button"
               title="Zoom in"
-              disabled={!activePdfTab}
+              disabled={!activeZoomTab}
               onClick={() =>
-                activePdfTab &&
-                updatePdfTab(activePdfTab.id, {
-                  zoom: Math.min(4, activePdfTab.zoom + 0.1),
-                  fitMode: "actual",
-                })
+                setActiveTabZoom((zoom) => Math.min(4, zoom + 0.1))
               }
             >
               <Plus size={18} />
@@ -4079,6 +4083,7 @@ function MarkdownDocumentView({
         searchQuery={tab.searchQuery}
         activeMatchIndex={tab.activeSearchMatch}
         baseUrl={tab.baseUrl}
+        zoom={tab.zoom}
       />
     </div>
   );
