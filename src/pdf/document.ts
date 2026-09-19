@@ -8,6 +8,7 @@ import {
   PDFDropdown,
   PDFHexString,
   PDFName,
+  PDFNumber,
   PDFRadioGroup,
   PDFRef,
   PDFString,
@@ -26,6 +27,7 @@ import type {
   SearchMatch
 } from "../types";
 import { overlayGeometry, paintedPageRects } from "./overlayGeometry";
+import { documentAnnotationOverlay, type DocumentAnnotationRecord } from "./documentAnnotations";
 import { parsePersistedOverlays } from "./overlayMetadata";
 
 const pdfAssetBase = `${import.meta.env.BASE_URL}pdfjs/`;
@@ -476,9 +478,99 @@ export async function extractEditableOverlays(bytes: Uint8Array): Promise<Overla
   }
 }
 
+/**
+ * The annotations the document itself carries, from whichever application wrote them.
+ *
+ * MarkPDF's own annotations are skipped, because `extractEditableOverlays` has already read them
+ * out of the metadata that carries everything about them — the note, the colour, whether the
+ * reader minimized it. Reading them here as well would show every comment twice.
+ *
+ * Read with pdf-lib rather than through PDF.js because the annotation's `/NM` is what tells the
+ * two apart, and PDF.js does not report it.
+ */
+export async function extractDocumentAnnotations(bytes: Uint8Array): Promise<OverlayItem[]> {
+  try {
+    const pdfDoc = await PDFDocument.load(bytes.slice(), { ignoreEncryption: true });
+    const overlays: OverlayItem[] = [];
+
+    pdfDoc.getPages().forEach((page, pageIndex) => {
+      const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+      if (!annots) return;
+
+      // The page's own box, which is what PDF.js draws and what an annotation is positioned
+      // against. A cropped page does not start at the origin, so its corner is carried along
+      // rather than assumed.
+      const cropBox = page.getCropBox();
+
+      for (let index = 0; index < annots.size(); index += 1) {
+        const annotation = annots.lookupMaybe(index, PDFDict);
+        if (!annotation || isMarkPdfAnnotation(annotation)) continue;
+
+        const overlay = documentAnnotationOverlay(
+          readDocumentAnnotation(annotation, pageIndex + 1, index),
+          cropBox
+        );
+        if (overlay !== null) overlays.push(overlay);
+      }
+    });
+
+    return overlays;
+  } catch {
+    return [];
+  }
+}
+
+/** One annotation dictionary in the PDF's own vocabulary, before anything is believed about it. */
+function readDocumentAnnotation(
+  annotation: PDFDict,
+  page: number,
+  index: number
+): DocumentAnnotationRecord {
+  const name = getPdfText(annotation, "NM");
+  const author = getPdfText(annotation, "T");
+
+  return {
+    page,
+    index,
+    subtype: (annotation.lookupMaybe(PDFName.of("Subtype"), PDFName)?.asString() ?? "").replace(
+      /^\//,
+      ""
+    ),
+    contents: getPdfText(annotation, "Contents"),
+    name: name || undefined,
+    author: author || undefined,
+    color: readAnnotationColor(annotation),
+    rect: readPdfNumbers(annotation.lookupMaybe(PDFName.of("Rect"), PDFArray)),
+    quadPoints: readPdfNumbers(annotation.lookupMaybe(PDFName.of("QuadPoints"), PDFArray))
+  };
+}
+
+/** An annotation's `/C`, as the hex colour the rest of the overlay model speaks. */
+function readAnnotationColor(annotation: PDFDict): string | undefined {
+  const components = readPdfNumbers(annotation.lookupMaybe(PDFName.of("C"), PDFArray));
+  if (components === undefined || components.length !== 3) return undefined;
+
+  const channel = (value: number) =>
+    Math.max(0, Math.min(255, Math.round(value * 255)))
+      .toString(16)
+      .padStart(2, "0");
+  return `#${channel(components[0])}${channel(components[1])}${channel(components[2])}`;
+}
+
+function readPdfNumbers(array: PDFArray | undefined): number[] | undefined {
+  if (!array) return undefined;
+
+  const values: number[] = [];
+  for (let index = 0; index < array.size(); index += 1) {
+    const value = array.lookupMaybe(index, PDFNumber);
+    values.push(value ? value.asNumber() : Number.NaN);
+  }
+  return values;
+}
+
 export async function exportPdfBytes(
   sourceBytes: Uint8Array,
-  overlays: OverlayItem[],
+  allOverlays: OverlayItem[],
   formFields: FormFieldState[],
   flattenForms: boolean,
   options: {
@@ -489,6 +581,10 @@ export async function exportPdfBytes(
     syntheticOutline?: OutlineItem[];
   } = {}
 ) {
+  // An annotation another application wrote is shown, not owned. The document already carries it,
+  // so every path below — the metadata, the standard annotations, the flattened page — leaves it
+  // exactly where its author put it rather than writing MarkPDF's version of it alongside.
+  const overlays = allOverlays.filter((overlay) => overlay.source !== "document");
   const pdfDoc = await PDFDocument.load(sourceBytes.slice(), { ignoreEncryption: true });
   const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);

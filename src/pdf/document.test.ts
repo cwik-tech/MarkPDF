@@ -14,6 +14,7 @@ import {
 import type { OverlayItem } from "../types";
 import {
   exportPdfBytes,
+  extractDocumentAnnotations,
   extractDocumentOutline,
   extractEditableOverlays,
   extractPersistedSyntheticOutline,
@@ -434,5 +435,99 @@ describe("reopening a saved document's annotations", () => {
     ]);
 
     expect(await extractEditableOverlays(Uint8Array.from(await pdfDoc.save()))).toEqual([legacy]);
+  });
+});
+
+/**
+ * A document somebody else commented on.
+ *
+ * The fixture is written the way the reported document was: a `Highlight` with the note in
+ * `/Contents`, the reviewer's name in `/T`, one quadrilateral per marked run, and a `/NM` from the
+ * application that wrote it. Nothing here is produced by MarkPDF's own exporter, which is the
+ * point — this is the file another application hands over.
+ */
+async function createForeignCommentPdf(
+  overrides: Record<string, unknown> = {},
+): Promise<Uint8Array> {
+  const pdfDoc = await PDFDocument.load(await createSourcePdf());
+  const page = pdfDoc.getPage(0);
+  const annotation = pdfDoc.context.obj({
+    Type: PDFName.of("Annot"),
+    Subtype: PDFName.of("Highlight"),
+    Rect: SELECTED_LINES.enclosingRect,
+    QuadPoints: [...SELECTED_LINES.firstQuad, ...SELECTED_LINES.secondQuad],
+    Contents: PDFString.of("Limit this clause to press releases and marketing."),
+    T: PDFString.of("Sumit Anand, Aggie Safety"),
+    NM: PDFString.of("fitz-A1"),
+    C: [1, 0.85, 0.2],
+    F: 4,
+    ...overrides,
+  });
+
+  page.node.set(PDFName.of("Annots"), pdfDoc.context.obj([pdfDoc.context.register(annotation)]));
+
+  return Uint8Array.from(await pdfDoc.save());
+}
+
+describe("annotations another application wrote", () => {
+  it("opens as comments carrying the note, the reviewer's name, and the marked lines", async () => {
+    const bytes = await createForeignCommentPdf();
+
+    const overlays = await extractDocumentAnnotations(bytes);
+
+    expect(overlays).toHaveLength(1);
+    expect(overlays[0]).toMatchObject({
+      kind: "comment",
+      source: "document",
+      page: 1,
+      text: "Limit this clause to press releases and marketing.",
+      author: "Sumit Anand, Aggie Safety",
+      minimized: true,
+      ...SELECTED_LINES.bounds,
+    });
+    expect(overlays[0].fragments).toEqual(SELECTED_LINES.fragments);
+  });
+
+  it("are not read a second time from the annotations MarkPDF wrote itself", async () => {
+    const savedBytes = await exportPdfBytes(
+      Uint8Array.from(await createSourcePdf()),
+      [makeSelectionOverlay({ kind: "comment", text: "Mine" })],
+      [],
+      false,
+      { bakeOverlays: false, persistEditable: true, writeStandardAnnotations: true },
+    );
+
+    expect(await extractDocumentAnnotations(Uint8Array.from(savedBytes))).toEqual([]);
+  });
+
+  it("survive a save unchanged, and are neither copied into the file nor into its metadata", async () => {
+    const sourceBytes = await createForeignCommentPdf();
+    const foreign = (await extractDocumentAnnotations(sourceBytes))[0];
+    const mine = makeSelectionOverlay({ id: "mine-1", kind: "comment", text: "Mine" });
+
+    const savedBytes = await exportPdfBytes(sourceBytes, [foreign, mine], [], false, {
+      bakeOverlays: false,
+      persistEditable: true,
+      writeStandardAnnotations: true,
+    });
+
+    const annotations = await annotationsOf(Uint8Array.from(savedBytes));
+    expect(annotations.filter((item) => item.contents === foreign.text)).toHaveLength(1);
+    expect(annotations).toHaveLength(2);
+    expect(await extractEditableOverlays(Uint8Array.from(savedBytes))).toEqual([mine]);
+    expect(await extractDocumentAnnotations(Uint8Array.from(savedBytes))).toEqual([foreign]);
+  });
+
+  it("are not painted over when a page is flattened", async () => {
+    const sourceBytes = await createForeignCommentPdf();
+    const foreign = (await extractDocumentAnnotations(sourceBytes))[0];
+
+    const flattenedBytes = await exportPdfBytes(sourceBytes, [foreign], [], false, {
+      bakeOverlays: true,
+      persistEditable: false,
+      writeStandardAnnotations: false,
+    });
+
+    expect(await filledRectangles(Uint8Array.from(flattenedBytes))).toEqual([]);
   });
 });

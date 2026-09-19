@@ -29,6 +29,19 @@ export interface OverlayItem {
   dataUrl?: string;
   minimized?: boolean;
   /**
+   * Set when the annotation was written by another application and read out of the document's own
+   * `/Annots` rather than out of MarkPDF's metadata.
+   *
+   * Such an overlay is shown but not owned. It is read from the file again every time the document
+   * is opened, and left out of everything MarkPDF writes: the document already carries it, so
+   * rewriting it would put this application's name where its author's name is and leave the same
+   * comment in the file twice. Its absence — on every overlay a reader made here — means the
+   * overlay is MarkPDF's to edit, move, delete and save.
+   */
+  source?: "document";
+  /** The name the annotation's own application recorded as its author, when it recorded one. */
+  author?: string;
+  /**
    * The rectangles of the text this overlay is anchored to, as offsets from `x`/`y`.
    *
    * Present only on an overlay a reader made from a text selection, where the browser reported one

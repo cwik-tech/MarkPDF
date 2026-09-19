@@ -726,7 +726,8 @@ select {
 
 .sidebar-switch {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* Two rows of two. Four labels across 340 points would clip the longest of them. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
   margin-bottom: 12px;
   padding: 3px;
@@ -1519,6 +1520,52 @@ select {
   background: rgba(250, 204, 21, 0.38);
   mix-blend-mode: multiply;
   pointer-events: none;
+}
+
+/*
+ * An annotation another application wrote.
+ *
+ * The page already shows it: PDF.js paints each annotation's own appearance onto the canvas, so a
+ * second shape drawn here would be MarkPDF's idea of the highlight sitting on top of its author's.
+ * What is added is the part the canvas cannot give a reader — somewhere to click. The marked words
+ * carry the click; the enclosing box does not, so the blank page between two marked lines stays
+ * out of the way of everything underneath it.
+ */
+.overlay-box.from-document,
+.overlay-box.comment.minimized.from-document {
+  cursor: default;
+  pointer-events: none;
+  background: transparent;
+}
+
+.overlay-box.from-document .comment-pin,
+.overlay-box.from-document .comment-popup,
+.overlay-box.from-document .selection-fragment {
+  pointer-events: auto;
+}
+
+.overlay-box.from-document .selection-fragment {
+  background: transparent;
+  cursor: pointer;
+}
+
+/* Which words the open comment is about, while it is open. */
+.overlay-box.from-document.selected .selection-fragment {
+  background: color-mix(in srgb, var(--accent), transparent 78%);
+}
+
+.comment-author {
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.comment-text {
+  margin: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
 }
 
 .overlay-box.bookmark {

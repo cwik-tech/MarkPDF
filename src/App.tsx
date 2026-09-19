@@ -14,6 +14,7 @@ import {
   GripVertical,
   Highlighter,
   Image as ImageIcon,
+  MessageSquare,
   MessageSquarePlus,
   Maximize2,
   Minus,
@@ -51,6 +52,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
   deletePdfPage,
   detectFormFields,
+  extractDocumentAnnotations,
   extractDocumentOutline,
   extractEditableOverlays,
   createPdfFromImages,
@@ -1087,14 +1089,21 @@ export default function App() {
             window.setTimeout(callback, 0);
           });
           const overlays = await extractEditableOverlays(bytes);
-          return { formFields, outlineResult, overlays };
+          await yieldToUi((callback) => {
+            window.setTimeout(callback, 0);
+          });
+          // The comments another application left in the document. MarkPDF shows them; it does
+          // not own them, so they are read from the file rather than from its own metadata.
+          const documentAnnotations = await extractDocumentAnnotations(bytes);
+          return { formFields, outlineResult, overlays, documentAnnotations };
         },
-        applyMetadata: ({ formFields, outlineResult, overlays }) => {
-          const openedOverlayIds = new Set(overlays.map((overlay) => overlay.id));
+        applyMetadata: ({ formFields, outlineResult, overlays, documentAnnotations }) => {
+          const openedOverlays = [...overlays, ...documentAnnotations];
+          const openedOverlayIds = new Set(openedOverlays.map((overlay) => overlay.id));
           updatePdfTab(tabId, (tab) => ({
             formFields,
             overlays: [
-              ...overlays,
+              ...openedOverlays,
               ...tab.overlays.filter((overlay) => !openedOverlayIds.has(overlay.id)),
             ],
             outline: outlineResult.outline,
@@ -1736,6 +1745,8 @@ export default function App() {
       const overlays = flattenForms
         ? []
         : await extractEditableOverlays(nextBytes);
+      // Saved or flattened, the document still carries whatever another application wrote in it.
+      const documentAnnotations = await extractDocumentAnnotations(nextBytes);
 
       updatePdfTab(tabToSave.id, {
         path: written.path,
@@ -1743,7 +1754,7 @@ export default function App() {
         bytes: nextBytes,
         pdfDoc,
         pageCount: pdfDoc.numPages,
-        overlays,
+        overlays: [...overlays, ...documentAnnotations],
         formFields,
         outline: outlineResult.outline,
         outlineSource: outlineResult.source,
@@ -2593,7 +2604,12 @@ export default function App() {
 
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Element | null;
-      if (target?.closest(".comment-popup, .comment-pin")) return;
+      if (
+        target?.closest(
+          ".comment-popup, .comment-pin, .overlay-box.from-document",
+        )
+      )
+        return;
       setSelectedOverlayId(null);
     };
 
@@ -4770,10 +4786,17 @@ function OverlayBox({
   // box; one they made by dragging across text is the lines they selected, and the box around them
   // is only the group that holds them together.
   const geometry = overlayGeometry(overlay);
+  // An annotation another application wrote. It opens and it reads, and that is all: the document
+  // owns it, the page already shows its own appearance, and MarkPDF never writes it back — so
+  // moving, resizing, retyping or deleting it here would change nothing in the saved file.
+  const fromDocument = overlay.source === "document";
+  const commentPinLabel = fromDocument
+    ? `Comment by ${overlay.author ?? "another application"}`
+    : "Open comment";
 
   return (
     <div
-      className={`overlay-box ${overlay.kind} ${geometry.shape === "textSelection" ? "text-anchored" : ""} ${overlay.minimized ? "minimized" : ""} ${selected ? "selected" : ""}`}
+      className={`overlay-box ${overlay.kind} ${geometry.shape === "textSelection" ? "text-anchored" : ""} ${overlay.minimized ? "minimized" : ""} ${fromDocument ? "from-document" : ""} ${selected ? "selected" : ""}`}
       style={{
         left: overlay.x * zoom,
         top: overlay.y * zoom,
@@ -4784,6 +4807,7 @@ function OverlayBox({
       onPointerDown={(event) => {
         event.stopPropagation();
         onSelect();
+        if (fromDocument) return;
         dragRef.current = {
           startX: event.clientX,
           startY: event.clientY,
@@ -4813,6 +4837,7 @@ function OverlayBox({
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={() => {
         if (
+          fromDocument ||
           overlay.kind === "highlight" ||
           overlay.dataUrl ||
           overlay.minimized
@@ -4869,7 +4894,8 @@ function OverlayBox({
         <>
           <button
             className="comment-pin"
-            title="Open comment"
+            title={commentPinLabel}
+            aria-label={commentPinLabel}
             style={{ left: -(overlay.x * zoom + 34) }}
             onPointerDown={(event) => {
               event.stopPropagation();
@@ -4880,7 +4906,11 @@ function OverlayBox({
               onSelect();
             }}
           >
-            <MessageSquarePlus size={15} />
+            {fromDocument ? (
+              <MessageSquare size={15} />
+            ) : (
+              <MessageSquarePlus size={15} />
+            )}
           </button>
           {selected && (
             <div
@@ -4888,21 +4918,32 @@ function OverlayBox({
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
-              <textarea
-                autoFocus
-                placeholder="Add comment"
-                value={overlay.text ?? ""}
-                onChange={(event) =>
-                  onUpdate({ text: event.target.value }, true)
-                }
-              />
+              {fromDocument ? (
+                <>
+                  <strong className="comment-author">
+                    {overlay.author ?? "Document comment"}
+                  </strong>
+                  <p className="comment-text">{overlay.text}</p>
+                </>
+              ) : (
+                <textarea
+                  autoFocus
+                  placeholder="Add comment"
+                  value={overlay.text ?? ""}
+                  onChange={(event) =>
+                    onUpdate({ text: event.target.value }, true)
+                  }
+                />
+              )}
               <div className="comment-popup-actions">
                 <button type="button" onClick={onDeselect}>
-                  Minimize
+                  {fromDocument ? "Close" : "Minimize"}
                 </button>
-                <button type="button" onClick={onDelete}>
-                  Delete
-                </button>
+                {!fromDocument && (
+                  <button type="button" onClick={onDelete}>
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -4914,7 +4955,7 @@ function OverlayBox({
           {overlay.text}
         </span>
       )}
-      {selected && overlay.kind !== "bookmark" && (
+      {selected && overlay.kind !== "bookmark" && !fromDocument && (
         <>
           <button
             className="delete-handle"
@@ -5100,7 +5141,10 @@ function Sidebar({
 
   return (
     <aside className={`sidebar ${mode === "semantic" ? "right" : ""}`}>
-      {(mode === "pages" || mode === "outline" || mode === "bookmarks") && (
+      {(mode === "pages" ||
+        mode === "outline" ||
+        mode === "bookmarks" ||
+        mode === "comments") && (
         <div className="sidebar-switch">
           <button
             className={mode === "pages" ? "active" : ""}
@@ -5122,6 +5166,13 @@ function Sidebar({
           >
             <Bookmark size={15} />
             Bookmarks
+          </button>
+          <button
+            className={mode === "comments" ? "active" : ""}
+            onClick={() => onModeChange("comments")}
+          >
+            <MessageSquare size={15} />
+            Comments
           </button>
         </div>
       )}
@@ -5287,13 +5338,25 @@ function Sidebar({
             <div className="stack">
               {tab.overlays
                 .filter((overlay) => overlay.kind === "comment")
+                .sort(
+                  (a, b) => a.page - b.page || a.y - b.y || a.x - b.x,
+                )
                 .map((overlay) => (
                   <button
                     key={overlay.id}
-                    className="comment-row"
-                    onClick={() => onSelectPage(overlay.page)}
+                    className={`comment-row ${selectedOverlay?.id === overlay.id ? "active" : ""}`}
+                    aria-label={`Comment on page ${String(overlay.page)}${
+                      overlay.author ? ` by ${overlay.author}` : ""
+                    }: ${overlay.text ?? ""}`}
+                    onClick={() => {
+                      onSelectPage(overlay.page);
+                      onSelectOverlay(overlay.id);
+                    }}
                   >
-                    <strong>Page {overlay.page}</strong>
+                    <strong>
+                      Page {overlay.page}
+                      {overlay.author ? ` · ${overlay.author}` : ""}
+                    </strong>
                     <span>{overlay.text}</span>
                   </button>
                 ))}
