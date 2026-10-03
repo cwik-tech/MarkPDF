@@ -22,6 +22,7 @@ import {
   Moon,
   MousePointer2,
   PanelLeft,
+  PanelRight,
   PenLine,
   Plus,
   Printer,
@@ -42,6 +43,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -65,6 +67,8 @@ import {
   movePdfPageTo,
 } from "./pdf/document";
 import { documentPreparationBadge, preparationIndexProgress } from "./documentPreparation";
+import { listComments } from "./pdf/commentList";
+import { ownsOverlay } from "./pdf/overlayOwnership";
 import { detectOcrNeed, runDocumentOcr } from "./pdf/ocr";
 import { openPdfInStages, yieldToUi } from "./pdf/openPdfInStages";
 import { withoutPdfBytes } from "./pdf/pdfViewState";
@@ -463,6 +467,7 @@ export default function App() {
   const [semanticModelDownloadProgress, setSemanticModelDownloadProgress] =
     useState<PdfTab["semanticIndexProgress"] | null>(null);
   const [searchExpanded, setSearchExpanded] = useState(false);
+  const [commentReveals, setCommentReveals] = useState(0);
   const [selectionAction, setSelectionAction] = useState<{
     page: number;
     /** The lines the reader selected, not the box around them. */
@@ -2177,6 +2182,11 @@ export default function App() {
     recordHistory = true,
   ) => {
     if (!activePdfTab) return;
+    // Refused here rather than only at each control. A change to an annotation the document
+    // carries is never written back, so accepting one would show the reader their own words while
+    // the saved file went on carrying its author's.
+    if (!ownsOverlay(activePdfTab.overlays.find((item) => item.id === overlayId)))
+      return;
     updatePdfTab(activePdfTab.id, (tab) => ({
       ...(recordHistory ? pushHistory(tab) : {}),
       overlays: tab.overlays.map((overlay) =>
@@ -2214,11 +2224,18 @@ export default function App() {
       dirty: true,
     }));
     setSelectedOverlayId(overlay.id);
+    // A comment is written in the pane beside the page, so making one opens it.
+    if (isComment) setSidebar("comments");
     setSelectionAction(null);
   };
 
   const deleteOverlay = (overlayId: string) => {
     if (!activePdfTab) return;
+    // The same rule, and the reason the Delete key cannot remove a comment a reviewer wrote: the
+    // annotation would come back the next time the document was opened, because the file still
+    // has it.
+    if (!ownsOverlay(activePdfTab.overlays.find((item) => item.id === overlayId)))
+      return;
     updatePdfTab(activePdfTab.id, (tab) => ({
       ...pushHistory(tab),
       overlays: tab.overlays.filter((overlay) => overlay.id !== overlayId),
@@ -2586,6 +2603,37 @@ export default function App() {
       (overlay) => overlay.id === selectedOverlayId,
     ) ?? null;
 
+  /**
+   * The panels that open beside the page instead of in front of it.
+   *
+   * Semantic results and comments are both things a reader keeps open while reading, so both live
+   * in the resizable pane on the right. The rest of the panels navigate the document and stay on
+   * the left, where the page thumbnails are.
+   */
+  const rightPaneMode =
+    sidebar === "semantic" || sidebar === "comments" ? sidebar : null;
+  const comments = listComments(activePdfTab?.overlays ?? []);
+
+  /**
+   * Selecting a comment opens the pane it is read in.
+   *
+   * A comment used to open a note over the sentence it was about, which answered half the question
+   * and hid the other half. Bookmarks and the other overlays are unaffected: they have nothing to
+   * read beside the page.
+   */
+  const selectOverlay = (overlayId: string | null) => {
+    setSelectedOverlayId(overlayId);
+    if (overlayId === null) return;
+    const overlay = activePdfTab?.overlays.find((item) => item.id === overlayId);
+    if (overlay?.kind !== "comment") return;
+
+    setSidebar("comments");
+    // Counted rather than derived from which comment is selected, because picking the same pin a
+    // second time has to bring its card back after the reader has scrolled the list somewhere
+    // else — and because typing in a comment must not move the list at all.
+    setCommentReveals((count) => count + 1);
+  };
+
   const focusSearch = useCallback(() => {
     setSearchExpanded(true);
     window.requestAnimationFrame(() => searchInputRef.current?.focus());
@@ -2598,24 +2646,12 @@ export default function App() {
     waiter.resolve();
   }, []);
 
+  // Deleting the last comment leaves the pane with nothing to say, so it closes with it. The
+  // toolbar's own control is disabled for the same reason, and both read the same count.
   useEffect(() => {
-    if (selectedOverlay?.kind !== "comment" || !selectedOverlay.minimized)
-      return undefined;
+    if (sidebar === "comments" && comments.length === 0) setSidebar(null);
+  }, [sidebar, comments.length]);
 
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Element | null;
-      if (
-        target?.closest(
-          ".comment-popup, .comment-pin, .overlay-box.from-document",
-        )
-      )
-        return;
-      setSelectedOverlayId(null);
-    };
-
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [selectedOverlay]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2748,7 +2784,7 @@ export default function App() {
           tool={tool}
           selectedOverlayId={selectedOverlayId}
           onPageClick={addOverlay}
-          onSelectOverlay={setSelectedOverlayId}
+          onSelectOverlay={selectOverlay}
           onUpdateOverlay={updateOverlay}
           onDeleteOverlay={deleteOverlay}
           onTextSelection={setSelectionAction}
@@ -3039,6 +3075,21 @@ export default function App() {
             </span>
           </>
         )}
+        <button
+          className={`icon-button ${sidebar === "comments" ? "active" : ""}`}
+          title={
+            comments.length
+              ? "Comments"
+              : "Comments — this document has none"
+          }
+          aria-label="Comments"
+          disabled={!comments.length}
+          onClick={() =>
+            setSidebar(sidebar === "comments" ? null : "comments")
+          }
+        >
+          <PanelRight size={18} />
+        </button>
         {preparationBadge && (
           <span
             className={`ocr-status ${preparationBadge.stage}${preparationBadge.source === "index" ? " semantic" : ""}`}
@@ -3098,7 +3149,7 @@ export default function App() {
           </div>
         )}
 
-        {activePdfTab && sidebar === "semantic" ? (
+        {activePdfTab && rightPaneMode ? (
           <ResizablePanelGroup
             orientation="horizontal"
             className="workspace-resizable"
@@ -3114,14 +3165,14 @@ export default function App() {
             </ResizablePanel>
             <ResizableHandle />
             <ResizablePanel
-              id="semantic-search"
+              id={rightPaneMode}
               className="semantic-resizable-panel"
               defaultSize="25%"
               minSize="18%"
               maxSize="50%"
             >
               <Sidebar
-                mode={sidebar}
+                mode={rightPaneMode}
                 tab={activePdfViewTab}
                 selectedOverlay={selectedOverlay}
                 signatureText={signatureText}
@@ -3158,8 +3209,9 @@ export default function App() {
                     },
                   });
                 }}
-                onSelectOverlay={setSelectedOverlayId}
+                onSelectOverlay={selectOverlay}
                 onModeChange={setSidebar}
+                commentReveals={commentReveals}
               />
             </ResizablePanel>
           </ResizablePanelGroup>
@@ -3218,8 +3270,9 @@ export default function App() {
                 }}
                 onOpenDrawingSignature={() => setDrawingSignatureOpen(true)}
                 onSelectSemanticResult={() => undefined}
-                onSelectOverlay={setSelectedOverlayId}
+                onSelectOverlay={selectOverlay}
                 onModeChange={setSidebar}
+                commentReveals={commentReveals}
               />
             )}
             {documentStage}
@@ -4609,7 +4662,6 @@ function PdfPage({
               rotation={rotation}
               selected={selectedOverlayId === overlay.id}
               onSelect={() => onSelectOverlay(overlay.id)}
-              onDeselect={() => onSelectOverlay(null)}
               onUpdate={(patch) => onUpdateOverlay(overlay.id, patch)}
               onDelete={() => onDeleteOverlay(overlay.id)}
             />
@@ -4763,7 +4815,6 @@ function OverlayBox({
   rotation,
   selected,
   onSelect,
-  onDeselect,
   onUpdate,
   onDelete,
 }: {
@@ -4772,7 +4823,6 @@ function OverlayBox({
   rotation: number;
   selected: boolean;
   onSelect: () => void;
-  onDeselect: () => void;
   onUpdate: (patch: Partial<OverlayItem>, recordHistory?: boolean) => void;
   onDelete: () => void;
 }) {
@@ -4789,7 +4839,7 @@ function OverlayBox({
   // An annotation another application wrote. It opens and it reads, and that is all: the document
   // owns it, the page already shows its own appearance, and MarkPDF never writes it back — so
   // moving, resizing, retyping or deleting it here would change nothing in the saved file.
-  const fromDocument = overlay.source === "document";
+  const fromDocument = !ownsOverlay(overlay);
   const commentPinLabel = fromDocument
     ? `Comment by ${overlay.author ?? "another application"}`
     : "Open comment";
@@ -4891,63 +4941,26 @@ function OverlayBox({
           )}
         </button>
       ) : overlay.kind === "comment" && overlay.minimized ? (
-        <>
-          <button
-            className="comment-pin"
-            title={commentPinLabel}
-            aria-label={commentPinLabel}
-            style={{ left: -(overlay.x * zoom + 34) }}
-            onPointerDown={(event) => {
-              event.stopPropagation();
-              onSelect();
-            }}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelect();
-            }}
-          >
-            {fromDocument ? (
-              <MessageSquare size={15} />
-            ) : (
-              <MessageSquarePlus size={15} />
-            )}
-          </button>
-          {selected && (
-            <div
-              className="comment-popup"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => event.stopPropagation()}
-            >
-              {fromDocument ? (
-                <>
-                  <strong className="comment-author">
-                    {overlay.author ?? "Document comment"}
-                  </strong>
-                  <p className="comment-text">{overlay.text}</p>
-                </>
-              ) : (
-                <textarea
-                  autoFocus
-                  placeholder="Add comment"
-                  value={overlay.text ?? ""}
-                  onChange={(event) =>
-                    onUpdate({ text: event.target.value }, true)
-                  }
-                />
-              )}
-              <div className="comment-popup-actions">
-                <button type="button" onClick={onDeselect}>
-                  {fromDocument ? "Close" : "Minimize"}
-                </button>
-                {!fromDocument && (
-                  <button type="button" onClick={onDelete}>
-                    Delete
-                  </button>
-                )}
-              </div>
-            </div>
+        <button
+          className="comment-pin"
+          title={commentPinLabel}
+          aria-label={commentPinLabel}
+          style={{ left: -(overlay.x * zoom + 34) }}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onSelect();
+          }}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect();
+          }}
+        >
+          {fromDocument ? (
+            <MessageSquare size={15} />
+          ) : (
+            <MessageSquarePlus size={15} />
           )}
-        </>
+        </button>
       ) : overlay.kind === "signature" && overlay.dataUrl ? (
         <img src={overlay.dataUrl} alt="Signature" />
       ) : (
@@ -5106,6 +5119,7 @@ function Sidebar({
   onSelectSemanticResult,
   onSelectOverlay,
   onModeChange,
+  commentReveals,
 }: {
   mode: SidebarMode;
   tab: PdfViewTab | null;
@@ -5132,19 +5146,47 @@ function Sidebar({
   onSelectSemanticResult: (result: PdfTab["semanticResults"][number]) => void;
   onSelectOverlay: (id: string | null) => void;
   onModeChange: (mode: SidebarMode | null) => void;
+  /** Bumped every time a comment is picked, whether or not it is a different one. */
+  commentReveals: number;
 }) {
   const typedInitials = initialsFromName(signatureText) || "AB";
   const bookmarkOverlays =
     tab?.overlays
       .filter((overlay) => overlay.kind === "bookmark")
       .sort((a, b) => a.page - b.page || a.y - b.y || a.x - b.x) ?? [];
+  const comments = listComments(tab?.overlays ?? []);
+  const commentsPaneRef = useRef<HTMLDivElement | null>(null);
+  const openCommentRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * Bring the comment a reader picked into the pane they are looking at.
+   *
+   * Only this list is scrolled. `scrollIntoView` would walk up the tree and move the page behind
+   * it as well, so the reader would lose their place in the document to read a note about it. The
+   * card is moved the smallest distance that reveals it, and a card taller than the pane is
+   * aligned to the top, which is what there is to show of it.
+   */
+  useLayoutEffect(() => {
+    if (mode !== "comments") return;
+
+    const pane = commentsPaneRef.current;
+    const card = openCommentRef.current;
+    if (!pane || !card) return;
+
+    const paneBox = pane.getBoundingClientRect();
+    const cardBox = card.getBoundingClientRect();
+    const above = paneBox.top - cardBox.top;
+    const below = cardBox.bottom - paneBox.bottom;
+
+    if (above > 0) pane.scrollTop -= above;
+    else if (below > 0) pane.scrollTop += Math.min(below, cardBox.top - paneBox.top);
+  }, [mode, selectedOverlay?.id, commentReveals]);
 
   return (
-    <aside className={`sidebar ${mode === "semantic" ? "right" : ""}`}>
-      {(mode === "pages" ||
-        mode === "outline" ||
-        mode === "bookmarks" ||
-        mode === "comments") && (
+    <aside
+      className={`sidebar ${mode === "semantic" || mode === "comments" ? "right" : ""}`}
+    >
+      {(mode === "pages" || mode === "outline" || mode === "bookmarks") && (
         <div className="sidebar-switch">
           <button
             className={mode === "pages" ? "active" : ""}
@@ -5166,13 +5208,6 @@ function Sidebar({
           >
             <Bookmark size={15} />
             Bookmarks
-          </button>
-          <button
-            className={mode === "comments" ? "active" : ""}
-            onClick={() => onModeChange("comments")}
-          >
-            <MessageSquare size={15} />
-            Comments
           </button>
         </div>
       )}
@@ -5331,40 +5366,73 @@ function Sidebar({
       )}
 
       {mode === "comments" && (
-        <>
-          <h2>Comments</h2>
-          {tab?.overlays.filter((overlay) => overlay.kind === "comment")
-            .length ? (
+        <div className="comments-sidebar" ref={commentsPaneRef}>
+          <div className="sidebar-section-heading">
+            <MessageSquare size={15} />
+            <h2>Comments</h2>
+          </div>
+          {comments.length ? (
             <div className="stack">
-              {tab.overlays
-                .filter((overlay) => overlay.kind === "comment")
-                .sort(
-                  (a, b) => a.page - b.page || a.y - b.y || a.x - b.x,
-                )
-                .map((overlay) => (
-                  <button
+              {comments.map((overlay) => {
+                // A comment the document carries is read here and nowhere else: no editor, no
+                // Delete. Saving leaves it exactly as its author wrote it, so an editor would
+                // offer a change MarkPDF would then throw away.
+                const fromDocument = overlay.source === "document";
+                const open = selectedOverlay?.id === overlay.id;
+
+                return (
+                  <div
                     key={overlay.id}
-                    className={`comment-row ${selectedOverlay?.id === overlay.id ? "active" : ""}`}
-                    aria-label={`Comment on page ${String(overlay.page)}${
-                      overlay.author ? ` by ${overlay.author}` : ""
-                    }: ${overlay.text ?? ""}`}
-                    onClick={() => {
-                      onSelectPage(overlay.page);
-                      onSelectOverlay(overlay.id);
-                    }}
+                    ref={open ? openCommentRef : undefined}
+                    className={`comment-card ${open ? "active" : ""}`}
                   >
-                    <strong>
-                      Page {overlay.page}
-                      {overlay.author ? ` · ${overlay.author}` : ""}
-                    </strong>
-                    <span>{overlay.text}</span>
-                  </button>
-                ))}
+                    <button
+                      className="comment-row"
+                      aria-label={`Comment on page ${String(overlay.page)}${
+                        overlay.author ? ` by ${overlay.author}` : ""
+                      }: ${overlay.text ?? ""}`}
+                      onClick={() => {
+                        onSelectPage(overlay.page);
+                        onSelectOverlay(overlay.id);
+                      }}
+                    >
+                      <strong>
+                        Page {overlay.page}
+                        {overlay.author ? ` · ${overlay.author}` : ""}
+                      </strong>
+                      {(fromDocument || !open) && (
+                        <span>{overlay.text?.trim() || "Empty comment"}</span>
+                      )}
+                    </button>
+                    {!fromDocument && open && (
+                      <>
+                        <textarea
+                          autoFocus
+                          className="comment-editor"
+                          placeholder="Add comment"
+                          value={overlay.text ?? ""}
+                          onChange={(event) =>
+                            onUpdateOverlay(overlay.id, { text: event.target.value })
+                          }
+                        />
+                        <div className="comment-card-actions">
+                          <button
+                            type="button"
+                            onClick={() => onDeleteOverlay(overlay.id)}
+                          >
+                            Delete comment
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <p>No comments yet.</p>
           )}
-        </>
+        </div>
       )}
 
       {mode === "forms" && (
@@ -5539,7 +5607,16 @@ function Sidebar({
         </>
       )}
 
-      {selectedOverlay && selectedOverlay.kind !== "bookmark" && (
+      {/*
+       * The inspector is for the overlays with no editor of their own. A comment is written in
+       * its own card and a bookmark in its own row, and an annotation the document carries is
+       * written nowhere, so offering all three a text box and a Delete was offering two of them a
+       * change that went nowhere.
+       */}
+      {selectedOverlay &&
+        ownsOverlay(selectedOverlay) &&
+        selectedOverlay.kind !== "bookmark" &&
+        selectedOverlay.kind !== "comment" && (
         <div className="inspector">
           <h2>Selection</h2>
           {selectedOverlay.kind !== "highlight" && (

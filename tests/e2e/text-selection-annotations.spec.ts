@@ -241,7 +241,7 @@ test("highlighting a selection that crosses two lines paints the lines and not t
   }
 });
 
-test("commenting on a recognised-text selection anchors to the recognised lines and keeps its pin and popup", async () => {
+test("commenting on a recognised-text selection anchors to the recognised lines and opens its editor", async () => {
   test.setTimeout(300_000);
 
   const tempDir = await mkdtemp(path.join(tmpdir(), "markpdf-selection-comment-"));
@@ -272,7 +272,8 @@ test("commenting on a recognised-text selection anchors to the recognised lines 
     const painted = await paintedRects(window);
     expectLinesPaintedAndGapsClear(lines, painted);
 
-    // ...and it is still a comment: a pin on the page and an open editor for its text.
+    // ...and it is still a comment: a pin on the page, and an editor for its text in the pane
+    // beside it, which is where a comment is read and written.
     await expect(window.getByRole("button", { name: "Open comment" })).toBeVisible();
     const editor = window.getByPlaceholder("Add comment");
     await expect(editor).toBeVisible();

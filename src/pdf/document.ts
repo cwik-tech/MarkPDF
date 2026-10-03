@@ -28,6 +28,7 @@ import type {
 } from "../types";
 import { overlayGeometry, paintedPageRects } from "./overlayGeometry";
 import { documentAnnotationOverlay, type DocumentAnnotationRecord } from "./documentAnnotations";
+import { ownsOverlay } from "./overlayOwnership";
 import { parsePersistedOverlays } from "./overlayMetadata";
 
 const pdfAssetBase = `${import.meta.env.BASE_URL}pdfjs/`;
@@ -584,7 +585,7 @@ export async function exportPdfBytes(
   // An annotation another application wrote is shown, not owned. The document already carries it,
   // so every path below — the metadata, the standard annotations, the flattened page — leaves it
   // exactly where its author put it rather than writing MarkPDF's version of it alongside.
-  const overlays = allOverlays.filter((overlay) => overlay.source !== "document");
+  const overlays = allOverlays.filter((overlay) => ownsOverlay(overlay));
   const pdfDoc = await PDFDocument.load(sourceBytes.slice(), { ignoreEncryption: true });
   const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);

@@ -51,10 +51,14 @@ already meant.
   the file twice and put this application's name where the reviewer's name is.
 - The overlay paints nothing. The canvas already shows the annotation's own appearance, so a shape
   drawn here would be MarkPDF's idea of the reviewer's highlight sitting on top of the reviewer's.
-  What is added is the part the canvas cannot give: a pin beside the line, a popover with the note
-  and the name, and a click target over the marked words.
+  What is added is the part the canvas cannot give: a pin beside the line, a click target over the
+  marked words, and an entry in the pane described below.
 - It cannot be dragged, resized, retyped or deleted. Each of those would look like it changed the
-  document while the saved file went on carrying the original.
+  document while the saved file went on carrying the original. The rule has one home,
+  `ownsOverlay` in `src/pdf/overlayOwnership.ts`, and is enforced where the change would be
+  applied — `updateOverlay` and `deleteOverlay` — rather than only at each control. Review found
+  why that matters: the pane refused to edit an imported comment while the generic Selection
+  inspector beside it edited one happily, and the Delete key deleted one outright.
 - Its identity is derived from the page and the annotation's `/NM` rather than generated, so the
   same annotation is the same overlay every time the document is opened. A generated identity
   would give every note a new one on every read, and a second reading would add a second copy.
@@ -70,18 +74,44 @@ Only annotation types that carry a note a reader can open are read, named in an 
 link, a form field and a popup window are all annotations too, and a deny list would turn each of
 them into a comment pinned to a piece of page furniture.
 
-The Comments panel that already existed is now reachable, as a fourth button beside Pages, Outline
-and Bookmarks. It lists every comment in page order, names the author of each, and opens the one
-that is chosen.
+**Comments are read beside the page, not in front of it.**
+
+The first version of this opened a note in a box over the page, which is how it arrived in review:
+the note covered the sentence it was about. A comment is now read in the resizable pane on the
+right — the one semantic search already used — reached by a control at the right end of the
+toolbar that mirrors the left panel's own, and opened by clicking a pin, clicking the marked words,
+or using that control. The pane lists every comment in page order with its author, and the one
+selected on the page is the one highlighted in the list.
+
+This applies to MarkPDF's own comments too. They were the other half of the same problem, and a
+reader should not have to learn two places to read a comment depending on who wrote it. A comment
+made here is written and deleted in the pane; a comment the document carries is only read there.
+The `"comments"` sidebar mode moves to the right with `"semantic"`, and the left switch goes back
+to Pages, Outline and Bookmarks — the panels that navigate the document.
+
+When the document has no comments the control is disabled and the pane is not rendered, and
+deleting the last comment closes it. A pane that opens onto nothing is a control that lies about
+having something to show.
+
+Picking a comment brings its card into the pane's own view. Only the list is scrolled: walking up
+the tree with `scrollIntoView` would move the page behind it too, so a reader would lose their
+place in the document to read a note about it. The reveal is driven by a count of how many times a
+comment has been picked rather than by which one is selected, because picking the same pin again
+has to bring its card back after the reader has scrolled the list elsewhere — and because typing
+in a comment must not move the list at all.
 
 ## Consequences
 
 - A document commented on in Acrobat, Preview, or by a script opens here with its comments. Each
-  is a pin beside the line it marks; clicking the pin or the marked words shows the note and who
-  wrote it; the Comments panel lists them all.
-- A comment MarkPDF did not write cannot be edited or deleted here, and MarkPDF's own comments are
-  unchanged: still editable, still deletable, still saved in the keyword and written out as
-  standard annotations.
+  is a pin beside the line it marks; clicking the pin or the marked words opens the pane on the
+  right with the note and who wrote it; the pane lists them all and can be dragged to half the
+  window's width.
+- A comment MarkPDF did not write cannot be edited or deleted here. MarkPDF's own comments are
+  still editable, still deletable, still saved in the keyword and written out as standard
+  annotations — but they are now written in the pane rather than in a box over the page, which is
+  a change to how an existing feature is used.
+- Nothing floats over the page any more, so nothing has to be dismissed by clicking away from it.
+  Selection is cleared by clicking the page, as it is for every other overlay.
 - Saving a document leaves annotations MarkPDF did not write exactly as they were — the same one
   annotation, its author's name intact — and does not copy them into MarkPDF's metadata.
   Flattening does not paint over them.
@@ -119,9 +149,24 @@ that is chosen.
   annotated, not reading MarkPDF's own annotations a second time, a save that leaves the original
   annotation alone and keeps it out of MarkPDF's metadata, and a flattened page that paints
   nothing over it.
-- `tests/e2e/document-comments.spec.ts` drives the real application: the pin appears for a
-  document MarkPDF never saved, opening it shows the note and the reviewer, no Delete is offered,
-  and the Comments panel lists it.
+- `src/pdf/overlayOwnership.test.ts` covers the rule itself: an annotation made here may be
+  changed, one the document carries may not whatever kind it is, and one that is not there may
+  not either.
+- `src/pdf/commentList.test.ts` covers what the pane lists and in what order: every comment
+  whoever wrote it, nothing that is not a comment, page then down then across, and the tab's own
+  overlays left in the order they were in.
+- `tests/e2e/document-comments.spec.ts` drives the real application: the pane is available but
+  closed for a document MarkPDF never saved; clicking the pin opens it with the note and the
+  reviewer; no card editor, no card Delete, no Selection inspector and no Delete key can change
+  it; the toolbar control closes it again; a document nobody has commented on disables that
+  control; a comment made here is still written and deleted in the pane; and on a page of ten
+  long notes the last one picked is measured against the pane's own box rather than asserted
+  visible, which is the check that would have caught it being 1000 points below the viewport.
+- `tests/e2e/text-selection-annotations.spec.ts` covers the other half: a comment made from a
+  selection still keeps its pin and still opens an editor for its text, now in the pane.
 - Mutation proof: removing the `source === "document"` filter from `exportPdfBytes` failed the
   save and flattening tests; making `extractDocumentAnnotations` stop skipping MarkPDF's own
-  annotations failed the duplicate-reading tests. Both passed again once restored.
+  annotations failed the duplicate-reading tests; stopping the pin from opening the pane failed
+  the journey; removing the ownership guard from `deleteOverlay` failed the Delete-key assertion;
+  and driving the reveal from the selected comment rather than the count failed the second pick
+  of the same pin. All passed again once restored.
