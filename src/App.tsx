@@ -2051,12 +2051,23 @@ export default function App() {
     frame.src = url;
     document.body.appendChild(frame);
     frame.onload = () => {
-      frame.contentWindow?.focus();
-      frame.contentWindow?.print();
-      setTimeout(() => {
+      const printWindow = frame.contentWindow;
+      const cleanup = () => {
         URL.revokeObjectURL(url);
         frame.remove();
-      }, 2000);
+      };
+      if (!printWindow) {
+        cleanup();
+        return;
+      }
+      printWindow.addEventListener("afterprint", cleanup, { once: true });
+      printWindow.focus();
+      try {
+        printWindow.print();
+      } catch (error) {
+        cleanup();
+        throw error;
+      }
     };
   };
 
