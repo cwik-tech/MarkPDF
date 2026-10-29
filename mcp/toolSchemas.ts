@@ -131,19 +131,20 @@ function documentIdentity(): Record<string, SchemaProperty> {
 export const ACTIVE_DOCUMENT = "active";
 
 /**
- * Six tools: four that read a document somebody names, and two that reach the open application.
+ * Seven tools: explicit preparation and the six existing retrieval operations.
  *
  * Every tool costs context in every client's session, forever, so the surface stays the smallest
  * one that is useful: orient, search, read what a hit points at, convert — and then the pair that
  * answers "the document I have open", which none of the first four can, because each of them
  * requires the caller to already know a path or a hash.
  *
- * Nothing here indexes, grants or deletes — consent is given out of band with the command line,
+ * Only explicit preparation indexes or saves, within existing grants. Consent is given out of band with the command line,
  * and a server that could widen its own access would make the allowlist decorative. The two below
  * are no exception: having a document open supplies a *name*, never an authority, and reading one
  * still passes the same permission checks as reading it by path.
  */
 export const TOOLS: readonly ToolDefinition[] = [
+  { name: "prepare_document", description: "Open a local PDF in MarkPDF, save eligible automatic outline changes, and prepare bounded retrieval. Requires existing read and write grants when saving.", inputSchema: { type: "object", properties: { path: { type: "string", description: "Absolute local PDF path." } }, required: ["path"], additionalProperties: false } },
   {
     name: "outline",
     description:

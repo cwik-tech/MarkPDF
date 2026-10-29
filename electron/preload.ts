@@ -1,7 +1,23 @@
+import { parsePreparationReply, type PreparationReply } from "../dist-core/agent/preparation.js";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { parseSemanticProgressEvent } from "../dist-core/ipc/progress.js";
 
 contextBridge.exposeInMainWorld("pdfReader", {
+  agentPreparationWindow: process.argv.includes("--markpdf-agent-window"),
+  cancelPreparation: () => ipcRenderer.send("agent:cancel-current"),
+  checkPreparationSource: (path: string, bytes: Uint8Array) => ipcRenderer.invoke("agent:check-source", path, bytes),
+  preparationReady: (path: string) => ipcRenderer.send("agent:ready", path),
+  onCancelPreparation: (callback: () => void) => { ipcRenderer.on("agent:cancel", callback); return () => ipcRenderer.removeListener("agent:cancel", callback); },
+  prepareDocument: async () => parsePreparationReply(await ipcRenderer.invoke("agent:prepare-active")),
+  onPrepareDocument: (callback: (path?: string) => Promise<PreparationReply>) => {
+    const listener = (_event: Electron.IpcRendererEvent, id: unknown, path: unknown): void => {
+      if (typeof id !== "string") return;
+      void callback(typeof path === "string" ? path : undefined).then((reply) => ipcRenderer.send("agent:prepared", id, reply)).catch(() => ipcRenderer.send("agent:prepared", id, { status: "failed", save: "unknown", reason: "Preparation failed" }));
+    };
+    ipcRenderer.on("agent:prepare", listener);
+    return () => ipcRenderer.removeListener("agent:prepare", listener);
+  },
+  savePreparation: (path: string, source: Uint8Array, bytes: Uint8Array) => ipcRenderer.invoke("agent:save", path, source, bytes),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   openPdfDialog: () => ipcRenderer.invoke("dialog:open-pdf"),
   savePdfDialog: (defaultPath?: string) =>

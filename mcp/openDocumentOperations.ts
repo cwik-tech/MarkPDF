@@ -1,3 +1,5 @@
+import { describeCoverage } from "../dist-core/agent/coverage.js";
+import { MARKDOWN_ENGINE_ID, MARKDOWN_VERSION } from "../dist-core/models.js";
 import { resolveDocumentPages } from "../dist-core/documents/documentPages.js";
 import { boundPages, boundTextFrom, fitReply } from "../dist-core/output/budget.js";
 import type { OpenDocumentEntry } from "../dist-core/session/openDocuments.js";
@@ -99,7 +101,11 @@ export function runListOpenDocuments(context: ToolContext, _args: Record<string,
     // index — and both raise errors that name the directory they were reading. The guard is drawn
     // around exactly those two and nothing else, so a fault in the bounding below is still
     // reported as itself.
-    entries = view.documents.map((entry) => publicView(entry, isIndexed(context, entry)));
+    entries = view.documents.map((entry) => {
+      const document = entry.contentHash === null ? null : context.store().getDocument(entry.contentHash);
+      const coverage = document === null ? describeCoverage(null) : describeCoverage(context.store().getMarkdown(document.id, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION));
+      return { ...publicView(entry, isIndexed(context, entry)), name: entry.name, ...coverage };
+    });
   } catch (error) {
     return Promise.resolve({ ok: false, message: recordUnavailable(error) });
   }

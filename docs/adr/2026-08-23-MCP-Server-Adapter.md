@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Superseded for explicit preparation by [Agent PDF preparation](2026-10-28-Agent-PDF-Preparation.md). Other decisions remain accepted.
+
+
 
 ## Context
 

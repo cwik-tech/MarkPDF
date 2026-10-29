@@ -1,3 +1,4 @@
+import { prepareDesktopDocument } from "../dist-core/agent/desktopClient.js";
 import type { Allowlist } from "../dist-core/consent/allowlist.js";
 import {
   AllowlistFileError,
@@ -167,6 +168,14 @@ async function dispatch(
   options: Parameters<typeof runIndexCommand>[2],
 ): Promise<ExitCode> {
   switch (name) {
+    case "prepare": {
+      const path = positionals[0];
+      if (path === undefined) return EXIT_CODE.usage;
+      await context.requireAccess(path, "read");
+      const reply = await prepareDesktopDocument({ path, dataDir: context.dataDir, signal: context.signal });
+      context.report.emit(reply, () => JSON.stringify(reply));
+      return reply.status === "ready" ? EXIT_CODE.success : EXIT_CODE.partialFailure;
+    }
     case "index":
       return await runIndexCommand(context, positionals, options);
     case "search":

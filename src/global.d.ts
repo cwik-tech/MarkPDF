@@ -1,5 +1,30 @@
 export {};
 
+export interface PreparationReply {
+  stage?: "open" | "save" | "index" | "complete" | "transport";
+  reasonCode?: "access_or_source" | "unsupported_pdf" | "user_edits_or_busy" | "window_closed" | "timeout" | "cancelled" | "index_failed" | "save_failed" | "unknown";
+  remedy?: string;
+  requestId?: string;
+  ref?: string;
+  tabId?: string;
+  modelId?: string;
+  chunkingProfile?: string;
+  indexStatus?: string;
+  textSource?: string;
+  chunkCount?: number;
+  unresolvedPageCount?: number;
+  coverageTruncated?: boolean;
+  fallback?: string;
+
+  status: "ready" | "incomplete" | "needs_user_action" | "failed" | "cancelled";
+  save: "saved" | "not_needed" | "blocked" | "failed" | "unknown";
+  contentHash?: string;
+  reason?: string;
+  pageCount?: number;
+  unresolvedPages?: number[];
+}
+
+
 export type AIProviderKind =
   | "openai-compatible"
   | "openrouter"
@@ -92,6 +117,8 @@ export interface SemanticIndexRequest {
 }
 
 export interface SemanticIndexedResult {
+  actualModelId?: string;
+  actualChunkingProfile?: string;
   /**
    * `incomplete` is a success with a gap in it: the document is stored and searchable, and at least
    * one page could not be read. Mirrors core's own status so the window cannot quietly treat it as
@@ -265,6 +292,14 @@ export interface OpenDocumentsReport {
 declare global {
   interface Window {
     pdfReader?: {
+      agentPreparationWindow: boolean;
+      cancelPreparation: () => void;
+      checkPreparationSource: (path: string, bytes: Uint8Array) => Promise<void>;
+      preparationReady: (path: string) => void;
+      onCancelPreparation: (callback: () => void) => () => void;
+      prepareDocument: () => Promise<PreparationReply>;
+      onPrepareDocument: (callback: (path?: string) => Promise<PreparationReply>) => () => void;
+      savePreparation: (path: string, source: Uint8Array, bytes: Uint8Array) => Promise<void>;
       getPathForFile: (file: File) => string;
       openPdfDialog: () => Promise<string[]>;
       savePdfDialog: (defaultPath?: string) => Promise<string | null>;

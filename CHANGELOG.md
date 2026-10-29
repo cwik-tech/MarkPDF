@@ -4,6 +4,9 @@
 
 ### Added
 
+- Agents can prepare a PDF through `markpdf prepare` or MCP `prepare_document`: open it in MarkPDF, save eligible generated outline metadata, and retrieve from the final saved document using existing storage and separate read/write grants.
+- Preparation, search and open-document listings report extraction completeness so agents can identify missing content and use a disclosed fallback.
+
 - A portable `markpdf-retrieval` agent skill now documents the low-context MCP-first route, with a CLI fallback for clients that do not expose MCP.
 - MCP clients can now semantically search an indexed PDF through an open-document reference, including `ref: "active"`, without learning its filesystem path.
 - Links in a PDF are now clickable. MarkPDF reads the document's own link annotations: a table-of-contents row moves to the page it points at, whether it names that page directly or by a name in the document's catalogue, and a link to the web opens in your own browser or mail app while MarkPDF stays on the page you were reading. Only web and mail addresses are opened — a link in any other scheme, an annotation that is not a link, or one whose rectangle is damaged, produces nothing to click, because a document must not be able to decide what your machine opens next. A document's links can no longer open a second MarkPDF window, which is what a link in the Markdown preview used to do.

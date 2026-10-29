@@ -66,8 +66,9 @@ const NAMED_DOCUMENT_TOOLS = ["outline", "search", "read_pages", "to_markdown"];
 const PATH_OR_HASH_DOCUMENT_TOOLS = ["outline", "read_pages", "to_markdown"];
 
 describe("the tools this server offers", () => {
-  it("is the four that name a document plus the two that reach the open application", () => {
+  it("offers preparation alongside the six existing retrieval tools", () => {
     expect(TOOLS.map((tool) => tool.name)).toEqual([
+      "prepare_document",
       "outline",
       "search",
       "read_pages",

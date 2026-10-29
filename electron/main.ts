@@ -1,3 +1,4 @@
+import { preparationAbortSignal, preparationSettings, queueExternalPreparation, registerAgentPreparation, withDocumentSave } from "./agentPreparation.js";
 import {
   app,
   BrowserWindow,
@@ -10,7 +11,7 @@ import {
 import type { MessageBoxOptions } from "electron";
 import Store from "electron-store";
 import { readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, extname } from "node:path";
+import { basename, dirname, extname, isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   deleteAIProvider,
@@ -104,9 +105,13 @@ let quitState = createQuitState();
 const testUserDataPath = process.env.MARKPDF_TEST_USER_DATA;
 const isTestRun = Boolean(testUserDataPath);
 
-if (testUserDataPath) {
-  app.setPath("userData", testUserDataPath);
+const dataDirectoryOverride = testUserDataPath ?? process.env.MARKPDF_DATA_DIR;
+if (dataDirectoryOverride !== undefined) {
+  if (!isAbsolute(dataDirectoryOverride)) throw new Error("MarkPDF data directory must be absolute");
+  app.setPath("userData", dataDirectoryOverride);
 }
+
+registerAgentPreparation(() => app.getPath("userData"), () => currentSemanticSettings());
 
 const store = new Store<AIStoreSchema>({
   defaults: {
@@ -306,7 +311,7 @@ async function openAddressExternally(url: unknown): Promise<boolean> {
   }
 }
 
-const createWindow = async (filePaths: string[] = []) => {
+const createWindow = async (filePaths: string[] = [], created?: (sender: Electron.WebContents) => void) => {
   const window = new BrowserWindow({
     width: 1360,
     height: 900,
@@ -321,8 +326,11 @@ const createWindow = async (filePaths: string[] = []) => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      additionalArguments: created ? ["--markpdf-agent-window"] : [],
     },
   });
+
+  created?.(window.webContents);
 
   // Before anything loads, so that this window counts as the one in front from the moment it is
   // made — MarkPDF shows and focuses every window it opens — and so its first `did-start-loading`
@@ -400,7 +408,7 @@ pendingOpenPaths = uniqueFilePaths([
   ...filePathArgsFromArgv(process.argv),
 ]);
 gotSingleInstanceLock =
-  isTestRun ||
+  (isTestRun && process.env.MARKPDF_TEST_SINGLE_INSTANCE !== "1") ||
   app.requestSingleInstanceLock({
     filePaths: pendingOpenPaths,
   } satisfies SingleInstanceData);
@@ -409,8 +417,10 @@ if (!gotSingleInstanceLock) {
   app.quit();
 }
 
-if (!isTestRun) {
+if (!isTestRun || process.env.MARKPDF_TEST_SINGLE_INSTANCE === "1") {
   app.on("second-instance", (_event, argv, ...args: unknown[]) => {
+    const preparation = argv.find((arg) => arg.startsWith("--markpdf-prepare="));
+    if (preparation !== undefined) { void dispatchExternalPreparation(preparation.slice("--markpdf-prepare=".length)); return; }
     const additionalData = (args.at(1) ?? {}) as SingleInstanceData;
     const filePaths = uniqueFilePaths([
       ...(additionalData.filePaths ?? []),
@@ -438,6 +448,10 @@ app.on("browser-window-focus", (_event, window) => {
   noteWindowFocused(window);
 });
 
+async function dispatchExternalPreparation(id: string): Promise<void> {
+  await queueExternalPreparation(id, app.getPath("userData"), async (path, created) => { await createWindow([path], created); });
+}
+
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
   setDockIcon();
@@ -445,7 +459,9 @@ app.whenReady().then(async () => {
   app.once("will-quit", stopDockPageTurn);
   const initialOpenPaths = pendingOpenPaths;
   pendingOpenPaths = [];
-  await createWindow(initialOpenPaths);
+  const preparation = process.argv.find((arg) => arg.startsWith("--markpdf-prepare="));
+  if (preparation === undefined) await createWindow(initialOpenPaths);
+  else await dispatchExternalPreparation(preparation.slice("--markpdf-prepare=".length));
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -598,7 +614,7 @@ ipcMain.handle("file:read-markdown", async (_event, filePath: string) => {
 ipcMain.handle(
   "file:write-pdf",
   async (_event, filePath: string, bytes: Uint8Array | number[]) => {
-    await writeFile(filePath, Buffer.from(bytes));
+    await withDocumentSave(filePath, async () => await writeFile(filePath, Buffer.from(bytes)));
     addRecentFile(filePath);
     return { path: filePath, name: basename(filePath) };
   },
@@ -762,21 +778,27 @@ ipcMain.handle("semantic:list-models", async () => listCuratedModels());
 
 ipcMain.handle("semantic:index", async (event, raw: unknown) => {
   const request = parseIndexRequest(raw);
-  const settings = currentSemanticSettings();
-  const result = await runIndexJob(request, settings, (progress) => {
+  const ownedSettings = request.jobId.startsWith("prepare-") ? preparationSettings(event.sender) : undefined;
+  const settings = ownedSettings ?? currentSemanticSettings();
+  const preparationSignal = ownedSettings === undefined ? undefined : preparationAbortSignal(event.sender);
+  if (preparationSignal?.aborted) return { status: "cancelled" };
+  const cancelPreparedIndex = (): void => { cancelSemanticJob(request.jobId); };
+  preparationSignal?.addEventListener("abort", cancelPreparedIndex, { once: true });
+  let result: Awaited<ReturnType<typeof runIndexJob>>;
+  try { result = await runIndexJob(ownedSettings === undefined ? request : { ...request, chunkingProfile: settings.chunkingProfile }, settings, (progress) => {
     // event.sender, not a captured window: openFileInNewWindow means several may exist.
     event.sender.send("semantic:progress", {
       jobId: request.jobId,
       kind: "index",
       progress,
     });
-  });
+  }); } finally { preparationSignal?.removeEventListener("abort", cancelPreparedIndex); }
 
   // Only "ready" means chunks were actually embedded and written, which is the only outcome
   // that proves the weights loaded. "reused" and "empty" never touch the model, and recording
   // a download from either is how a claim outruns the cache.
   if (result.status === "ready") rememberDownloadedModel(settings.activeModelId);
-  return result;
+  return { ...result, actualModelId: settings.activeModelId, actualChunkingProfile: settings.chunkingProfile };
 });
 
 ipcMain.handle("semantic:cancel", async (_event, jobId: unknown) => cancelSemanticJob(jobId));

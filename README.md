@@ -94,6 +94,7 @@ MarkPDF ships a `markpdf` command that runs the same index, the same extractor a
 embedding model as the application. Install it from **Settings › CLI & MCP › Command Line**.
 
 ```
+markpdf prepare <path>     [--json]
 markpdf index   <path...>  [--recursive] [--force]
 markpdf search  <query>    (--path <pdf> | --id <hash>) [--top-k 12] [--min-score 0.3]
 markpdf outline <path>     [--depth 3]
@@ -133,7 +134,7 @@ Register it once with your client — the server runs through the installed `mar
 install that first from **Settings › CLI & MCP**. For Claude Code:
 
 ```
-claude mcp add markpdf -- markpdf mcp
+claude mcp add --scope user markpdf -- markpdf mcp
 ```
 
 For a client that reads a JSON configuration file, the same thing as entries in its server map —
@@ -149,10 +150,11 @@ For a client that reads a JSON configuration file, the same thing as entries in 
 
 Add `MARKPDF_DATA_DIR` in `env` if you keep your index somewhere other than the default.
 
-Six tools, and no more:
+Seven tools:
 
 | Tool | What it does | What it needs |
 | --- | --- | --- |
+| `prepare_document` | Open a local PDF, save eligible generated outline metadata, and prepare the shared retrieval index | Existing read permission; separate write permission when saving |
 | `outline` | The heading tree with page numbers, the page count, and whether the document has a text layer | Nothing, if the document is indexed; otherwise permission to read it |
 | `search` | The passages of one indexed document that answer a question, each with its page and headings | Nothing — it reads the index and never opens the file |
 | `read_pages` | The text of specific pages, which is how you get from a search hit to the material around it | Nothing — index only |
@@ -166,10 +168,9 @@ hash another tool returned — never both. `search` also accepts an opaque `ref`
 without learning its path. Open-document references are session-scoped and must not be reused after
 the tab closes.
 
-**No tool indexes, grants or forgets anything.** Permission is given at a terminal with
-`markpdf --allow-read`, where a person is present; an assistant cannot widen its own access. Index
-your library first, and `search` and `read_pages` then work whether or not the grant is still in
-place, because the answer comes from the index.
+**No tool grants or forgets anything.** `prepare_document` can index and save only within existing grants. Give permission out of band with `markpdf --allow-read` and, when saving is needed, `markpdf --allow-write`. An assistant cannot widen its own access. Existing `search` and `read_pages` still use the index without reopening the PDF.
+
+For setup, separate save/index outcomes, incomplete-page fallback and recovery, see [agent PDF preparation](docs/agent-pdf-preparation.md).
 
 Every reply is bounded, and says so: if a document is longer than one answer can carry you are
 told how much was left out rather than handed a shortened one that reads as complete.

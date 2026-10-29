@@ -22,7 +22,7 @@ MarkPDF is one npm package with four runtime boundaries:
   output; it holds no document logic. It is compiled by `tsconfig.cli.json` to
   `dist-cli/`, imports core through `dist-core/`, and runs on the Electron binary
   under `ELECTRON_RUN_AS_NODE=1`.
-- `mcp/` is the Model Context Protocol server: four tools over stdio for an agent,
+- `mcp/` is the Model Context Protocol server: retrieval tools and explicit PDF preparation over stdio for an agent,
   built on the official SDK. It validates tool arguments, calls core, and formats
   JSON replies; like `cli/` it holds no document logic, and it generates its tool
   schemas from the command table in `cli/spec.ts` rather than describing the same

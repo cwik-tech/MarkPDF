@@ -114,6 +114,7 @@ export const globalOptions: readonly OptionSpec[] = [
 export const grantOptionNames = ["allow-read", "allow-write", "revoke-read", "revoke-write"] as const;
 
 export const commandSpecs: readonly CommandSpec[] = [
+  { name: "prepare", summary: "Open a PDF in MarkPDF, save automatic metadata and prepare retrieval.", positionals: [{ name: "path", description: "PDF to prepare.", variadic: false }], options: [] },
   {
     name: "index",
     summary: "Read documents and add them to the semantic index.",

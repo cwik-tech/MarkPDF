@@ -1,3 +1,5 @@
+import { describeCoverage } from "../dist-core/agent/coverage.js";
+import { MARKDOWN_ENGINE_ID, MARKDOWN_VERSION } from "../dist-core/models.js";
 import { AccessDeniedError, remedyFor, requireAccess, type Allowlist } from "../dist-core/consent/allowlist.js";
 import { renderBoundedMarkdown, renderMarkdownForFile, type MarkdownRenderMode } from "../dist-core/convert/renderMarkdown.js";
 import { resolveDocumentPages, type DocumentPages } from "../dist-core/documents/documentPages.js";
@@ -31,6 +33,7 @@ import type { ToolProgress } from "./progress.js";
  * would create one for a user who never used it.
  */
 export interface ToolContext {
+  prepareDocument?: (path: string, signal: AbortSignal) => Promise<import("../dist-core/agent/preparation.js").PreparationReply>;
   store: () => SemanticStore;
   /** The embedder for one model id. Held per model, capped, so a change of model does not strand the old runtime nor pile up new ones without limit. */
   embedder: (modelId: string, onProgress?: (progress: { loaded: number; total: number }) => void) => Embedder;
@@ -313,6 +316,7 @@ export async function runSearch(
   }));
 
   const fitted = fitReply(rendered.length, context.replyBudget, (keep) => ({
+    ...describeCoverage(store.getMarkdown(lookup.document.id, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)),
     contentHash: lookup.document.contentHash,
     name: lookup.document.name,
     indexSnapshot: true,

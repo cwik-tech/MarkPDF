@@ -147,6 +147,7 @@ function relativeTo(page: Box, box: Box): { left: number; top: number } {
 }
 
 async function searchFor(window: Page, query: string): Promise<void> {
+  await window.getByTitle("Find text", { exact: true }).click();
   const input = window.getByPlaceholder("Find text");
   await input.click();
   await input.fill(query);

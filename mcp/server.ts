@@ -1,3 +1,5 @@
+import { requirePreparationPath } from "../dist-core/agent/preparation.js";
+import { requireAccess } from "../dist-core/consent/allowlist.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -30,6 +32,13 @@ export type ToolReply = {
 type Runner = (context: ToolContext, args: Record<string, ArgumentValue>, signal?: AbortSignal) => Promise<ToolOutcome>;
 
 const RUNNERS: Record<string, Runner> = {
+  prepare_document: async (context, args, signal) => {
+    const target = requirePreparationPath(args.path);
+    if (!context.prepareDocument) return { ok: false, message: "Desktop preparation is unavailable" };
+    const path = requireAccess(context.allowlist(), target, "read");
+    const reply = await context.prepareDocument(path, signal ?? new AbortController().signal);
+    return { ok: true, payload: { ...reply } };
+  },
   outline: runOutline,
   search: runSearch,
   read_pages: runReadPages,

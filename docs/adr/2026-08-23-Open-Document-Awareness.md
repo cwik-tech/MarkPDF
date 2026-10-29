@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted. Supersedes the "Exactly four tools, and nothing else" decision in
+Superseded for explicit preparation by [Agent PDF preparation](2026-10-28-Agent-PDF-Preparation.md). Other decisions remain accepted.
+
+ Supersedes the "Exactly four tools, and nothing else" decision in
 `2026-08-23-MCP-Server-Adapter.md`, which now reads six.
 
 ## Context

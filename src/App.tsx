@@ -1,3 +1,5 @@
+import { prepareOutline } from "./pdf/prepareOutline";
+import type { PreparationReply } from "./global";
 import {
   Check,
   BookOpen,
@@ -490,6 +492,13 @@ export default function App() {
   const semanticJobsRef = useRef(new Map<string, { controller: AbortController }>());
   const semanticStartTimersRef = useRef(new Map<string, number>());
   const tabsRef = useRef<DocumentTab[]>([]);
+  const awaitingAgentPreparationRef = useRef(window.pdfReader?.agentPreparationWindow === true);
+  const agentMetadataPendingRef = useRef(new Map<string, Promise<boolean>>());
+  const agentMetadataReadyRef = useRef(new Set<string>());
+  const agentCancelledRef = useRef(false);
+  const agentPreparingRef = useRef(new Set<string>());
+  const agentRevisionRef = useRef(new Map<string, number>());
+  const agentUserEditsRef = useRef(new Set<string>());
   const semanticSettingsRef = useRef(semanticSettings);
   const semanticModelDownloadStartedRef = useRef(false);
   const publishedOpenDocumentsRef = useRef<string | null>(null);
@@ -615,7 +624,17 @@ export default function App() {
     (
       tabId: string,
       patch: Partial<PdfTab> | ((tab: PdfTab) => Partial<PdfTab>),
+      automatic = false,
     ) => {
+      // Patch callbacks are pure. Inspect the proposed patch for ownership without replacing
+      // React's functional update, which still applies it to the newest queued state.
+      const currentTab = tabsRef.current.find((tab) => tab.id === tabId);
+      const proposed = typeof patch === "function" ? (isPdfTab(currentTab) ? patch(currentTab) : {}) : patch;
+      if (!automatic && proposed.dirty === true) {
+        agentUserEditsRef.current.add(tabId);
+        agentRevisionRef.current.set(tabId, (agentRevisionRef.current.get(tabId) ?? 0) + 1);
+        if (agentPreparingRef.current.has(tabId)) { agentCancelledRef.current = true; window.pdfReader?.cancelPreparation(); }
+      }
       setTabs((current) =>
         current.map((tab) => {
           if (tab.id !== tabId || !isPdfTab(tab)) return tab;
@@ -823,10 +842,8 @@ export default function App() {
       });
 
       try {
-        // Page text now comes from the main process, which reads the document itself. This
-        // window contributes only the OCR it has already produced for the visible text layer.
-        // That split is a Phase 2 scope decision, not a capability limit: main could rasterise
-        // too, but scanning the same pages a second time would buy nothing.
+        // Core extraction/OCR in the main process supplies index text. Renderer OCR serves
+        // the visible selectable layer and is not the index producer.
         const result = await window.pdfReader.semantic.indexDocument({
           jobId: tabId,
           source: buildIndexSource(tab),
@@ -969,7 +986,7 @@ export default function App() {
                   ...tab.ocrProgress,
                   ...progress,
                 },
-              }));
+              }), true);
             }
           },
         });
@@ -1036,6 +1053,9 @@ export default function App() {
         firstPageRenderWaitersRef.current.set(tabId, { page: 1, resolve });
       });
 
+      let finishMetadata: (ready: boolean) => void = () => undefined;
+      const metadataReady = new Promise<boolean>((resolve) => { finishMetadata = resolve; });
+      agentMetadataPendingRef.current.set(tabId, metadataReady);
       await openPdfInStages({
         loadDocument: async () => openedDocument,
         showDocument: (document) => {
@@ -1103,6 +1123,7 @@ export default function App() {
           return { formFields, outlineResult, overlays, documentAnnotations };
         },
         applyMetadata: ({ formFields, outlineResult, overlays, documentAnnotations }) => {
+          agentMetadataReadyRef.current.add(tabId);
           const openedOverlays = [...overlays, ...documentAnnotations];
           const openedOverlayIds = new Set(openedOverlays.map((overlay) => overlay.id));
           updatePdfTab(tabId, (tab) => ({
@@ -1114,9 +1135,9 @@ export default function App() {
             outline: outlineResult.outline,
             outlineSource: outlineResult.source,
             dirty: tab.dirty || outlineResult.generated,
-          }));
+          }), true);
         },
-      });
+      }).then(() => { finishMetadata(true); }, (error: unknown) => { finishMetadata(false); throw error; }).finally(() => { agentMetadataPendingRef.current.delete(tabId); });
     },
     [startAutoOcr, updatePdfTab],
   );
@@ -1326,7 +1347,7 @@ export default function App() {
   }, [applySemanticSettings]);
 
   useEffect(() => {
-    if (isE2eRun || !window.pdfReader?.markdown) return;
+    if (isE2eRun || window.pdfReader?.agentPreparationWindow || !window.pdfReader?.markdown) return;
     let cancelled = false;
 
     void window.pdfReader.markdown.listEngines().then(async (engines) => {
@@ -1380,7 +1401,7 @@ export default function App() {
   }, [hideOperationProgress, showOperationProgress]);
 
   useEffect(() => {
-    if (isE2eRun || !window.pdfReader?.semantic || !semanticSettings.enabled)
+    if (isE2eRun || window.pdfReader?.agentPreparationWindow || !window.pdfReader?.semantic || !semanticSettings.enabled)
       return;
     if (
       semanticSettings.downloadedModelIds.includes(recommendedEmbeddingModelId)
@@ -1419,10 +1440,10 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!semanticSettings.enabled) return;
+    if (!semanticSettings.enabled || awaitingAgentPreparationRef.current) return;
 
     for (const tab of tabs) {
-      if (!isPdfTab(tab)) continue;
+      if (!isPdfTab(tab) || agentPreparingRef.current.has(tab.id)) continue;
       const ocrSettled =
         tab.ocrStatus === "skipped" ||
         tab.ocrStatus === "ready" ||
@@ -1624,6 +1645,7 @@ export default function App() {
       return;
     }
 
+    if (agentPreparingRef.current.has(tabId)) { agentCancelledRef.current = true; window.pdfReader?.cancelPreparation(); }
     setTabs((current) => current.filter((item) => item.id !== tabId));
     const renderWaiter = firstPageRenderWaitersRef.current.get(tabId);
     firstPageRenderWaitersRef.current.delete(tabId);
@@ -1681,6 +1703,7 @@ export default function App() {
     flattenForms = false,
     options: { targetPath?: string; defaultPath?: string } = {},
   ) => {
+    if (agentPreparingRef.current.has(tabToSave.id)) return false;
     let targetPath = options.targetPath ?? tabToSave.path;
 
     if (window.pdfReader && (!targetPath || saveAs)) {
@@ -1737,6 +1760,7 @@ export default function App() {
         total: 3,
       });
       const written = await window.pdfReader.writePdf(targetPath, bytes);
+      agentUserEditsRef.current.delete(tabToSave.id);
       const nextBytes = Uint8Array.from(bytes);
       await showOperationProgress({
         title: "Saving PDF",
@@ -1820,6 +1844,65 @@ export default function App() {
     if (!activePdfTab) return false;
     return saveTabWithSignaturePrompt(activePdfTab, saveAs, flattenForms);
   };
+
+  useEffect(() => {
+    const bridge = window.pdfReader;
+    if (!bridge) return;
+    const cancel = bridge.onCancelPreparation(() => { agentCancelledRef.current = true; for (const id of agentPreparingRef.current) void bridge.semantic.cancelIndex(`prepare-${id}`); });
+    const unsubscribe = bridge.onPrepareDocument(async (path): Promise<PreparationReply> => {
+      const candidate = path === undefined ? activePdfTab : tabsRef.current.find((item) => item.path === path);
+      const tab = isPdfTab(candidate) ? candidate : undefined;
+      if (!tab?.path) return { status: "needs_user_action", save: "blocked", reason: "Open a path-backed PDF first" };
+      if (!semanticSettings.enabled) return { status: "needs_user_action", save: "blocked", reason: "Enable semantic indexing in Settings" };
+      if (agentUserEditsRef.current.has(tab.id) || agentPreparingRef.current.has(tab.id)) return { status: "needs_user_action", save: "blocked", reason: "Document has user edits or preparation is busy" };
+      awaitingAgentPreparationRef.current = false;
+      agentCancelledRef.current = false;
+      const revision = agentRevisionRef.current.get(tab.id) ?? 0;
+      agentPreparingRef.current.add(tab.id);
+      cancelSemanticJob(tab.id);
+      const timer = semanticStartTimersRef.current.get(tab.id);
+      if (timer !== undefined) window.clearTimeout(timer);
+      semanticStartTimersRef.current.delete(tab.id);
+      let save: PreparationReply["save"] = "not_needed";
+      let stage: PreparationReply["stage"] = "open";
+      try {
+        const metadata = agentMetadataPendingRef.current.get(tab.id);
+        if (metadata !== undefined && !(await metadata)) return { status: "needs_user_action", save: "blocked", reason: "Document metadata could not be prepared" };
+        if (agentCancelledRef.current) return { status: "cancelled", save };
+        await bridge.checkPreparationSource(tab.path, tab.bytes);
+        const outline = await extractDocumentOutline(tab.pdfDoc, tab.bytes);
+        let bytes = tab.bytes;
+        if (outline.generated) {
+          const prepared = await prepareOutline(bytes, outline.outline);
+          if (prepared.status === "blocked") return { status: "needs_user_action", save: "blocked", stage: "save", reasonCode: "unsupported_pdf", remedy: "Save this document manually or use another parser without modifying the source", reason: prepared.reason };
+          if (agentUserEditsRef.current.has(tab.id)) return { status: "needs_user_action", save: "blocked", reason: "Document changed during preparation" };
+          if (agentCancelledRef.current) return { status: "cancelled", save };
+          stage = "save";
+          await bridge.savePreparation(tab.path, bytes, prepared.bytes);
+          bytes = prepared.bytes;
+          save = "saved";
+        }
+        if (agentUserEditsRef.current.has(tab.id)) return { status: "needs_user_action", save, reason: "Document changed during preparation" };
+        const pdfDoc = bytes === tab.bytes ? tab.pdfDoc : await loadPdfDocument(bytes);
+        if ((agentRevisionRef.current.get(tab.id) ?? 0) !== revision) return { status: "needs_user_action", save, reason: "Document changed during preparation" };
+        await bridge.checkPreparationSource(tab.path, bytes);
+        if ((agentRevisionRef.current.get(tab.id) ?? 0) !== revision) return { status: "needs_user_action", save, reason: "Document changed during preparation" };
+        updatePdfTab(tab.id, { bytes, pdfDoc, outline: outline.outline, outlineSource: outline.source, dirty: false, semanticIndexStatus: "checking" });
+        if (agentCancelledRef.current) return { status: "cancelled", save };
+        stage = "index";
+        const result = await bridge.semantic.indexDocument({ jobId: `prepare-${tab.id}`, source: { kind: "bytes", bytes, path: tab.path }, name: tab.name, chunkingProfile: semanticSettings.chunkingProfile });
+        if (result.status === "cancelled" || agentCancelledRef.current) return { status: "cancelled", save };
+        await bridge.checkPreparationSource(tab.path, bytes);
+        if ((agentRevisionRef.current.get(tab.id) ?? 0) !== revision) return { status: "needs_user_action", save, reason: "Document changed during indexing" };
+        updatePdfTab(tab.id, { semanticContentHash: result.contentHash, semanticIndexStatus: "ready", semanticIndexProgress: { status: "ready" } });
+        return { status: result.status === "incomplete" ? "incomplete" : "ready", stage: "complete", save, tabId: tab.id, modelId: result.actualModelId ?? semanticSettings.activeModelId, chunkingProfile: result.actualChunkingProfile ?? semanticSettings.chunkingProfile, indexStatus: result.status, textSource: result.textSource, chunkCount: result.chunkCount, contentHash: result.contentHash, pageCount: result.pageCount, unresolvedPages: result.unresolvedPages.slice(0, 100), unresolvedPageCount: result.unresolvedPages.length, coverageTruncated: result.unresolvedPages.length > 100, fallback: result.status === "incomplete" ? "traditional_parser" : "none" };
+      } catch (error) {
+        return { status: "failed", save: stage === "save" && save !== "saved" ? "unknown" : save, stage, reasonCode: stage === "index" ? "index_failed" : stage === "save" ? "save_failed" : "access_or_source", remedy: "Check permissions and the source file; use the ordinary parser if the needed evidence remains unavailable", reason: error instanceof Error ? error.message.slice(0, 2048) : "Preparation failed" };
+      } finally { agentPreparingRef.current.delete(tab.id); }
+    });
+    if (activePdfTab?.path && agentMetadataReadyRef.current.has(activePdfTab.id)) bridge.preparationReady(activePdfTab.path);
+    return () => { unsubscribe(); cancel(); };
+  }, [activePdfTab, semanticSettings, cancelSemanticJob, updatePdfTab]);
 
   const saveActiveTabAsMarkdown = async () => {
     if (!activePdfTab) return false;

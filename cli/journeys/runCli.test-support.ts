@@ -29,7 +29,7 @@ export interface RunCliOptions {
  * `--require` propagates into `worker_threads`, which is what makes this a real check: the OCR
  * engine runs in one, and it downloads its language data from a CDN unless told otherwise.
  */
-export const OFFLINE_NODE_OPTIONS = `--require ${join(dirname(fileURLToPath(import.meta.url)), "blockNetwork.cjs")}`;
+export const OFFLINE_NODE_OPTIONS = `--require ${JSON.stringify(join(dirname(fileURLToPath(import.meta.url)), "blockNetwork.cjs"))}`;
 
 /**
  * Run the command line surface as a child process.

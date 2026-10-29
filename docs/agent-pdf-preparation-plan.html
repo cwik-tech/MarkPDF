@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="generator" content="html-problem-visualization">
+<meta name="source-md" content="agent-pdf-preparation-plan.md">
+<meta name="source-sha256" content="55660367cd7d6bf67b7166568cc7fe827017b10c274127d091b08255cbac418d">
+<title>MarkPDF agent preparation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: an engineering sheet. Prose sits in a 74ch column; every visual breaks out to the full track.
+   Semantic tones: bad = broke, warn = misleading or risky, ok = worked, fix = the change, idle = not reached.
+   Colour is used sparingly: tinted fills with a coloured stroke, or a 3px inset stripe. Surfaces stay white.
+   Do not change tokens per project. Add new rules only from these tokens. */
+:root{
+  --bg:#f3f5f8; --surface:#ffffff; --ink:#17202d; --muted:#576274; --line:#d2d8e1;
+  --band-a:#f8f9fb; --band-b:#edf0f4; --edge:#3b4657;
+  --fix:#2b61a8;  --fix-bg:#e4ecf8;  --fix-ink:#24548f;
+  --bad:#c0392f;  --bad-bg:#fae6e4;  --bad-ink:#a8302a;
+  --warn:#b0680a; --warn-bg:#fcefd8; --warn-ink:#8a5006;
+  --ok:#2a8a3d;   --ok-bg:#e2f2e5;   --ok-ink:#21712f;
+  --idle:#4b5466; --idle-bg:#e6e9ee; --idle-ink:#576274;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-cond:"IBM Plex Sans Condensed","Roboto Condensed","Arial Narrow",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --gutter:clamp(16px,5vw,96px);
+  --prose:max(74ch,50%);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#10141a; --surface:#171c24; --ink:#e3e7ed; --muted:#98a2b2; --line:#2a313c;
+    --band-a:#141920; --band-b:#1a2029; --edge:#a9b2c1;
+    --fix:#7aa7e9;  --fix-bg:#1a2940;  --fix-ink:#9cbdf0;
+    --bad:#f0736b;  --bad-bg:#3a1c1a;  --bad-ink:#f59a93;
+    --warn:#e8a74a; --warn-bg:#382810; --warn-ink:#f1be72;
+    --ok:#62c476;   --ok-bg:#16301c;   --ok-ink:#86d496;
+    --idle:#9ba4b3; --idle-bg:#222932; --idle-ink:#98a2b2;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10141a; --surface:#171c24; --ink:#e3e7ed; --muted:#98a2b2; --line:#2a313c;
+  --band-a:#141920; --band-b:#1a2029; --edge:#a9b2c1;
+  --fix:#7aa7e9;  --fix-bg:#1a2940;  --fix-ink:#9cbdf0;
+  --bad:#f0736b;  --bad-bg:#3a1c1a;  --bad-ink:#f59a93;
+  --warn:#e8a74a; --warn-bg:#382810; --warn-ink:#f1be72;
+  --ok:#62c476;   --ok-bg:#16301c;   --ok-ink:#86d496;
+  --idle:#9ba4b3; --idle-bg:#222932; --idle-ink:#98a2b2;
+  color-scheme:dark;
+}
+
+/* base */
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.6 var(--font-body);padding-inline:var(--gutter);padding-block:0 64px}
+a{color:var(--fix)}
+a:focus-visible{outline:2px solid var(--fix);outline-offset:2px}
+code{font-family:var(--font-mono);font-size:.86em;overflow-wrap:anywhere}
+pre{font-family:var(--font-mono);font-size:12.5px;line-height:1.65;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+p{margin:0}
+ul,ol{margin:0}
+h1,h2,h3{font-family:var(--font-cond);text-wrap:balance;margin:0}
+h1{font-weight:700;font-size:clamp(34px,5vw,52px);line-height:1.05;letter-spacing:-.01em}
+h1 .quiet{color:var(--muted);font-weight:400}
+h1 [class*="t-"]{color:var(--tone)}
+h2{font-weight:700;font-size:28px;line-height:1.15}
+h3{font-weight:600;font-size:18px;line-height:1.3}
+.label{font:600 12px/1.3 var(--font-cond);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.muted{color:var(--muted)}
+.small{font-size:13.5px}
+.src{font-size:12.5px;line-height:1.5;color:var(--muted)}
+.src a{color:var(--muted)}
+.page{max-width:1400px}
+.col{max-width:var(--prose)}
+.stack{display:flex;flex-direction:column;gap:14px}
+
+/* header, legend and nav */
+header.hero{padding-block:56px 28px}
+header.hero .stack{gap:16px}
+.lead{font-size:17px;max-width:66ch}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font:500 12.5px/1 var(--font-cond);letter-spacing:.02em;padding:6px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.chip b{color:var(--ink);font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:8px 22px;font:400 13px/1.3 var(--font-cond);color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{width:24px;height:15px;border:1.5px solid var(--tone);background:var(--tone-bg);border-radius:4px;flex:none}
+nav.toc{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;margin-inline:calc(-1 * var(--gutter));padding:10px var(--gutter);background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+nav.toc .page{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 18px;max-width:none}
+nav.toc a{font:500 13px/1.4 var(--font-cond);letter-spacing:.02em;color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--ink)}
+section{padding-block:44px 8px;scroll-margin-top:52px}
+section > .page > .stack{gap:18px}
+section h3 + p, .col h3 + p{margin-top:-6px}
+
+/* semantic tones */
+.t-bad{--tone:var(--bad);--tone-bg:var(--bad-bg);--tone-ink:var(--bad-ink)}
+.t-warn{--tone:var(--warn);--tone-bg:var(--warn-bg);--tone-ink:var(--warn-ink)}
+.t-ok{--tone:var(--ok);--tone-bg:var(--ok-bg);--tone-ink:var(--ok-ink)}
+.t-fix{--tone:var(--fix);--tone-bg:var(--fix-bg);--tone-ink:var(--fix-ink)}
+.t-idle{--tone:var(--idle);--tone-bg:var(--idle-bg);--tone-ink:var(--idle-ink)}
+.tag{display:inline-block;align-self:flex-start;font:600 11px/1 var(--font-cond);letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:999px;white-space:nowrap;color:var(--tone-ink,var(--muted));background:var(--tone-bg,var(--band-b))}
+
+/* shared card surface */
+.card,.stage,.panel,.wcard,.ledger > div,.aside,.layer,.fork,.nest{background:var(--surface);border:1px solid var(--line);border-radius:10px}
+
+/* summary cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.card{padding:16px 18px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.card[class*="t-"]{box-shadow:inset 3px 0 0 var(--tone)}
+.card h3{font-size:17px}
+.card p{font-size:14px;color:var(--muted)}
+.card p strong{color:var(--ink);font-weight:600}
+.card > a{font:500 13px/1.3 var(--font-cond);margin-top:auto}
+
+/* stage strip */
+.stages{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stage{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.stage[class*="t-"]{border-color:color-mix(in srgb,var(--tone) 45%,var(--line));box-shadow:inset 0 3px 0 var(--tone)}
+.stage.t-idle{background:var(--band-a);box-shadow:none;border-style:dashed}
+.stage .n{font:700 22px/1 var(--font-mono);color:var(--line)}
+.stage .name{font:600 15px/1.3 var(--font-cond)}
+.stage .state{align-self:flex-start;font:600 11px/1 var(--font-cond);letter-spacing:.05em;text-transform:uppercase;padding:4px 8px;border-radius:999px;color:var(--tone-ink,var(--muted));background:var(--tone-bg,var(--band-b))}
+.stage .note{font-size:13px;color:var(--muted);line-height:1.45}
+.pills{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+.pills span{font:600 11px/1 var(--font-mono);padding:5px 6px;border-radius:4px;background:var(--surface);color:var(--muted);border:1px solid var(--line)}
+.pills span[class*="t-"]{background:var(--tone);color:var(--surface);border-color:var(--tone)}
+
+/* side-by-side panels */
+.compare{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.panel{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.panel > header{padding:12px 16px 10px;display:flex;flex-direction:column;gap:3px;border-bottom:1px solid var(--line)}
+.panel > header h3{font-size:16px}
+.panel pre{padding:14px 16px;background:var(--band-a);flex:1}
+.panel > .body{padding:14px 16px;font-size:14px;flex:1}
+.panel > footer{padding:10px 16px 12px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line)}
+.panel[class*="t-"]{border-color:var(--tone);box-shadow:inset 3px 0 0 var(--tone)}
+.panel[class*="t-"] pre{background:var(--tone-bg)}
+mark{background:var(--warn-bg);color:var(--warn-ink);padding:0 2px;border-radius:2px}
+.panel[class*="t-"] mark{background:transparent;color:var(--tone-ink);font-weight:600}
+
+/* diagram nodes and edges (fork, chain) */
+.node{border:1.4px solid var(--edge);border-radius:6px;padding:8px 14px;background:var(--surface);text-align:center;font:500 13px/1.35 var(--font-cond);max-width:100%;min-width:0}
+.node .label{display:block;font-size:10.5px;margin-bottom:2px;letter-spacing:.08em}
+.node.file{border-color:var(--muted);border-radius:2px;font:500 12px/1.4 var(--font-mono)}
+.node[class*="t-"]{border-color:var(--tone);background:var(--tone-bg)}
+.node[class*="t-"] strong{color:var(--tone-ink);font-weight:600}
+.vline{width:1.3px;height:24px;background:var(--edge);position:relative}
+.vline::after{content:"";position:absolute;bottom:-1px;left:50%;transform:translateX(-50%);border:4.5px solid transparent;border-top:6px solid var(--edge);border-bottom:0}
+
+/* fork diagram */
+.fork{padding:24px;display:flex;flex-direction:column;align-items:center}
+.branches{display:grid;grid-template-columns:repeat(var(--n,2),minmax(0,1fr));gap:28px;width:100%;position:relative;padding-top:24px}
+.branches::before{content:"";position:absolute;top:0;left:calc(50% / var(--n,2));right:calc(50% / var(--n,2));height:1.3px;background:var(--edge)}
+.branch{display:flex;flex-direction:column;align-items:center;min-width:0;position:relative}
+.branch::before{content:"";position:absolute;top:-24px;left:50%;width:1.3px;height:14px;background:var(--edge)}
+.branch .who{font:600 11px/1.3 var(--font-cond);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;text-align:center}
+.fork-foot{margin-top:18px;font-size:13px;color:var(--muted);text-align:center;max-width:620px}
+@media (max-width:700px){
+  .branches{grid-template-columns:1fr;padding-top:0;gap:22px}
+  .branches::before,.branch::before{display:none}
+  .branch{border-top:1px dashed var(--line);padding-top:16px}
+}
+
+/* tables */
+.tablewrap{overflow-x:auto}
+table{width:100%;min-width:560px;border-collapse:separate;border-spacing:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:14px}
+th,td{text-align:left;vertical-align:top;padding:10px 16px;border-top:1px solid var(--line)}
+thead th{border-top:0;font:600 12px/1.3 var(--font-cond);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--band-b)}
+td.num{font-family:var(--font-mono);font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+td[class*="t-"]{color:var(--tone-ink);font-weight:500}
+
+/* nested boundaries */
+.nest{padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.nest .nest{background:var(--band-a);border:1.4px dashed var(--muted)}
+.nest[class*="t-"]{background:var(--tone-bg);border:1.4px solid var(--tone)}
+.nest-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+.nest-head h3{font-size:16px}
+.nest-head .label{font-size:11px;letter-spacing:.06em}
+.nest ul{padding-left:18px;font-size:14px}
+.nest li{margin-block:3px}
+
+/* step timeline: attempts, events, or ordered actions */
+.steps{list-style:none;margin:0 0 0 6px;padding:0;border-left:1.3px solid var(--edge)}
+.steps li{position:relative;padding:0 0 14px 20px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1px 14px}
+.steps li:last-child{padding-bottom:0}
+.steps li::before{content:"";position:absolute;left:-6px;top:6px;width:11px;height:11px;border-radius:50%;background:var(--tone,var(--edge));box-shadow:0 0 0 3px var(--bg)}
+.steps .what{font:600 15px/1.4 var(--font-cond)}
+.steps .got{grid-column:1;font:12.5px/1.5 var(--font-mono);color:var(--tone-ink,var(--muted))}
+.steps .ref{grid-row:1 / span 2;grid-column:2;font:12px/1.5 var(--font-mono);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* two-column split */
+.split{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:32px;align-items:start}
+@media (max-width:900px){.split{grid-template-columns:1fr}}
+
+/* outcome layers */
+.layers{display:flex;flex-direction:column;gap:8px}
+.layer{display:grid;grid-template-columns:130px minmax(0,1fr) auto;gap:14px;align-items:center;padding:11px 16px}
+.layer[class*="t-"]{box-shadow:inset 3px 0 0 var(--tone)}
+.layer .k{font:600 12px/1.3 var(--font-cond);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.layer .v{font-size:14px;min-width:0}
+@media (max-width:620px){.layer{grid-template-columns:1fr;gap:6px}}
+
+/* pair: before/after, said/should-say, today/after the fix */
+.pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:700px){.pair{grid-template-columns:1fr}}
+.pair > div{border-radius:10px;padding:12px 16px 14px;background:var(--surface);border:1px solid var(--line);display:flex;flex-direction:column;gap:8px;min-width:0}
+.pair > div[class*="t-"]{background:var(--tone-bg);border-color:color-mix(in srgb,var(--tone) 40%,transparent)}
+.pair > div[class*="t-"] .label{color:var(--tone-ink)}
+
+/* callouts */
+.aside{padding:18px 22px;display:flex;flex-direction:column;gap:10px;background:var(--band-a);border-style:dashed;border-color:var(--muted)}
+.aside h3{font-size:18px}
+.decision{background:var(--fix-bg);border:1.4px solid var(--fix);border-radius:10px;padding:18px 22px;display:flex;flex-direction:column;gap:12px}
+.decision > .label{color:var(--fix-ink)}
+.decision h3{color:var(--fix-ink);font-size:20px}
+.decision .pair > div{background:var(--surface);border-color:var(--line)}
+
+/* work cards */
+.work{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:760px){.work{grid-template-columns:1fr}}
+.wcard{padding:16px 20px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.wcard .top{display:flex;align-items:center;gap:10px}
+.wcard .letter{font:700 14px/1 var(--font-mono);width:28px;height:28px;display:grid;place-items:center;border-radius:6px;background:var(--fix-bg);color:var(--fix-ink);border:1.4px solid var(--fix);flex:none}
+.wcard h3{font-size:18px}
+.wcard ul{padding-left:18px;font-size:14px}
+.wcard li{margin-block:4px}
+.wcard .done{font-size:13px;border-top:1px solid var(--line);padding-top:10px;color:var(--muted);margin-top:auto}
+.wcard .done strong{color:var(--ink);font-weight:600}
+
+/* chain: a short strict sequence, with arrows */
+.chain{display:grid;grid-template-columns:repeat(var(--n,4),minmax(0,1fr));gap:12px 26px}
+.chain .node{position:relative;text-align:left;font-size:13px;background:var(--fix-bg);border-color:var(--fix)}
+.chain .node:not(:last-child)::after{content:"\2192";position:absolute;right:-20px;top:50%;transform:translateY(-50%);color:var(--muted);font:16px var(--font-body)}
+.chain.down{grid-template-columns:minmax(0,1fr);row-gap:24px}
+.chain.down .node:not(:last-child)::after{content:"\2193";right:auto;left:50%;top:auto;bottom:-22px;transform:translateX(-50%)}
+@media (max-width:900px){
+  .chain{grid-template-columns:minmax(0,1fr);row-gap:24px}
+  .chain .node:not(:last-child)::after{content:"\2193";right:auto;left:50%;top:auto;bottom:-22px;transform:translateX(-50%)}
+}
+
+/* history timeline */
+.history{list-style:none;margin:0;padding:0}
+.history li{display:grid;grid-template-columns:130px minmax(0,1fr);gap:16px;padding-block:12px;border-top:1px solid var(--line);font-size:14.5px}
+.history li:first-child{border-top:0}
+.history .when{font:600 14px/1.4 var(--font-cond)}
+.history .when span{display:block;font:400 12px/1.5 var(--font-mono);color:var(--muted)}
+@media (max-width:520px){.history li{grid-template-columns:1fr;gap:4px}}
+
+/* ledger: checked vs not established */
+.ledger{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.ledger > div{padding:16px 20px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.ledger ul{padding-left:18px;font-size:14px}
+.ledger li{margin-block:5px}
+
+/* sources and footer */
+.sources{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:2px 28px;font-size:14px;margin:0;padding:0;list-style:none}
+.sources li{padding-block:8px;border-top:1px solid var(--line);min-width:0}
+.sources code{font-size:12.5px}
+.sources span{display:block;color:var(--muted);font-size:13px}
+footer.end{padding-block:48px 0;font-size:13px;color:var(--muted);max-width:var(--prose)}
+</style>
+</head>
+<body>
+<header class="hero"><div class="page stack">
+<span class="label">MarkPDF · Agent PDF preparation · 2026-10-28 · Implemented locally</span>
+<h1>Give agents a PDF,<br><span class="t-fix">let MarkPDF prepare it</span></h1>
+<p class="lead">The local implementation opens a PDF in MarkPDF, saves eligible automatic changes, and indexes the saved document. Real command-line and Model Context Protocol journeys exercised the desktop flow. Existing application storage holds the extracted content. This working-tree change has not been committed, installed into Applications, or configured in an actual agent client.</p>
+<div class="chips"><span class="chip">State <b>implemented locally</b></span><span class="chip">Review <b>critical findings corrected</b></span><span class="chip">Evidence <b>build and runtime tests passed</b></span></div>
+<div class="legend" aria-label="Colour key"><span class="t-ok"><i></i>Existing capability</span><span class="t-fix"><i></i>Change or baseline design</span><span class="t-warn"><i></i>Risk or qualification</span><span class="t-idle"><i></i>Not established</span></div>
+</div></header>
+<nav class="toc" aria-label="Sections"><div class="page"><a href="#outcome">User flow</a><a href="#cause">Unsaved prompt</a><a href="#storage">Storage</a><a href="#sequence">Preparation</a><a href="#feedback">Fallback</a><a href="#scope">Boundaries</a><a href="#build">Build steps</a><a href="#evidence">Evidence</a></div></nav>
+<main>
+<section id="outcome"><div class="page"><div class="stack"><div class="col stack"><span class="label">What changes for me?</span><h2>The skill gives the agent one preparation route</h2><p>A configured agent should use MarkPDF first when you supply a local PDF path. A skill cannot force every agent on the system to comply. Each supported client still needs setup.</p></div>
+<div class="pair"><div class="t-ok"><span class="label">Available today</span><h3>Retrieve from a prepared document</h3><p>MarkPDF already exposes outline, search, page reading, conversion and open-document tools. Its core persists extracted pages and search data.</p></div><div class="t-fix"><span class="label">Implemented locally</span><h3>Prepare a new path and acknowledge completion</h3><p>The new <code>prepare_document</code> tool and <code>markpdf prepare &lt;path&gt; --json</code> command open, save when eligible, and report the final index outcome.</p></div></div>
+<p class="src">Source: <a href="agent-pdf-preparation-plan.md">plan</a>, Status and public contract. <a href="agent-pdf-preparation.md">Current usage</a>.</p>
+</div></div></section>
+<section id="cause"><div class="page"><div class="stack"><div class="col stack"><span class="label">Baseline diagnosis · Why did closing ask me to save?</span><h2>A generated outline can mark the PDF as changed</h2><p>When a PDF has no native or saved outline, MarkPDF can generate one for the sidebar. Applying that outline marks the tab dirty. Closing a dirty tab asks what to do with the unsaved change.</p></div>
+<div class="stages"><div class="stage t-ok"><b class="n">1</b><span class="name">Open PDF</span><span class="state">Existing behavior</span><span class="note">Read document and metadata.</span></div><div class="stage t-ok"><b class="n">2</b><span class="name">Generate outline</span><span class="state">Conditional</span><span class="note">No existing outline is available.</span></div><div class="stage t-warn"><b class="n">3</b><span class="name">Mark tab dirty</span><span class="state">Automatic change</span><span class="note">No user edit is needed.</span></div><div class="stage t-warn"><b class="n">4</b><span class="name">Ask on close</span><span class="state">Save decision</span><span class="note">The metadata has not been saved.</span></div></div>
+<p class="small">Optical character recognition (OCR) completion does not set that dirty flag in the inspected path. The existing PDF save also does not embed OCR text. The prepared synthetic fixture now closes without that prompt and reopens with its outline. The user's original PDF has not been reproduced.</p>
+<p class="src"><a href="../src/App.tsx">src/App.tsx</a>:978, 1116, 1605; <a href="../src/pdf/document.ts">src/pdf/document.ts</a>:119.</p>
+</div></div></section>
+<section id="storage"><div class="page"><div class="stack"><div class="col stack"><span class="label">Where will the result live?</span><h2>The PDF and parsed content keep their existing homes</h2><p>The plan keeps the current document path and the existing application data directory. It does not create another parsed-document library.</p></div>
+<div class="compare"><article class="panel t-fix"><header><span class="label">Original PDF</span><h3>Save eligible outline metadata</h3></header><div class="body">A narrow exporter writes the generated outline to the current PDF path. It must preserve unrelated metadata and user content. It still serializes new bytes.</div><footer>Automatic saving is limited to eligible documents.</footer></article><article class="panel t-ok"><header><span class="label">Application data</span><h3>Reuse the semantic store</h3></header><div class="body">Extracted page Markdown, page provenance and vectors stay in the existing semantic store. OCR-derived content belongs here.</div><footer><code>semantic-search/semantic-index.sqlite</code></footer></article></div>
+<p class="src"><a href="../core/paths.ts">core/paths.ts</a>:21, 41; <a href="../core/index/indexPdfDocument.ts">core/index/indexPdfDocument.ts</a>:228.</p>
+</div></div></section>
+<section id="sequence"><div class="page"><div class="stack"><div class="col stack"><span class="label">Baseline design · How does preparation finish?</span><h2>Save first, then index the final bytes once</h2><p>The operation needs ownership of the exact document revision. It must coordinate with automatic background work, user saves and other windows. A successful application launch is only the start.</p></div>
+<div class="chain" style="--n:5"><div class="node"><span class="label">1 · Resolve</span>Check access and choose the exact document.</div><div class="node"><span class="label">2 · Prepare</span>Hold automatic indexing while metadata settles.</div><div class="node"><span class="label">3 · Save</span>Write eligible outline changes; preserve user edits.</div><div class="node"><span class="label">4 · Index</span>Use one owned job for the final saved bytes.</div><div class="node"><span class="label">5 · Report</span>Return identity, save outcome, index outcome and coverage.</div></div>
+<p class="small">The implementation uses the existing single-instance launch route and private correlated result records. Local cold/warm startup, cancellation and data-directory identity were exercised. Unacknowledged request records are retained for inspection. Fine-grained external progress is not forwarded; the final receipt and desktop progress are available.</p>
+<p class="src"><a href="../electron/main.ts">electron/main.ts</a>:403; <a href="agent-pdf-preparation-plan.md">plan</a>, Control channel and Transaction sequence.</p>
+</div></div></section>
+<section id="feedback"><div class="page"><div class="stack"><div class="col stack"><span class="label">What does the agent do if parsing is incomplete?</span><h2>Use available evidence and name the missing pages</h2><p>The preparation reply carries no document text. It reports readiness, separate save and index outcomes, known missing pages and the next useful action. The design also calls for coverage in search and open-document listings. The actual implementation mapping includes a shared coverage module.</p></div>
+<div class="layers"><div class="layer t-fix"><span class="k">Ready</span><span class="v">Search, then read the pages supporting the answer. Cite their original PDF page numbers.</span><span class="tag">Bounded retrieval</span></div><div class="layer t-warn"><span class="k">Incomplete</span><span class="v">Use the normal parser for unresolved pages or unsupported content. Disclose which parser supplied the evidence.</span><span class="tag">Fallback</span></div><div class="layer t-warn"><span class="k">Needs action</span><span class="v">Explain missing access, disabled indexing, save conflicts or unsupported automatic saves.</span><span class="tag">No silent bypass</span></div><div class="layer t-idle"><span class="k">Unknown</span><span class="v">A timeout or missing result is not success. Reconcile actual file and index state before claiming completion.</span><span class="tag">Do not guess</span></div></div>
+<p class="small">No search hits do not prove that a topic is absent. Whole-document tasks can read bounded portions or request an explicit export. Token savings must be measured; selective retrieval remains the skill's default. Actual fresh-agent compliance and token savings have not been measured.</p>
+<p class="src"><a href="../mcp/operations.ts">mcp/operations.ts</a>:314, 370; <a href="../mcp/openDocumentOperations.ts">mcp/openDocumentOperations.ts</a>:85.</p>
+</div></div></section>
+<section id="scope"><div class="page"><div class="stack"><div class="col stack"><span class="label">What changed after the review?</span><h2>The revised scope protects originals and reuses existing mechanisms</h2><p>Claude reviewed the original plan and Codex assessed all nine findings. These baseline design boundaries remain recorded below. One explicit preparation tool is implemented. The implementation record names current scope limits and review dispositions; this table does not establish that every original design detail shipped.</p></div>
+<div class="tablewrap"><table><thead><tr><th>Boundary</th><th>Baseline design boundary</th><th>What remains outside the first implementation</th></tr></thead><tbody>
+<tr><td>PDF saving</td><td>Use a narrow outline exporter; refuse automatic rewrites of encrypted, digitally signed or form PDFs.</td><td>Preservation support for those documents until real fixtures prove it.</td></tr>
+<tr><td>Document ownership</td><td>Refuse user-edit conflicts, multiple open tabs for the same path, or concurrent preparation. Coordinate user and agent saves.</td><td>Multi-subscriber request coalescing.</td></tr>
+<tr><td>Consent</td><td>Reuse existing grants. Read permission and permission to overwrite remain separate.</td><td>A new native per-file consent dialog.</td></tr>
+<tr><td>Agent setup</td><td>Document setup for installed clients and prove the skill works in a fresh session.</td><td>A general automatic configuration installer.</td></tr>
+<tr><td>Architecture</td><td>Supersede the accepted MCP no-indexing decision explicitly; retain no self-granting.</td><td>A socket unless the simpler request/result design fails a concrete need.</td></tr>
+</tbody></table></div>
+<p class="src"><a href="agent-pdf-preparation-plan.md">plan</a>, Control channel, Skill and installation, and Transaction sequence. <a href="records/2026-10-28-agent-pdf-plan-review.md">Review and disposition record</a>.</p>
+</div></div></section>
+<section id="build"><div class="page"><div class="stack"><div class="col stack"><span class="label">Approved baseline · What was the build order?</span><h2>Prove the desktop save before adding external launch</h2><p>The cards preserve the approved build sequence and its acceptance goals. The status ledger below records what was actually exercised. Actual agent setup and usage measurement remain unverified, so these cards are not a claim that every goal is complete.</p></div>
+<div class="work"><article class="wcard"><div class="top"><span class="letter">1</span><h3>Save preparation-only changes</h3></div><p>Start with a failing desktop acceptance journey, then drive ownership and the narrow exporter through focused inner tests with real PDFs.</p><p class="done"><strong>Done when</strong> the outline persists, close needs no save prompt, and refusal fixtures remain byte-identical.</p></article><article class="wcard"><div class="top"><span class="letter">2</span><h3>Connect the agent</h3></div><p>First prove a production-equivalent launch harness. Then add cold/warm request-result transport, the command and the Model Context Protocol adapter.</p><p class="done"><strong>Done when</strong> an external request opens the correct tab and retrieves a cited passage from the final saved hash.</p></article><article class="wcard"><div class="top"><span class="letter">3</span><h3>Report incomplete evidence</h3></div><p>Use mixed text/scanned fixtures and independently known unresolved pages.</p><p class="done"><strong>Done when</strong> missing pages are named, available content remains usable and an agent discloses fallback.</p></article><article class="wcard"><div class="top"><span class="letter">4</span><h3>Prove ownership and recovery</h3></div><p>Exercise edits, competing saves, external replacement, cancellation and restart.</p><p class="done"><strong>Done when</strong> failures preserve originals and distinguish a completed save from failed indexing.</p></article><article class="wcard"><div class="top"><span class="letter">5</span><h3>Verify actual agent use</h3></div><p>Set up supported clients, observe fresh sessions and compare preparation separately from warm retrieval.</p><p class="done"><strong>Done when</strong> tool traces and the visible app prove the workflow, with measured usage and answer quality.</p></article></div>
+<p class="src"><a href="agent-pdf-preparation-plan.md">plan</a>, Vertical implementation sequence and TDD.</p>
+</div></div></section>
+<section id="evidence"><div class="page"><div class="stack"><div class="col stack"><span class="label">What has actually been checked?</span><h2>The local flow passed runtime checks; installation and agent use remain open</h2><p>The implementation corrected ownership, XFA form handling, cancellation, data-directory and scope defects found during independent source review. The final source review found no remaining critical defect within those reviewed findings. That reviewer did not independently run the application.</p></div>
+<div class="ledger"><div><span class="tag t-ok">Observed locally</span><ul><li>The build passed, including all TypeScript layers and the renderer bundle. Vite still reports large bundle chunks.</li><li>The full unit suite passed 1,427 tests in 117 files, in 38.32 seconds.</li><li>All 36 Electron journeys passed in 2.4 minutes after a navigation harness correction.</li><li>The final seven preparation journeys passed in 15.7 seconds after the built-renderer correction.</li><li>Real CLI/MCP, cold/warm desktop, close/reopen, user-edit refusal, startup cancellation, data-directory identity and concurrent-agent admission were exercised.</li><li>A real Electron screenshot showed the prepared synthetic fixture in the correct tab, with no unsaved dot.</li><li>A temporary-file replacement retained a custom extended attribute, access-control list and permissions.</li></ul></div><div><span class="tag t-idle">Not established or outside scope</span><ul><li>No commit, Applications installation or actual agent-configuration change.</li><li>No production-model quality run, fresh-agent skill-compliance check or token-cost measurement. Tests use the guarded deterministic embedder.</li><li>No reproduction with the user's original PDF or proof for every cloud sync provider.</li><li>No lint gate; this repository has no lint command or configuration.</li><li>Optional converters are not installed for agent-created windows.</li><li>Unacknowledged records remain available for inspection. Fine-grained external progress forwarding is outside this implementation.</li></ul></div></div>
+<div class="aside"><span class="label">Static verification limit</span><h3>Code-map still reports insufficient evidence</h3><p>Static verification returned <code>INSUFFICIENT_EVIDENCE</code> with execution disabled. Structural Integrity was 1/5 because eight compiled-core imports were absent from the static snapshot, although the built files were verified present. Change Completeness was 2/5 because two tool-count test names changed from six to seven; their assertions remain explicit. Verification Coverage and Behavioral Confidence are Unassessed without bound coverage or runner reports. These static snapshot and test-name limits do not replace the runtime results or confer release approval.</p></div>
+<p class="small">Baseline code citations elsewhere on this page refer to the base revision. The current implementation uses shared preparation and coverage modules, a desktop client, main-process preparation and file-save modules, and a narrow renderer outline exporter. See the implementation record for the exact mapping and explicit deviations.</p>
+<ul class="sources"><li><a href="agent-pdf-preparation-plan.md">Plan and current status</a><span>Authoritative verification results, baseline design and source references.</span></li><li><a href="agent-pdf-preparation.md">Current usage</a><span>Local command and tool behavior.</span></li><li><a href="records/2026-10-28-agent-preparation-implementation.md">Implementation record</a><span>Review dispositions, runtime discoveries and scope limits.</span></li><li><a href="records/2026-10-28-agent-pdf-plan-review.md">Original plan review</a><span>Claude feedback and Codex's response.</span></li><li><a href="../skills/markpdf-retrieval/SKILL.md">Retrieval skill</a><span>Actual client installation and fresh-session compliance remain unverified.</span></li></ul>
+</div></div></section>
+</main>
+<footer class="end"><div class="page">Explainer for <a href="agent-pdf-preparation-plan.md">agent-pdf-preparation-plan.md</a>, 2026-10-28. Baseline checkout <code>8eacc44d0d4e8adfa8d66eebec890229b0d4142e</code>. Implementation and verification are local; packaged installation and actual agent usage are not claimed. Uses IBM Plex from Google Fonts with system fallbacks; no scripts.</div></footer>
+</body></html>
