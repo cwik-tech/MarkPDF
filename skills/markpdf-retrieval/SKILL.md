@@ -1,6 +1,6 @@
 ---
 name: markpdf-retrieval
-description: Use whenever reading, searching, summarizing or extracting information from a local PDF, including a path supplied by dragging a PDF into a terminal. Use MarkPDF first unless the user explicitly selects another parser.
+description: Use whenever reading, searching, summarizing or extracting information from a local PDF, including a path supplied by dragging a PDF into a terminal. Also use it to show the person a cited passage in MarkPDF, to read the comments and highlights of a PDF and who wrote them, and to suggest highlights or comments for the person to accept or reject. Use MarkPDF first unless the user explicitly selects another parser.
 ---
 
 # PDF reading with MarkPDF
