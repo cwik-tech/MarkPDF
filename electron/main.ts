@@ -47,10 +47,12 @@ import {
   parseCuratedModelId,
   parseDownloadRequest,
   parseIndexRequest,
+  parseLibrarySearchRequest,
   parseSearchRequest,
   parseSemanticSettings,
   parseSemanticSettingsPatch,
   runIndexJob,
+  runLibrarySearch,
   runSearch,
   type SemanticSearchSettings,
 } from "./semantic.js";
@@ -67,6 +69,7 @@ import {
   type DefaultAppFileTypeId,
 } from "./defaultApp.js";
 import { getCliInstallStatus, installCli, uninstallCli } from "./cliInstall.js";
+import { diagramSaveRequest } from "./diagramExport.js";
 import { openableExternalUrl } from "./externalUrl.js";
 import {
   forgetAllOpenDocuments,
@@ -600,6 +603,35 @@ ipcMain.handle("dialog:save-markdown", async (_event, defaultPath?: string) => {
   return result.filePath;
 });
 
+/**
+ * Save a diagram the window rendered, as an SVG file in a place the reader picks.
+ *
+ * One call does both the dialog and the write, so the folder comes from the reader's answer and
+ * never from the window. Resolves to the saved path, or null when the reader cancels.
+ */
+ipcMain.handle(
+  "dialog:save-diagram-svg",
+  async (_event, rawFileName: unknown, rawSvg: unknown) => {
+    const request = diagramSaveRequest(rawFileName, rawSvg);
+    if (!request) {
+      throw new Error("The diagram is not an SVG document that MarkPDF can save.");
+    }
+
+    const result = await dialog.showSaveDialog({
+      title: "Save Diagram",
+      defaultPath: request.fileName,
+      filters: [{ name: "SVG images", extensions: ["svg"] }],
+    });
+
+    if (result.canceled || !result.filePath) {
+      return null;
+    }
+
+    await writeFile(result.filePath, request.svg, "utf8");
+    return result.filePath;
+  },
+);
+
 ipcMain.handle(
   "dialog:confirm-unsaved",
   async (event, documentName?: string) => {
@@ -852,6 +884,10 @@ ipcMain.handle("semantic:cancel", async (_event, jobId: unknown) => cancelSemant
 
 ipcMain.handle("semantic:search", async (_event, raw: unknown) =>
   runSearch(parseSearchRequest(raw), currentSemanticSettings()),
+);
+
+ipcMain.handle("semantic:search-library", async (_event, raw: unknown) =>
+  runLibrarySearch(parseLibrarySearchRequest(raw), currentSemanticSettings()),
 );
 
 ipcMain.handle("semantic:get-document", async (_event, contentHash: unknown) =>

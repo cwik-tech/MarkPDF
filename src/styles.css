@@ -1152,21 +1152,92 @@ select {
   white-space: pre;
 }
 
-.markdown-mermaid {
-  min-height: 120px;
-  overflow: auto;
+.markdown-mermaid-frame {
   margin: 1em 0;
-  padding: 18px;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel-2);
 }
 
-.markdown-mermaid svg {
+.markdown-mermaid-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 34px;
+  padding: 2px 4px 2px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.markdown-mermaid-save-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.markdown-mermaid-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.markdown-mermaid-actions .icon-button {
+  width: 28px;
+  min-height: 28px;
+  color: var(--muted);
+}
+
+.markdown-mermaid-actions .icon-button:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.markdown-mermaid-zoom-level {
+  min-width: 52px;
+  min-height: 28px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The canvas paints its own background, so a download can keep the color the reader saw. */
+.markdown-mermaid {
+  min-height: 120px;
+  overflow: auto;
+  padding: 18px;
+  background: var(--panel-2);
+}
+
+/*
+ * Zoom multiplies the fitted width. The fitted width is the canvas width, capped at the chart's
+ * own width by `--mermaid-max-width`. `!important` is needed because Mermaid writes its own
+ * `max-width` on the SVG element. Only the chart's root SVG: the icons a chart draws are SVG
+ * elements too, and they keep their own sizes.
+ */
+.markdown-mermaid > svg {
   display: block;
-  max-width: 100%;
+  width: calc(var(--mermaid-zoom, 1) * 100%);
+  max-width: var(--mermaid-max-width, calc(var(--mermaid-zoom, 1) * 100%)) !important;
   height: auto;
   margin: 0 auto;
+}
+
+/* Fills the document pane, below the application toolbar and above the sheet. */
+.markdown-mermaid-expanded {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
+}
+
+.markdown-mermaid-expanded .markdown-mermaid {
+  flex: 1;
+  min-height: 0;
+  padding: 24px;
+  scrollbar-gutter: stable;
 }
 
 .markdown-mermaid-error {
@@ -2715,6 +2786,29 @@ select {
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+.sidebar-switch.two-way {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.library-result-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-result-words {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.library-message {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 /* Text read by assistive technology and hidden from sight. */

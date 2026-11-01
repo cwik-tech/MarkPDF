@@ -1,7 +1,12 @@
-import { defaultSemanticScoreThreshold, defaultSemanticTopK, getCuratedEmbeddingModel, modelVersion, semanticChunkingVersion, type SemanticChunkingProfile } from "../models.js";
+import { defaultSemanticScoreThreshold, defaultSemanticTopK, getCuratedEmbeddingModel, modelVersion, semanticChunkingVersion, type SearchMode, type SemanticChunkingProfile } from "../models.js";
 import type { ChunkScope, ChunkScopeContract, HeadingEntry, SemanticStore } from "../store/index.js";
 import type { Embedder } from "./embeddings.js";
 import { createSnippet } from "./chunking.js";
+import { buildExactMatch } from "./exactQuery.js";
+import { completeExactIndex } from "./exactIndexBackfill.js";
+import type { MatchSource } from "./fusion.js";
+import { rankPassages, type RankedPassage } from "./rankPassages.js";
+import type { SearchPlan } from "./searchMode.js";
 import { toPlainText } from "./structuredChunking.js";
 
 export interface SemanticSearchResult {
@@ -19,6 +24,10 @@ export interface SemanticSearchResult {
    * are unknown.
    */
   headingInherited: boolean;
+  /** The cosine, when the ranking by meaning found this passage; `score` is the mode's own value. */
+  semanticScore: number | null;
+  /** Which rankings found this passage. */
+  matchedBy: MatchSource[];
 }
 
 export interface SearchInput {
@@ -26,7 +35,12 @@ export interface SearchInput {
   query: string;
   chunkingProfile: SemanticChunkingProfile;
   topK?: number;
+  /** The threshold for the ranking by meaning. An adapter decides it with `planSearch` first. */
   minScore?: number;
+  /** `semantic` when absent, which is how every caller searched before modes existed. */
+  mode?: SearchMode;
+  /** Chunks added to the exact-word index, when this search had to finish its backfill first. */
+  onExactIndexProgress?: (indexed: number) => void;
   /**
    * Stop, if somebody has.
    *
@@ -68,6 +82,45 @@ export function searchChunkScope(
   return { documentId, ...activeChunkScopeContract(embedder, chunkingProfile) };
 }
 
+/**
+ * The plan a search runs under, for a caller that has already validated what it was given.
+ *
+ * Adapters validate with `planSearch`, which knows whether a threshold was explicit. Here the
+ * threshold is simply the one to use, and a query the exact ranking cannot read narrows a hybrid
+ * search to meaning or makes an exact one empty.
+ */
+export function planFor(mode: SearchMode, query: string, minScore: number): SearchPlan | null {
+  if (mode === "semantic") return { mode, minScore, exactExpression: null };
+  const built = buildExactMatch(query);
+  if (built.status === "ok") return { mode, minScore, exactExpression: built.expression };
+  return mode === "hybrid" ? { mode, minScore, exactExpression: null } : null;
+}
+
+/**
+ * A ranked passage as every surface returns it: plain-text snippet, breadcrumb, and scores.
+ *
+ * Plain text before trimming. The stored text is Markdown, and the snippet is matched against
+ * pdf.js's reading of the page to place the highlight — where no pipe, hash or emphasis marker
+ * appears. A snippet carrying them matches nothing and the highlight silently disappears.
+ */
+export function toSearchResult(passage: RankedPassage): SemanticSearchResult {
+  // The nearest heading decides whether the passage appears to claim one from an earlier page. A
+  // heading whose page was never recorded claims nothing either way.
+  const nearest = passage.headings.length > 0 ? passage.headings[passage.headings.length - 1] : undefined;
+  const headingInherited = nearest !== undefined && nearest.page !== null && nearest.page !== passage.page;
+  return {
+    id: passage.id,
+    page: passage.page,
+    snippet: createSnippet(toPlainText(passage.text)),
+    score: passage.score,
+    headingPath: passage.headings.map((heading) => heading.title),
+    headings: passage.headings,
+    headingInherited,
+    semanticScore: passage.semanticScore,
+    matchedBy: passage.matchedBy,
+  };
+}
+
 export async function searchDocument(
   store: SemanticStore,
   embedder: Embedder,
@@ -84,24 +137,37 @@ export async function searchDocument(
   const stored = store.getDocument(input.contentHash);
   if (stored === null) return [];
 
-  const queryVector = await embedder.embed(query, "query");
+  const plan = planFor(input.mode ?? "semantic", query, input.minScore ?? defaultSemanticScoreThreshold);
+  if (plan === null) return [];
+
+  // An index written before the exact-word index existed answers no exact query until its old chunks
+  // are in it. A partial exact ranking would look complete, so the backfill finishes first.
+  if (plan.exactExpression !== null && store.exactIndexState() !== "complete") {
+    await completeExactIndex(store, {
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+      ...(input.onExactIndexProgress === undefined ? {} : { onProgress: input.onExactIndexProgress }),
+    });
+    if (cancelled()) return [];
+  }
+
+  // Exact mode never embeds: it needs no model, and must not download one to answer a question
+  // about words.
+  const queryVector = plan.mode === "exact" ? null : await embedder.embed(query, "query");
   if (cancelled()) return [];
 
-  const hits = store.search(
-    searchChunkScope(stored.id, embedder, input.chunkingProfile),
-    queryVector,
-    input.topK ?? defaultSemanticTopK,
-    input.minScore ?? defaultSemanticScoreThreshold,
+  const ranked = store.readSnapshot(() =>
+    rankPassages(store, {
+      documentIds: [stored.id],
+      scope: activeChunkScopeContract(embedder, input.chunkingProfile),
+      plan,
+      queryVector,
+      topK: input.topK ?? defaultSemanticTopK,
+      perDocumentCap: null,
+    }),
   );
 
-  // Plain text before trimming. The stored text is Markdown, and the snippet is matched against
-  // pdf.js's reading of the page to place the highlight — where no pipe, hash or emphasis marker
-  // appears. A snippet carrying them matches nothing and the highlight silently disappears.
-  return hits.map((hit) => {
-    // The nearest heading decides whether the passage appears to claim one from an earlier
-    // page. A heading whose page was never recorded claims nothing either way.
-    const nearest = hit.headings.length > 0 ? hit.headings[hit.headings.length - 1] : undefined;
-    const headingInherited = nearest !== undefined && nearest.page !== null && nearest.page !== hit.page;
-    return { ...hit, snippet: createSnippet(toPlainText(hit.snippet)), headingInherited };
-  });
+  // Ranked first, then presented in reading order — the ordering the results panel relies on.
+  return ranked.passages
+    .map(toSearchResult)
+    .sort((a, b) => a.page - b.page || b.score - a.score);
 }

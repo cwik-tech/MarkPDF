@@ -272,12 +272,35 @@ describe("search", () => {
       "utf8",
     );
 
-    const blocked = await run(["search", "Enterprise 1204 1318", "--path", fixture, "--json"]);
+    // Semantic mode, because the threshold is a rule about meaning: in hybrid mode an exact match
+    // is never discarded by it, and that would hide which threshold was applied.
+    const blocked = await run(["search", "Enterprise 1204 1318", "--path", fixture, "--mode", "semantic", "--json"]);
     expect(blocked.code).toBe(EXIT_CODE.success);
     expect(searchResultsOf(blocked.stdout)).toEqual([]);
 
-    const allowed = await run(["search", "Enterprise 1204 1318", "--path", fixture, "--min-score", "0.05", "--json"]);
+    const allowed = await run(["search", "Enterprise 1204 1318", "--path", fixture, "--mode", "semantic", "--min-score", "0.05", "--json"]);
     expect(allowed.code).toBe(EXIT_CODE.success);
     expect(searchResultsOf(allowed.stdout).length).toBeGreaterThan(0);
+  }, 120_000);
+
+  it("refuses a threshold in exact mode, where nothing is scored by meaning", async () => {
+    await run(["--allow-read", libraryDir]);
+    await run(["index", fixture]);
+
+    const result = await run(["search", "Enterprise", "--path", fixture, "--mode", "exact", "--min-score", "0.5", "--json"]);
+
+    expect(result.code).toBe(EXIT_CODE.usage);
+    expect(result.stderr).toMatch(/no effect in exact mode/);
+    expect(result.stdout).toBe("");
+  }, 120_000);
+
+  it("refuses an exact query with no words in it", async () => {
+    await run(["--allow-read", libraryDir]);
+    await run(["index", fixture]);
+
+    const result = await run(["search", "() --", "--path", fixture, "--mode", "exact", "--json"]);
+
+    expect(result.code).toBe(EXIT_CODE.usage);
+    expect(result.stderr).toContain("The query has no words to match exactly.");
   }, 120_000);
 });

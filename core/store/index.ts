@@ -4,9 +4,10 @@ import Database from "better-sqlite3";
 import type { Database as Db } from "better-sqlite3";
 import { semanticIndexPath } from "../paths.js";
 import { CURRENT_SCHEMA_VERSION, migrate, type MigrationReport } from "./schema.js";
-import { SchemaTooNewError, StoreDataError } from "./errors.js";
+import { SchemaTooNewError, StoreDataError, StoreUpgradeBusyError } from "./errors.js";
 import { blobToVector, cosineSimilarity, vectorToBlob } from "./vector.js";
 import { indexSizeOnDisk } from "./size.js";
+import { withExclusiveAccess } from "./exclusive.js";
 import {
   parsePagePreservingMarkdown,
   renderPagePreservingMarkdown,
@@ -23,7 +24,7 @@ import type { HeadingEntry } from "./rows.js";
 
 export type { HeadingEntry } from "./rows.js";
 
-export { SchemaTooNewError, StoreDataError, CURRENT_SCHEMA_VERSION };
+export { SchemaTooNewError, StoreDataError, StoreUpgradeBusyError, CURRENT_SCHEMA_VERSION };
 export type { MigrationReport };
 
 /** Rows committed per transaction. Bounds WAL growth and the write lock held per commit. */
@@ -33,10 +34,25 @@ const BUSY_TIMEOUT_MS = 5000;
 
 export type TextSource = "pdf" | "ocr" | "mixed" | "none";
 
+/**
+ * How a document's recorded path was obtained.
+ *
+ * `resolved`: the writer resolved the path through the consent check and read the bytes from that
+ * resolved path. Nothing else is recorded — `null` means nobody vouched for it, which is the honest
+ * value for a path the app passed along unresolved, a path sent beside bytes, and every row written
+ * before this column existed.
+ */
+export type PathProvenance = "resolved";
+
 export interface UpsertDocumentInput {
   contentHash: string;
   name: string;
   filePath: string | null;
+  /**
+   * Written with `filePath` on every upsert, absent meaning `null`. A later writer that cannot vouch
+   * for its path therefore removes an earlier `resolved`, because the path it describes is gone.
+   */
+  pathProvenance?: PathProvenance;
   fileSize: number;
   pageCount: number;
   textSource: TextSource;
@@ -58,6 +74,7 @@ export interface StoredDocument {
   contentHash: string;
   name: string;
   filePath: string | null;
+  pathProvenance: PathProvenance | null;
   pageCount: number;
   textSource: string;
   createdAt: string;
@@ -199,6 +216,58 @@ export interface ScoredChunk {
   headings: HeadingEntry[];
 }
 
+/** One chunk an exact-word search matched, with its `bm25` rank: lower is better. */
+export interface ExactCandidate {
+  id: string;
+  documentId: number;
+  rank: number;
+}
+
+export interface ExactRankQuery {
+  /** The scope a chunk has to be searchable under: its profile and version, and an embedding under this model. */
+  scope: ChunkScopeContract;
+  documentIds: readonly number[];
+  /** A finished FTS5 expression from `buildExactMatch`. Never a person's raw text. */
+  match: string;
+  depth: number;
+}
+
+/** One chunk the ranking by meaning kept, with its cosine similarity to the query. */
+export interface SemanticCandidate {
+  id: string;
+  documentId: number;
+  score: number;
+}
+
+export interface SemanticRankQuery {
+  scope: ChunkScopeContract;
+  documentIds: readonly number[];
+  queryVector: Float32Array;
+  depth: number;
+  minScore: number;
+}
+
+/** A chunk's text and position, read for the candidates a ranking kept. */
+export interface StoredPassage {
+  id: string;
+  documentId: number;
+  page: number;
+  text: string;
+  headings: HeadingEntry[];
+}
+
+/** What one backfill batch did. */
+export interface ExactBackfillBatch {
+  /** Chunks added to the exact-word index by this batch. */
+  indexed: number;
+  /** Chunks this batch looked at, indexed or already present. */
+  visited: number;
+  state: ExactIndexState;
+}
+
+/** Whether every stored chunk is in the exact-word index yet. */
+export type ExactIndexState = "complete" | "backfilling";
+
 export interface StoreInfo {
   sizeBytes: number;
   documentCount: number;
@@ -319,6 +388,44 @@ export interface SemanticStore {
   listIndexedChunkIds(scope: ChunkScope): string[];
   search(scope: ChunkScope, queryVector: Float32Array, topK: number, minScore: number): ScoredChunk[];
   /**
+   * The chunks that contain every part of an exact-word expression, best first.
+   *
+   * Only chunks of the given documents, under the scope's profile and version, with an embedding
+   * under the scope's model — the same eligibility the semantic ranking uses, so the two rankings
+   * describe one set of passages. Ties in `bm25` are broken by chunk id, so the order is stable.
+   */
+  rankExact(query: ExactRankQuery): ExactCandidate[];
+  /**
+   * The chunks closest to the query by meaning, best first, at most `depth` of them.
+   *
+   * Reads identifiers and vectors only; the text is read afterwards, for the chunks that were kept,
+   * by `readPassages`. Ties in score are broken by chunk id.
+   */
+  rankSemantic(query: SemanticRankQuery): SemanticCandidate[];
+  /** The text, page and headings of these chunks. A chunk that no longer exists is left out. */
+  readPassages(ids: readonly string[]): StoredPassage[];
+  /**
+   * Run several reads against one snapshot of the database.
+   *
+   * A deferred transaction: it takes no write lock, and every statement inside it sees the database
+   * as the first one found it. A search reads candidates, rankings, text and completion times in
+   * separate statements, and another process rebuilding a document commits between them in the
+   * ordinary course of things — composed from two snapshots, the answer can be one no database ever
+   * held. The work inside must be synchronous.
+   */
+  readSnapshot<T>(read: () => T): T;
+  /** `complete` once every stored chunk is in the exact-word index. */
+  exactIndexState(): ExactIndexState;
+  /**
+   * Add up to `limit` stored chunks that the exact-word index does not have yet, in one transaction.
+   *
+   * Chunks are visited in `(document_id, id)` order from a cursor kept in the same transaction, so a
+   * crash loses at most one batch of work and two processes never repeat each other's. At the end of
+   * a pass the same transaction looks for any chunk still missing: none, and the index is recorded
+   * complete; some, and the next pass starts again from the beginning to repair them.
+   */
+  backfillExactIndexBatch(limit: number): ExactBackfillBatch;
+  /**
    * Cache the Markdown a document was extracted to, and retract every completion claim over it.
    *
    * Raises rather than returning a flag when the pages are not exactly `1..pageCount` for this
@@ -351,6 +458,17 @@ export interface SemanticStore {
    */
   forgetDocument(contentHash: string): boolean;
   listDocuments(limit?: number): StoredDocument[];
+  /**
+   * The documents a library search starts from: for each recorded path, the row opened most
+   * recently (the row id breaking a tie), and every row without a path.
+   *
+   * The same rule as `getDocumentByPath`. Re-indexing a file whose bytes changed leaves its old row
+   * at the same path, and searching every row would answer with passages from versions of the file
+   * that are no longer on disk.
+   */
+  listLibraryDocuments(): StoredDocument[];
+  /** Which of these documents have at least one chunk searchable under this scope. */
+  listScopedDocumentIds(scope: ChunkScopeContract, documentIds: readonly number[]): number[];
   info(): StoreInfo;
   clear(): void;
   close(): void;
@@ -408,6 +526,8 @@ function toStoredDocument(value: unknown): StoredDocument {
     contentHash: requireString(row, "content_hash", DOCUMENT_CONTEXT),
     name: requireString(row, "name", DOCUMENT_CONTEXT),
     filePath: requireNullableString(row, "file_path", DOCUMENT_CONTEXT),
+    // Anything but the one recorded value is no provenance at all, the same as a row nobody stamped.
+    pathProvenance: requireNullableString(row, "path_provenance", DOCUMENT_CONTEXT) === "resolved" ? "resolved" : null,
     pageCount: requireInteger(row, "page_count", DOCUMENT_CONTEXT),
     textSource: requireString(row, "text_source", DOCUMENT_CONTEXT),
     createdAt: requireString(row, "created_at", DOCUMENT_CONTEXT),
@@ -499,6 +619,56 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
   const insertEmbeddingStatement = db.prepare(
     `INSERT INTO chunk_embeddings (chunk_id,model_id,model_version,dimensions,vector,created_at)
      VALUES (?,?,?,?,?,?)`,
+  );
+
+  // The same six-field eligibility the semantic ranking reads, so both rankings describe one set of
+  // passages: the profile and version on the chunk, and an embedding under the active model, its
+  // version and its width. Chunk ids carry no model, so the embedding is what decides that part.
+  // Ties in `bm25` are broken by id, so the order — and the rank positions fused from it — is the
+  // same on every run.
+  const rankExactStatement = db.prepare(
+    `SELECT c.id, c.document_id, bm25(chunk_text_fts) AS rank
+       FROM chunk_text_fts
+       JOIN chunk_text_keys k ON k.fts_rowid = chunk_text_fts.rowid
+       JOIN document_chunks c ON c.id = k.chunk_id
+      WHERE chunk_text_fts MATCH @match
+        AND c.chunking_profile = @profile AND c.chunking_version = @version
+        AND c.document_id IN (SELECT value FROM json_each(@documentIds))
+        AND EXISTS (SELECT 1 FROM chunk_embeddings e
+                     WHERE e.chunk_id = c.id AND e.model_id = @modelId
+                       AND e.model_version = @modelVersion AND e.dimensions = @dimensions)
+      ORDER BY rank, c.id
+      LIMIT @depth`,
+  );
+
+  const rankSemanticStatement = db.prepare(
+    `SELECT c.id, c.document_id, e.vector
+       FROM chunk_embeddings e
+       JOIN document_chunks c ON c.id = e.chunk_id
+      WHERE c.document_id IN (SELECT value FROM json_each(?))
+        AND c.chunking_profile = ? AND c.chunking_version = ?
+        AND e.model_id = ? AND e.model_version = ? AND e.dimensions = ?`,
+  );
+  const listLibraryStatement = db.prepare(
+    `SELECT * FROM (
+       SELECT d.*, ROW_NUMBER() OVER (PARTITION BY d.file_path ORDER BY d.last_opened_at DESC, d.id DESC) AS version_rank
+         FROM documents d WHERE d.file_path IS NOT NULL
+     ) WHERE version_rank = 1
+     UNION ALL
+     SELECT d.*, 1 AS version_rank FROM documents d WHERE d.file_path IS NULL
+     ORDER BY id`,
+  );
+  const scopedDocumentIdsStatement = db.prepare(
+    `SELECT DISTINCT c.document_id
+       FROM document_chunks c
+       JOIN chunk_embeddings e ON e.chunk_id = c.id
+      WHERE c.document_id IN (SELECT value FROM json_each(?))
+        AND c.chunking_profile = ? AND c.chunking_version = ?
+        AND e.model_id = ? AND e.model_version = ? AND e.dimensions = ?`,
+  );
+  const readPassagesStatement = db.prepare(
+    `SELECT id, document_id, page_number, text, heading_path
+       FROM document_chunks WHERE id IN (SELECT value FROM json_each(?))`,
   );
 
   function writeMarkdownRows(documentId: number, input: MarkdownCacheInput): void {
@@ -714,6 +884,91 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
     return "claimed";
   });
 
+  function getMeta(key: string): string | null {
+    const raw = db.prepare("SELECT value FROM schema_meta WHERE key = ?").get(key);
+    return raw === undefined ? null : requireString(asRow(raw, "schema_meta row"), "value", "schema_meta row");
+  }
+
+  function setMeta(key: string, value: string): void {
+    db.prepare("INSERT INTO schema_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+  }
+
+  function markErasePending(): void {
+    setMeta("exact_index_erase_pending", "1");
+  }
+
+  const backfillVisitStatement = db.prepare(
+    `SELECT document_id, id, text FROM document_chunks
+      WHERE (document_id, id) > (@documentId, @id)
+      ORDER BY document_id, id
+      LIMIT @limit`,
+  );
+  const insertMissingKeyStatement = db.prepare(
+    `INSERT INTO chunk_text_keys(chunk_id) SELECT @id
+      WHERE NOT EXISTS (SELECT 1 FROM chunk_text_keys WHERE chunk_id = @id)`,
+  );
+  const insertIndexRowStatement = db.prepare("INSERT INTO chunk_text_fts(rowid, text) VALUES (?, ?)");
+  const anyChunkMissingStatement = db.prepare(
+    `SELECT EXISTS (SELECT 1 FROM document_chunks c
+                     WHERE NOT EXISTS (SELECT 1 FROM chunk_text_keys k WHERE k.chunk_id = c.id)) AS missing`,
+  );
+
+  /** The cursor as stored: `[documentId, chunkId]`, or the start when empty or unreadable. */
+  function readBackfillCursor(): { documentId: number; id: string } {
+    const start = { documentId: -1, id: "" };
+    const raw = getMeta("exact_index_cursor");
+    if (raw === null || raw.length === 0) return start;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length !== 2) return start;
+      const [documentId, id] = parsed;
+      if (typeof documentId !== "number" || !Number.isInteger(documentId) || typeof id !== "string") return start;
+      return { documentId, id };
+    } catch {
+      // A cursor nobody can read starts the pass again. Revisiting chunks costs time, not correctness.
+      return start;
+    }
+  }
+
+  const backfillBatch = db.transaction((limit: number): ExactBackfillBatch => {
+    if (getMeta("exact_index_state") === "complete") return { indexed: 0, visited: 0, state: "complete" };
+    const batchLimit = Math.max(1, Math.floor(limit));
+    const cursor = readBackfillCursor();
+    const context = "backfill chunk";
+    const rows = backfillVisitStatement.all({ documentId: cursor.documentId, id: cursor.id, limit: batchLimit }).map((raw) => {
+      const row = asRow(raw, context);
+      return {
+        documentId: requireInteger(row, "document_id", context),
+        id: requireString(row, "id", context),
+        text: requireString(row, "text", context),
+      };
+    });
+
+    let indexed = 0;
+    for (const row of rows) {
+      const inserted = insertMissingKeyStatement.run({ id: row.id });
+      if (inserted.changes === 0) continue;
+      insertIndexRowStatement.run(inserted.lastInsertRowid, row.text);
+      indexed += 1;
+    }
+
+    const last = rows[rows.length - 1];
+    if (rows.length === batchLimit && last !== undefined) {
+      setMeta("exact_index_cursor", JSON.stringify([last.documentId, last.id]));
+      return { indexed, visited: rows.length, state: "backfilling" };
+    }
+
+    // The end of a pass. Complete only if nothing is missing anywhere — a chunk below the cursor, or
+    // one whose key went missing, is repaired by another pass rather than declared indexed.
+    setMeta("exact_index_cursor", "");
+    const missing = requireInteger(asRow(anyChunkMissingStatement.get(), "backfill check"), "missing", "backfill check");
+    if (missing === 0) {
+      setMeta("exact_index_state", "complete");
+      return { indexed, visited: rows.length, state: "complete" };
+    }
+    return { indexed, visited: rows.length, state: "backfilling" };
+  });
+
   const removeDocument = db.transaction((hash: string): boolean => {
     const found = getDocumentStatement.get(hash);
     if (found === undefined) return false;
@@ -722,6 +977,10 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
     db.prepare("DELETE FROM document_chunks WHERE document_id = ?").run(id);
     db.prepare("DELETE FROM document_markdown WHERE document_id = ?").run(id);
     db.prepare("DELETE FROM documents WHERE id = ?").run(id);
+    // Owed in the same transaction as the delete. The chunk triggers removed the document's rows
+    // from the exact-word index, but its tokens stay in the index's segment records until they are
+    // merged. Recorded here, an interrupted forget still knows there is an erase to finish.
+    markErasePending();
     return true;
   });
 
@@ -759,56 +1018,32 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
     requireCheckpoint("after compacting");
   }
 
-  /**
-   * Run something with this connection as the only one attached to the database.
-   *
-   * Reclaiming space is not merely slower with a second connection attached — it does not happen.
-   * So exclusivity is established **before** anything is deleted: `BEGIN IMMEDIATE` under
-   * `locking_mode = EXCLUSIVE` either succeeds, in which case nothing else can attach until it is
-   * released, or raises `SQLITE_BUSY` having changed nothing at all. That ordering is what makes
-   * the refusal safe: somebody who is told their document could not be forgotten still has it,
-   * and can try again, rather than being left with a withdrawal that half happened and was
-   * reported as done.
-   *
-   * `busy_timeout` still applies, so this waits for a passing writer rather than failing on one.
-   */
-  function withExclusiveAccess<T>(body: () => T): T {
-    db.pragma("locking_mode = EXCLUSIVE");
-
-    // A discriminated outcome rather than a nullable result, so the success value never has to be
-    // asserted back into existence after the release step below.
-    type Outcome = { ok: true; value: T } | { ok: false; error: unknown };
-    let outcome: Outcome;
-    try {
-      // Forces the transition; the lock is not taken until a transaction actually starts.
-      db.exec("BEGIN IMMEDIATE; COMMIT;");
-      outcome = { ok: true, value: body() };
-    } catch (error) {
-      outcome = { ok: false, error };
-    }
-
-    try {
-      db.pragma("locking_mode = NORMAL");
-      // And released: the mode change only takes effect at the next transaction.
-      db.exec("BEGIN IMMEDIATE; COMMIT;");
-    } catch (releaseError) {
-      // Not swallowed. A connection left in exclusive mode locks every other process out of the
-      // index for the rest of its life, which is a worse outcome than the operation failing — so
-      // when nothing else went wrong, this is the failure to report. When something else did, that
-      // one is the more useful of the two and this would only hide it.
-      if (outcome.ok) {
-        const reason = releaseError instanceof Error ? releaseError.message : String(releaseError);
-        throw new StoreDataError(`The index could not be returned to shared access: ${reason}`);
-      }
-    }
-
-    if (!outcome.ok) throw outcome.error;
-    return outcome.value;
-  }
-
   const wipe = db.transaction(() => {
+    // The exact-word index first, in one command, so the chunk triggers below find no key to delete
+    // row by row. `delete-all` empties a contentless index; its tokens still wait for the merge.
+    db.exec(`DELETE FROM chunk_text_keys; INSERT INTO chunk_text_fts(chunk_text_fts) VALUES('delete-all');`);
     db.exec("DELETE FROM chunk_embeddings; DELETE FROM document_chunks; DELETE FROM document_markdown; DELETE FROM documents;");
+    setMeta("exact_index_state", "complete");
+    setMeta("exact_index_cursor", "");
+    markErasePending();
   });
+
+  /**
+   * Finish an erase the exact-word index owes, if it owes one.
+   *
+   * `optimize` merges every segment into one and drops what was deleted, which is the step that
+   * makes a forgotten document's tokens leave the file. The flag is cleared only after the space is
+   * reclaimed and the log truncated: cleared any earlier, a crash would leave the old segments in
+   * the database file with nothing recording that they are still there.
+   */
+  function finishOwedErase(): boolean {
+    if (getMeta("exact_index_erase_pending") !== "1") return false;
+    db.exec("INSERT INTO chunk_text_fts(chunk_text_fts) VALUES('optimize')");
+    reclaimSpace();
+    setMeta("exact_index_erase_pending", "0");
+    requireCheckpoint("after recording the erase");
+    return true;
+  }
 
   /**
    * The reusable-index decision, taken as one read.
@@ -896,10 +1131,11 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
         .prepare(
           `INSERT INTO documents (content_hash,name,file_path,file_size,page_count,text_source,
              text_extraction_version,ocr_extraction_version,created_at,last_opened_at,
-             markdown_engine,markdown_version)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             markdown_engine,markdown_version,path_provenance)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(content_hash) DO UPDATE SET
              name = excluded.name, file_path = excluded.file_path, file_size = excluded.file_size,
+             path_provenance = excluded.path_provenance,
              page_count = excluded.page_count, text_source = excluded.text_source,
              last_opened_at = excluded.last_opened_at,
              -- Preserve rather than clear when a caller says nothing. Absence means "I do not
@@ -916,7 +1152,7 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
         .get(
           input.contentHash, input.name, input.filePath, input.fileSize, input.pageCount,
           input.textSource, input.textExtractionVersion, input.ocrExtractionVersion, now, now,
-          input.markdownEngine, input.markdownVersion,
+          input.markdownEngine, input.markdownVersion, input.pathProvenance ?? null,
         );
       return toStoredDocument(row);
     },
@@ -1013,6 +1249,106 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
         .sort((a, b) => a.page - b.page || b.score - a.score);
     },
 
+    rankExact(query) {
+      if (query.documentIds.length === 0) return [];
+      const context = "exact-word candidate";
+      return rankExactStatement
+        .all({
+          match: query.match,
+          profile: query.scope.chunkingProfile,
+          version: query.scope.chunkingVersion,
+          documentIds: JSON.stringify(query.documentIds),
+          modelId: query.scope.modelId,
+          modelVersion: query.scope.modelVersion,
+          dimensions: query.scope.dimensions,
+          depth: query.depth,
+        })
+        .map((raw) => {
+          const row = asRow(raw, context);
+          const rank = row.rank;
+          if (typeof rank !== "number" || !Number.isFinite(rank)) {
+            throw new StoreDataError(`${context}: column "rank" should be a number.`);
+          }
+          return {
+            id: requireString(row, "id", context),
+            documentId: requireInteger(row, "document_id", context),
+            rank,
+          };
+        });
+    },
+
+    rankSemantic(query) {
+      if (query.documentIds.length === 0 || query.depth < 1) return [];
+      const context = "semantic candidate";
+      const rows = rankSemanticStatement.raw().iterate(
+        JSON.stringify(query.documentIds),
+        query.scope.chunkingProfile,
+        query.scope.chunkingVersion,
+        query.scope.modelId,
+        query.scope.modelVersion,
+        query.scope.dimensions,
+      );
+      // Best first, at most `depth` long, kept sorted as it fills so that nothing beyond the depth is
+      // ever held: a library is many times larger than any answer.
+      const kept: SemanticCandidate[] = [];
+      const before = (a: SemanticCandidate, b: SemanticCandidate): boolean =>
+        a.score > b.score || (a.score === b.score && a.id < b.id);
+      for (const raw of rows) {
+        if (!Array.isArray(raw)) throw new StoreDataError(`${context}: expected a row.`);
+        const [id, documentId, blob] = raw;
+        if (typeof id !== "string") throw new StoreDataError(`${context}: chunk id should be text.`);
+        if (typeof documentId !== "number" || !Number.isInteger(documentId)) {
+          throw new StoreDataError(`${context}: document id should be an integer.`);
+        }
+        if (!(blob instanceof Uint8Array)) throw new StoreDataError(`${context}: vector should be a blob.`);
+        const score = cosineSimilarity(query.queryVector, blobToVector(blob, query.scope.dimensions));
+        if (score < query.minScore) continue;
+        const candidate = { id, documentId, score };
+        const last = kept[kept.length - 1];
+        if (kept.length >= query.depth && last !== undefined && !before(candidate, last)) continue;
+        let position = kept.length;
+        while (position > 0) {
+          const previous = kept[position - 1];
+          if (previous === undefined || !before(candidate, previous)) break;
+          position -= 1;
+        }
+        kept.splice(position, 0, candidate);
+        if (kept.length > query.depth) kept.pop();
+      }
+      return kept;
+    },
+
+    readPassages(ids) {
+      if (ids.length === 0) return [];
+      const context = "document_chunks passage";
+      return readPassagesStatement.all(JSON.stringify(ids)).map((raw) => {
+        const row = asRow(raw, context);
+        return {
+          id: requireString(row, "id", context),
+          documentId: requireInteger(row, "document_id", context),
+          page: requireInteger(row, "page_number", context),
+          text: requireString(row, "text", context),
+          headings: parseHeadingEntries(row.heading_path),
+        };
+      });
+    },
+
+    backfillExactIndexBatch(limit) {
+      return backfillBatch.immediate(limit);
+    },
+
+    readSnapshot(read) {
+      return db.transaction(read).deferred();
+    },
+
+    exactIndexState() {
+      const raw = db.prepare("SELECT value FROM schema_meta WHERE key = 'exact_index_state'").get();
+      // Anything but a recorded `complete` is treated as unfinished: the backfill that follows is
+      // the repair, and it writes `complete` only after checking that no chunk is missing.
+      if (raw === undefined) return "backfilling";
+      return requireString(asRow(raw, "schema_meta row"), "value", "schema_meta row") === "complete" ? "complete" : "backfilling";
+    },
+
     putMarkdown(documentId, input) {
       // One transaction for the row and the stamp on `documents`, because a document claiming an
       // engine with no cache behind it is the false state the provenance rules exist to prevent.
@@ -1056,10 +1392,13 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
 
     forgetDocument(contentHash) {
       // Exclusivity first, so a refusal leaves the document exactly where it was.
-      return withExclusiveAccess(() => {
-        if (!removeDocument.immediate(contentHash)) return false;
-        reclaimSpace();
-        return true;
+      return withExclusiveAccess(db, () => {
+        const removed = removeDocument.immediate(contentHash);
+        // An erase an earlier forget left unfinished runs too, also when this document is already
+        // gone: a retry is how somebody whose forget was interrupted gets what they asked for.
+        const erased = finishOwedErase();
+        if (removed && !erased) reclaimSpace();
+        return removed;
       });
     },
 
@@ -1077,6 +1416,18 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
         .map(toStoredDocument);
     },
 
+    listLibraryDocuments() {
+      return listLibraryStatement.all().map(toStoredDocument);
+    },
+
+    listScopedDocumentIds(scope, documentIds) {
+      if (documentIds.length === 0) return [];
+      const context = "scoped document id";
+      return scopedDocumentIdsStatement
+        .all(JSON.stringify(documentIds), scope.chunkingProfile, scope.chunkingVersion, scope.modelId, scope.modelVersion, scope.dimensions)
+        .map((row) => requireInteger(asRow(row, context), "document_id", context));
+    },
+
     info() {
       const count = (table: string) =>
         countFrom(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get(), `count of ${table}`);
@@ -1092,9 +1443,9 @@ function initialiseStore(db: Db, path: string, clock: Clock): SemanticStore {
     clear() {
       // The same sequence as forgetting one document. Clearing is the other way a person
       // withdraws consent and it has to reach the same bytes, under the same exclusivity.
-      withExclusiveAccess(() => {
+      withExclusiveAccess(db, () => {
         wipe.immediate();
-        reclaimSpace();
+        finishOwedErase();
       });
     },
 

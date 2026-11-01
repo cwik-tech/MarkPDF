@@ -9,6 +9,7 @@ import { indexDocument } from "../index/indexDocument.js";
 import { createDeterministicEmbedder } from "../index/deterministicEmbedder.js";
 import { expectIndexed } from "../index/indexResult.test-support.js";
 import { MARKDOWN_ENGINE_ID, MARKDOWN_VERSION, OCR_EXTRACTION_VERSION, TEXT_EXTRACTION_VERSION } from "../models.js";
+import { searchDocument } from "../index/search.js";
 
 /**
  * Forgetting a document, and meaning it.
@@ -245,5 +246,97 @@ describe("forgetting while another process is using the index", () => {
     } finally {
       reader.close();
     }
+  }, 60_000);
+});
+
+/**
+ * The exact-word index keeps tokens, not text, so the phrase test above cannot see it.
+ *
+ * FTS5 stores the lowercase tokens of each chunk inside segment records. Deleting a row leaves a
+ * marker beside those records rather than rewriting them, and the records are live pages, so
+ * `secure_delete` has nothing to zero and `VACUUM` copies them. Measured against SQLite 3.53.4: the
+ * token survived delete and `VACUUM` until the index was merged. So this test looks for a token, in
+ * the database and its log, and asks the index's own vocabulary as well.
+ *
+ * Three documents in three transactions, the token in the middle one, because that layout left
+ * the token behind in every probe without a merge.
+ */
+describe("forgetting a document's words from the exact-word index", () => {
+  const TOKEN = "zanzibarquokkaxylophone";
+
+  async function indexThree(): Promise<{ forgotten: string; survivor: string }> {
+    const hashes: string[] = [];
+    for (const [index, text] of [
+      "A survey of coastal rainfall and its measurement.",
+      `A memorandum naming the project ${TOKEN} in confidence.`,
+      "Notes on the maintenance of the harbour wall.",
+    ].entries()) {
+      const result = expectIndexed(
+        await indexDocument(store, embedder, {
+          bytes: new TextEncoder().encode(`document ${index}`),
+          name: `document-${index}.pdf`,
+          filePath: `/library/document-${index}.pdf`,
+          pageCount: 1,
+          chunkingProfile: "balanced",
+          pages: [{ page: 1, text, source: "pdf" }],
+        }),
+      );
+      hashes.push(result.contentHash);
+    }
+    const [first, forgotten] = hashes;
+    if (first === undefined || forgotten === undefined) throw new Error("Expected three indexed documents.");
+    return { forgotten, survivor: first };
+  }
+
+  /** Whether the exact-word index still lists the token, asked through a read-only view of its vocabulary. */
+  function vocabularyHasToken(): boolean {
+    const db = new Database(semanticIndexPath(dataDir), { readonly: true });
+    try {
+      db.exec("CREATE VIRTUAL TABLE temp.vocabulary USING fts5vocab(main, chunk_text_fts, 'row')");
+      return Number(Reflect.get(Object(db.prepare("SELECT count(*) AS n FROM temp.vocabulary WHERE term = ?").get(TOKEN)), "n")) > 0;
+    } finally {
+      db.close();
+    }
+  }
+
+  async function exactPages(contentHash: string, query: string): Promise<number[]> {
+    const results = await searchDocument(store, embedder, { contentHash, query, chunkingProfile: "balanced", mode: "exact", minScore: 0 });
+    return results.map((hit) => hit.page);
+  }
+
+  it("leaves none of its tokens in the file or the index after forgetting it", async () => {
+    const { forgotten, survivor } = await indexThree();
+    expect(indexBytes()).toContain(TOKEN);
+
+    expect(store.forgetDocument(forgotten)).toBe(true);
+
+    expect(indexBytes()).not.toContain(TOKEN);
+    expect(vocabularyHasToken()).toBe(false);
+    // The other documents are still searchable by their words.
+    expect(await exactPages(survivor, "rainfall")).toEqual([1]);
+  }, 60_000);
+
+  it("leaves none of them after clearing the index", async () => {
+    await indexThree();
+    expect(indexBytes()).toContain(TOKEN);
+
+    store.clear();
+
+    expect(indexBytes()).not.toContain(TOKEN);
+    expect(vocabularyHasToken()).toBe(false);
+  }, 60_000);
+
+  it("finishes an erase that a crash interrupted, when asked to forget again", async () => {
+    const { forgotten } = await indexThree();
+    // What a crash after the delete committed leaves behind: the rows are gone, the tokens are not,
+    // and the store has recorded that an erase is owed.
+    store.deleteDocument(forgotten);
+    expect(indexBytes()).toContain(TOKEN);
+
+    // The document no longer exists, so there is nothing to forget — but the owed erase still runs.
+    expect(store.forgetDocument(forgotten)).toBe(false);
+
+    expect(indexBytes()).not.toContain(TOKEN);
+    expect(vocabularyHasToken()).toBe(false);
   }, 60_000);
 });

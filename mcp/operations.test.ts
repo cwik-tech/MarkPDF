@@ -271,6 +271,20 @@ describe("tools that read the index only", () => {
     expect(context.reads).toEqual([]);
   }, 60_000);
 
+  it("refuses a threshold the client gave in exact mode, and accepts exact mode without one", async () => {
+    await indexTheFixture();
+    const context = contextWith();
+
+    const refused = await runSearch(context, { path: fixture, query: "Enterprise", mode: "exact", min_score: 0.5 });
+    expect(refused).toEqual({ ok: false, message: expect.stringMatching(/no effect in exact mode/) });
+
+    const accepted = await runSearch(context, { path: fixture, query: "Enterprise", mode: "exact" });
+    expect(accepted.ok).toBe(true);
+    if (!accepted.ok) return;
+    expect(accepted.payload.mode).toBe("exact");
+    expect(searchHitsOf(accepted.payload).map((hit) => hit.page)).toEqual([2]);
+  }, 60_000);
+
   it("searches the active indexed document by reference without reading or returning its path", async () => {
     const contentHash = await indexTheFixture();
     const ref = openDocumentReference(4242, 7, "tab-report");
@@ -695,13 +709,15 @@ describe("search under the settings the application is using", () => {
     );
     const context = contextWith();
 
-    const blocked = await runSearch(context, { path: fixture, query: "Enterprise 1204" });
+    // Semantic mode, because the threshold is a rule about meaning: in hybrid mode an exact match is
+    // never discarded by it, and that would hide which threshold was applied.
+    const blocked = await runSearch(context, { path: fixture, query: "Enterprise 1204", mode: "semantic" });
     expect(blocked.ok).toBe(true);
     if (!blocked.ok) return;
     expect(searchHitsOf(blocked.payload)).toEqual([]);
 
     // An explicit argument outranks the setting — otherwise the setting could not be overridden.
-    const allowed = await runSearch(context, { path: fixture, query: "Enterprise 1204", min_score: 0.05 });
+    const allowed = await runSearch(context, { path: fixture, query: "Enterprise 1204", mode: "semantic", min_score: 0.05 });
     expect(allowed.ok).toBe(true);
     if (!allowed.ok) return;
     expect(searchHitsOf(allowed.payload).length).toBeGreaterThan(0);

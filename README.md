@@ -96,7 +96,7 @@ embedding model as the application. Install it from **Settings › CLI & MCP ›
 ```
 markpdf prepare <path>     [--json]
 markpdf index   <path...>  [--recursive] [--force]
-markpdf search  <query>    (--path <pdf> | --id <hash>) [--top-k 12] [--min-score 0.3]
+markpdf search  <query>    (--path <pdf> | --id <hash> | --library) [--mode hybrid|semantic|exact] [--top-k 12] [--min-score 0.3]
 markpdf outline <path>     [--depth 3]
 markpdf convert <path...>  [--pages 3-7] [--mode page-preserving|clean] [--out file.md]
 ```
@@ -114,8 +114,19 @@ markpdf --revoke-read ~/Papers     # and withdrawing a folder withdraws everythi
 
 Run it on a terminal and it offers the grant with a single keystroke. Run it from a script and it
 never prompts: it exits 5 and prints the exact command that would grant what it needed. A document
-that is already indexed can still be searched after you withdraw the folder, because that answer
-comes from the index and never opens the file.
+that is already indexed can still be searched by its path or hash after you withdraw the folder,
+because that answer comes from the index and never opens the file.
+
+**Search the whole library with `--library`.** One query ranks the passages of every document that
+`markpdf index` read from a folder you still grant. Withdrawing a folder takes its documents out of
+library results, and a document the app indexed on its own joins them once you grant its folder and
+run `markpdf index` on it. The command says how many indexed documents it left out, never which.
+
+**Choose how passages are ranked with `--mode`.** `hybrid`, the default, fuses the ranking by meaning
+with a ranking by exact words. `semantic` ranks by meaning only. `exact` returns only passages that
+contain every word or quoted phrase of the query. "Exact" means the words, ignoring case and
+accents, so `"clause 4.2(b)"` also matches "Clause 4-2 b". `--min-score` filters the ranking by
+meaning only, so it has no effect in exact mode, and the command refuses it there.
 
 Scanned pages are read with OCR, entirely offline — the language data ships with the application.
 
@@ -150,13 +161,14 @@ For a client that reads a JSON configuration file, the same thing as entries in 
 
 Add `MARKPDF_DATA_DIR` in `env` if you keep your index somewhere other than the default.
 
-Ten tools:
+Eleven tools:
 
 | Tool | What it does | What it needs |
 | --- | --- | --- |
 | `prepare_document` | Open a local PDF, save eligible generated outline metadata, and prepare the shared retrieval index | Existing read permission; separate write permission when saving |
 | `outline` | The heading tree with page numbers, the page count, and whether the document has a text layer | Nothing, if the document is indexed; otherwise permission to read it |
-| `search` | The passages of one indexed document that answer a question, each with its page and headings | Nothing — it reads the index and never opens the file |
+| `search` | The passages of one indexed document that answer a question, each with its page and headings, ranked by meaning, exact words or both (`mode`) | Nothing — it reads the index and never opens the file |
+| `search_library` | The passages across the whole library that answer a question, each with its document's hash and name, page and headings | Nothing to run. It finds only documents `markpdf index` read from a folder that is still granted |
 | `read_pages` | The text of specific pages, which is how you get from a search hit to the material around it | Nothing — index only |
 | `to_markdown` | The document as Markdown, or written to a file | Permission to read it, and separately to write, if you give `output_path` |
 | `list_open_documents` | The names, opaque references, and state of documents currently open in MarkPDF, without their paths | Nothing |

@@ -117,11 +117,14 @@ import type {
   FormFieldState,
   ImagePdfSource,
   DocumentTab,
+  LibrarySearchHit,
   MarkdownTab,
   OcrPageText,
   OverlayItem,
   PdfTab,
   SearchMatch,
+  SearchMode,
+  SemanticHighlightTarget,
   TabHistoryState,
   ThemeMode,
   ToolMode,
@@ -137,6 +140,7 @@ import {
 } from "./components/resizable";
 import type { MarkdownExportSettings, OpenDocumentsReport, SemanticSearchSettings } from "./global";
 import { semanticProgressToUpdate } from "./semanticProgress";
+import { acceptsLibraryResponse, libraryHitTarget, missingFileMessage } from "./libraryHitTarget";
 import { projectOpenDocuments, publishDelayFor } from "./openDocuments";
 import { buildIndexSource, semanticIndexOutcome } from "./semanticSource";
 import {
@@ -520,6 +524,15 @@ export default function App() {
   const agentRevisionRef = useRef(new Map<string, number>());
   const agentUserEditsRef = useRef(new Set<string>());
   const semanticSettingsRef = useRef(semanticSettings);
+  /**
+   * Library search belongs to the window, not to a tab: it searches documents that need not be open,
+   * and it must keep working when the active PDF is not indexed. Its own request id lets a reply to a
+   * query, mode or scope the person has already replaced be dropped.
+   */
+  const [semanticScope, setSemanticScope] = useState<SemanticScope>("document");
+  const [libraryMode, setLibraryMode] = useState<SearchMode>("hybrid");
+  const [library, setLibrary] = useState<LibraryState>(EMPTY_LIBRARY);
+  const libraryRequestIdRef = useRef(0);
   const semanticModelDownloadStartedRef = useRef(false);
   const publishedOpenDocumentsRef = useRef<string | null>(null);
   const publishedOpenDocumentsReportRef = useRef<OpenDocumentsReport | null>(null);
@@ -1046,7 +1059,12 @@ export default function App() {
       bytes: Uint8Array,
       name: string,
       path?: string,
-      options: { autoOcr?: boolean; dirty?: boolean } = {},
+      options: {
+        autoOcr?: boolean;
+        dirty?: boolean;
+        /** The page and passage to show once the first page has painted, as a library hit asks. */
+        initialView?: { page: number; highlight: SemanticHighlightTarget };
+      } = {},
     ) => {
       let password: string | undefined;
       let pdfDoc: Awaited<ReturnType<typeof loadPdfDocument>> | undefined;
@@ -1118,7 +1136,18 @@ export default function App() {
           setTabs((current) => [...current, tab]);
           setActiveTabId(tab.id);
         },
-        waitForPaint: async () => await firstPageRendered,
+        waitForPaint: async () => {
+          await firstPageRendered;
+          // After page 1 has painted, because the staged open waits for that paint: opening straight
+          // at a later page would leave it waiting for a page that is not shown.
+          const view = options.initialView;
+          if (view !== undefined) {
+            updatePdfTab(tabId, (tab) => ({
+              currentPage: Math.min(Math.max(1, view.page), tab.pageCount),
+              semanticHighlight: view.highlight,
+            }));
+          }
+        },
         prepareDocument: async (document) => {
           if (options.autoOcr !== false) {
             await startAutoOcr(tabId, document);
@@ -2726,6 +2755,46 @@ export default function App() {
     );
   };
 
+  const resetLibrary = useCallback(() => {
+    libraryRequestIdRef.current += 1;
+    setLibrary(EMPTY_LIBRARY);
+  }, []);
+
+  const runLibrarySearch = useCallback(async (query: string, mode: SearchMode) => {
+    const normalizedQuery = query.trim();
+    libraryRequestIdRef.current += 1;
+    const requestId = libraryRequestIdRef.current;
+    if (normalizedQuery.length === 0 || !window.pdfReader) {
+      setLibrary(EMPTY_LIBRARY);
+      return;
+    }
+    setLibrary((current) => ({ ...current, status: "loading", query: normalizedQuery, message: null }));
+    try {
+      const reply = await window.pdfReader.semantic.searchLibrary({
+        query: normalizedQuery,
+        mode,
+        chunkingProfile: semanticSettingsRef.current.chunkingProfile,
+        minScore: semanticSettingsRef.current.minSemanticScore,
+        topK: LIBRARY_TOP_K,
+      });
+      if (!acceptsLibraryResponse(requestId, libraryRequestIdRef.current)) return;
+      setLibrary({
+        status: "ready",
+        query: normalizedQuery,
+        results: reply.results,
+        message: reply.truncated ? `${reply.omittedResults} more passages did not fit in one answer.` : null,
+      });
+    } catch (error) {
+      if (!acceptsLibraryResponse(requestId, libraryRequestIdRef.current)) return;
+      setLibrary({
+        status: "error",
+        query: normalizedQuery,
+        results: [],
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, []);
+
   const applySearch = useCallback(
     async (
       tab: DocumentTab,
@@ -2817,6 +2886,9 @@ export default function App() {
     }
 
     if (!activeTabId) return undefined;
+    // The library scope searches every document, not this tab. Running the tab's own search here
+    // would move its page and clear a highlight a library hit has just set.
+    if (semanticScope === "library") return undefined;
 
     const activeSearchTab =
       tabsRef.current.find((tab) => tab.id === activeTabId) ?? null;
@@ -2855,13 +2927,64 @@ export default function App() {
     searchText,
     applySearch,
     clearTabSearch,
+    semanticScope,
   ]);
+
+  useEffect(() => {
+    if (semanticScope !== "library") return undefined;
+    if (searchText.trim().length < 3) {
+      resetLibrary();
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      void runLibrarySearch(searchText, libraryMode);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [semanticScope, libraryMode, searchText, runLibrarySearch, resetLibrary]);
+
+  const openLibraryHit = useCallback(
+    async (hit: LibrarySearchHit) => {
+      const highlight: SemanticHighlightTarget = { page: hit.page, text: hit.snippet, id: hit.id };
+      const target = libraryHitTarget(
+        tabsRef.current.map((tab) => ({
+          id: tab.id,
+          kind: isPdfTab(tab) ? ("pdf" as const) : ("markdown" as const),
+          ...(isPdfTab(tab) && tab.semanticContentHash !== undefined ? { semanticContentHash: tab.semanticContentHash } : {}),
+        })),
+        hit,
+      );
+      if (target.kind === "switch") {
+        setActiveTabId(target.tabId);
+        updatePdfTab(target.tabId, { currentPage: hit.page, semanticHighlight: highlight });
+        return;
+      }
+      if (target.kind === "unavailable") {
+        setLibrary((current) => ({ ...current, message: target.message }));
+        return;
+      }
+      if (!window.pdfReader) return;
+      try {
+        const opened = await window.pdfReader.readPdf(target.path);
+        await addTabFromBytes(Uint8Array.from(opened.bytes), opened.name, opened.path, {
+          initialView: { page: hit.page, highlight },
+        });
+      } catch {
+        setLibrary((current) => ({ ...current, message: missingFileMessage(target.path) }));
+      }
+    },
+    [addTabFromBytes, updatePdfTab],
+  );
 
   const runSearch = async () => {
     if (!activeTab) return;
     if (autoSearchTimerRef.current !== null) {
       window.clearTimeout(autoSearchTimerRef.current);
       autoSearchTimerRef.current = null;
+    }
+    if (semanticScope === "library") {
+      setSidebar("semantic");
+      await runLibrarySearch(searchText, libraryMode);
+      return;
     }
     await applySearch(activeTab, searchText, true, true);
   };
@@ -2891,6 +3014,7 @@ export default function App() {
       autoSearchTimerRef.current = null;
     }
     setSearchText("");
+    resetLibrary();
     if (!activeTab) return;
     clearTabSearch(activeTab);
     setSidebar((current) => (current === "semantic" ? null : current));
@@ -3497,6 +3621,14 @@ export default function App() {
             >
               <Sidebar
                 mode={rightPaneMode}
+                library={{
+                  scope: semanticScope,
+                  mode: libraryMode,
+                  state: library,
+                  onScopeChange: setSemanticScope,
+                  onModeChange: setLibraryMode,
+                  onSelect: (hit) => void openLibraryHit(hit),
+                }}
                 tab={activePdfViewTab}
                 selectedOverlay={selectedOverlay}
                 signatureText={signatureText}
@@ -4312,7 +4444,9 @@ function DocumentView({
   onFollowInternalLink: (page: number) => void;
 }) {
   if (tab.kind === "markdown") {
-    return <MarkdownDocumentView tab={tab} theme={theme} />;
+    // Keyed by tab, so a diagram's expanded view and zoom belong to one document and do not
+    // carry over to the next Markdown tab the reader selects.
+    return <MarkdownDocumentView key={tab.id} tab={tab} theme={theme} />;
   }
 
   return (
@@ -4495,6 +4629,12 @@ function MarkdownDocumentView({
   theme: ThemeMode;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // An expanded diagram is drawn here, beside the scrolling sheet rather than inside it, so it
+  // fills the document pane and is not scaled by the document's own zoom.
+  const [diagramHost, setDiagramHost] = useState<HTMLDivElement | null>(null);
+  // While a diagram covers the pane, the document under it takes no focus and is hidden from
+  // assistive technology, so the keyboard cannot reach controls the reader cannot see.
+  const [diagramExpanded, setDiagramExpanded] = useState(false);
   const matchCount = tab.searchMatches.length;
 
   // Bring the current match into view whenever the reader steps through the
@@ -4512,16 +4652,27 @@ function MarkdownDocumentView({
   }, [tab.id, tab.searchQuery, tab.activeSearchMatch, matchCount]);
 
   return (
-    <div className="markdown-document-scroll" ref={scrollRef}>
-      <MarkdownPreview
-        markdown={tab.markdown}
-        theme={theme}
-        searchQuery={tab.searchQuery}
-        activeMatchIndex={tab.activeSearchMatch}
-        baseUrl={tab.baseUrl}
-        zoom={tab.zoom}
-      />
-    </div>
+    <>
+      <div
+        className="markdown-document-scroll"
+        ref={scrollRef}
+        inert={diagramExpanded}
+        aria-hidden={diagramExpanded || undefined}
+      >
+        <MarkdownPreview
+          markdown={tab.markdown}
+          theme={theme}
+          searchQuery={tab.searchQuery}
+          activeMatchIndex={tab.activeSearchMatch}
+          baseUrl={tab.baseUrl}
+          zoom={tab.zoom}
+          documentName={tab.name}
+          diagramHost={diagramHost}
+          onDiagramExpandedChange={setDiagramExpanded}
+        />
+      </div>
+      <div className="markdown-diagram-host" ref={setDiagramHost} />
+    </>
   );
 }
 
@@ -5514,8 +5665,89 @@ function OutlineList({
   );
 }
 
+type SemanticScope = "document" | "library";
+
+interface LibraryState {
+  status: "idle" | "loading" | "ready" | "error";
+  query: string;
+  results: LibrarySearchHit[];
+  /** A note for the person: why a hit could not open, or that some results were left out. */
+  message: string | null;
+}
+
+const EMPTY_LIBRARY: LibraryState = { status: "idle", query: "", results: [], message: null };
+
+/** As many passages as one library answer shows; the reply is bounded again in the main process. */
+const LIBRARY_TOP_K = 12;
+
+const LIBRARY_MODES: ReadonlyArray<{ mode: SearchMode; label: string }> = [
+  { mode: "hybrid", label: "Both" },
+  { mode: "semantic", label: "Meaning" },
+  { mode: "exact", label: "Words" },
+];
+
+interface LibraryPaneProps {
+  scope: SemanticScope;
+  mode: SearchMode;
+  state: LibraryState;
+  onScopeChange: (scope: SemanticScope) => void;
+  onModeChange: (mode: SearchMode) => void;
+  onSelect: (hit: LibrarySearchHit) => void;
+}
+
+function LibraryResults({ library }: { library: LibraryPaneProps }) {
+  const { state } = library;
+  return (
+    <>
+      <div className="sidebar-switch" role="group" aria-label="Search mode">
+        {LIBRARY_MODES.map((option) => (
+          <button
+            type="button"
+            key={option.mode}
+            className={library.mode === option.mode ? "active" : ""}
+            aria-pressed={library.mode === option.mode}
+            onClick={() => library.onModeChange(option.mode)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      {state.message !== null && <p className="library-message">{state.message}</p>}
+      {state.query.length === 0 ? (
+        <p>Search the library to find passages in every indexed document.</p>
+      ) : state.status === "loading" ? (
+        <p>Searching the library.</p>
+      ) : state.status === "error" ? null : state.results.length === 0 ? (
+        <p>No passages found in the library.</p>
+      ) : (
+        <div className="semantic-result-list">
+          {state.results.map((hit) => (
+            <button
+              className="semantic-result library-result"
+              key={`${hit.contentHash}:${hit.id}`}
+              title={hit.path ?? hit.name}
+              onClick={() => library.onSelect(hit)}
+            >
+              <span className="library-result-name">{hit.name}</span>
+              <span className="semantic-result-meta">
+                <span>Page {hit.page}</span>
+                {hit.matchedBy.includes("exact") && <span className="library-result-words">words</span>}
+                {hit.semanticScore !== null && (
+                  <span className="semantic-result-score">{hit.semanticScore.toFixed(2)}</span>
+                )}
+              </span>
+              <p>{hit.snippet}</p>
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function Sidebar({
   mode,
+  library,
   tab,
   selectedOverlay,
   signatureText,
@@ -5546,6 +5778,8 @@ function Sidebar({
   onRejectSuggestion,
 }: {
   mode: SidebarMode;
+  /** The library scope of the search pane. Absent where the pane cannot show search. */
+  library?: LibraryPaneProps;
   tab: PdfViewTab | null;
   selectedOverlay: OverlayItem | null;
   signatureText: string;
@@ -5645,7 +5879,29 @@ function Sidebar({
             <Search size={15} />
             <h2>Semantic Search</h2>
           </div>
-          {!tab?.searchQuery ? (
+          {library !== undefined && (
+            <div className="sidebar-switch two-way" role="group" aria-label="Search scope">
+              <button
+                type="button"
+                className={library.scope === "document" ? "active" : ""}
+                aria-pressed={library.scope === "document"}
+                onClick={() => library.onScopeChange("document")}
+              >
+                This document
+              </button>
+              <button
+                type="button"
+                className={library.scope === "library" ? "active" : ""}
+                aria-pressed={library.scope === "library"}
+                onClick={() => library.onScopeChange("library")}
+              >
+                Library
+              </button>
+            </div>
+          )}
+          {library?.scope === "library" ? (
+            <LibraryResults library={library} />
+          ) : !tab?.searchQuery ? (
             <p>Search the document to find related passages.</p>
           ) : tab.semanticIndexStatus !== "ready" ? (
             <p>

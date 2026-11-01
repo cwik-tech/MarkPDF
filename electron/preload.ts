@@ -89,6 +89,8 @@ contextBridge.exposeInMainWorld("pdfReader", {
     ipcRenderer.invoke("dialog:save-pdf", defaultPath),
   saveMarkdownDialog: (defaultPath?: string) =>
     ipcRenderer.invoke("dialog:save-markdown", defaultPath),
+  saveDiagramSvg: (fileName: string, svg: string) =>
+    ipcRenderer.invoke("dialog:save-diagram-svg", fileName, svg),
   confirmUnsaved: (documentName?: string) =>
     ipcRenderer.invoke("dialog:confirm-unsaved", documentName),
   readPdf: (filePath: string) => ipcRenderer.invoke("file:read-pdf", filePath),
@@ -163,6 +165,7 @@ contextBridge.exposeInMainWorld("pdfReader", {
       ipcRenderer.invoke("semantic:index", request),
     cancelIndex: (jobId: string) => ipcRenderer.invoke("semantic:cancel", jobId),
     search: (request: unknown) => ipcRenderer.invoke("semantic:search", request),
+    searchLibrary: (request: unknown) => ipcRenderer.invoke("semantic:search-library", request),
     getDocument: (contentHash: string) =>
       ipcRenderer.invoke("semantic:get-document", contentHash),
     deleteDocument: (contentHash: string) =>

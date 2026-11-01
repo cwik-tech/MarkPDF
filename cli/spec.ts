@@ -10,7 +10,7 @@
  * abstraction built for a caller that does not exist yet is a guess about the caller.
  */
 
-import { defaultSemanticTopK } from "../dist-core/models.js";
+import { defaultSearchMode, defaultSemanticTopK, searchModes } from "../dist-core/models.js";
 import type { SemanticSearchSettings } from "../dist-core/ipc/settings.js";
 
 /** What an option's value is, and what would make one invalid. */
@@ -145,11 +145,16 @@ export const commandSpecs: readonly CommandSpec[] = [
   },
   {
     name: "search",
-    summary: "Find the passages in one indexed document that answer a query.",
+    summary: "Find the passages that answer a query, in one document or the library.",
     positionals: [{ name: "query", description: "What to search for.", variadic: false }],
     options: [
       { name: "path", type: { kind: "string", placeholder: "<pdf>" }, description: "The document, by path." },
       { name: "id", type: { kind: "string", placeholder: "<hash>" }, description: "The document, by content hash." },
+      {
+        name: "library",
+        type: { kind: "boolean" },
+        description: "Search every indexed document you have granted, not one document.",
+      },
       {
         name: "top-k",
         type: { kind: "integer", placeholder: "<n>", minimum: 1, maximum: 100 },
@@ -160,13 +165,19 @@ export const commandSpecs: readonly CommandSpec[] = [
       {
         name: "min-score",
         type: { kind: "number", placeholder: "<n>", minimum: 0, maximum: 1 },
-        description: "Discard passages scoring below this.",
+        description: "Discard semantic matches scoring below this.",
         // No constant default: the application's setting supplies the fallback per run, and an
         // explicit --min-score outranks it.
         settingsDefault: "minSemanticScore",
       },
+      {
+        name: "mode",
+        type: { kind: "choice", placeholder: "<mode>", choices: searchModes },
+        description: "Rank by meaning, by exact words, or by both.",
+        default: defaultSearchMode,
+      },
     ],
-    exactlyOneOf: ["path", "id"],
+    exactlyOneOf: ["path", "id", "library"],
   },
   {
     name: "outline",

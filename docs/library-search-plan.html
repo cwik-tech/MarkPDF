@@ -1,0 +1,1112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="generator" content="html-problem-visualization">
+<meta name="source-md" content="library-search-plan.md">
+<meta name="source-sha256" content="e1dc58a2f312b8e56771d31030f94caeae535dc6c444743e6afd75015fe517d5">
+<title>Library and exact-word search</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: an engineering sheet. Prose sits in a 74ch column; every visual breaks out to the full track.
+   Semantic tones: bad = broke, warn = misleading or risky, ok = worked, fix = the change, idle = not reached.
+   Colour is used sparingly: tinted fills with a coloured stroke, or a 3px inset stripe. Surfaces stay white.
+   Do not change tokens per project. Add new rules only from these tokens. */
+:root{
+  --bg:#f3f5f8; --surface:#ffffff; --ink:#17202d; --muted:#576274; --line:#d2d8e1;
+  --band-a:#f8f9fb; --band-b:#edf0f4; --edge:#3b4657;
+  --fix:#2b61a8;  --fix-bg:#e4ecf8;  --fix-ink:#24548f;
+  --bad:#c0392f;  --bad-bg:#fae6e4;  --bad-ink:#a8302a;
+  --warn:#b0680a; --warn-bg:#fcefd8; --warn-ink:#8a5006;
+  --ok:#2a8a3d;   --ok-bg:#e2f2e5;   --ok-ink:#21712f;
+  --idle:#4b5466; --idle-bg:#e6e9ee; --idle-ink:#576274;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-cond:"IBM Plex Sans Condensed","Roboto Condensed","Arial Narrow",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --gutter:clamp(16px,5vw,96px);
+  --prose:max(74ch,50%);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#10141a; --surface:#171c24; --ink:#e3e7ed; --muted:#98a2b2; --line:#2a313c;
+    --band-a:#141920; --band-b:#1a2029; --edge:#a9b2c1;
+    --fix:#7aa7e9;  --fix-bg:#1a2940;  --fix-ink:#9cbdf0;
+    --bad:#f0736b;  --bad-bg:#3a1c1a;  --bad-ink:#f59a93;
+    --warn:#e8a74a; --warn-bg:#382810; --warn-ink:#f1be72;
+    --ok:#62c476;   --ok-bg:#16301c;   --ok-ink:#86d496;
+    --idle:#9ba4b3; --idle-bg:#222932; --idle-ink:#98a2b2;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10141a; --surface:#171c24; --ink:#e3e7ed; --muted:#98a2b2; --line:#2a313c;
+  --band-a:#141920; --band-b:#1a2029; --edge:#a9b2c1;
+  --fix:#7aa7e9;  --fix-bg:#1a2940;  --fix-ink:#9cbdf0;
+  --bad:#f0736b;  --bad-bg:#3a1c1a;  --bad-ink:#f59a93;
+  --warn:#e8a74a; --warn-bg:#382810; --warn-ink:#f1be72;
+  --ok:#62c476;   --ok-bg:#16301c;   --ok-ink:#86d496;
+  --idle:#9ba4b3; --idle-bg:#222932; --idle-ink:#98a2b2;
+  color-scheme:dark;
+}
+
+/* base */
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.6 var(--font-body);padding-inline:var(--gutter);padding-block:0 64px}
+a{color:var(--fix)}
+a:focus-visible{outline:2px solid var(--fix);outline-offset:2px}
+code{font-family:var(--font-mono);font-size:.86em;overflow-wrap:anywhere}
+pre{font-family:var(--font-mono);font-size:12.5px;line-height:1.65;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+p{margin:0}
+ul,ol{margin:0}
+h1,h2,h3{font-family:var(--font-cond);text-wrap:balance;margin:0}
+h1{font-weight:700;font-size:clamp(34px,5vw,52px);line-height:1.05;letter-spacing:-.01em}
+h1 .quiet{color:var(--muted);font-weight:400}
+h1 [class*="t-"]{color:var(--tone)}
+h2{font-weight:700;font-size:28px;line-height:1.15}
+h3{font-weight:600;font-size:18px;line-height:1.3}
+.label{font:600 12px/1.3 var(--font-cond);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.muted{color:var(--muted)}
+.small{font-size:13.5px}
+.src{font-size:12.5px;line-height:1.5;color:var(--muted)}
+.src a{color:var(--muted)}
+.page{max-width:1400px}
+.col{max-width:var(--prose)}
+.stack{display:flex;flex-direction:column;gap:14px}
+
+/* header, legend and nav */
+header.hero{padding-block:56px 28px}
+header.hero .stack{gap:16px}
+.lead{font-size:17px;max-width:66ch}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font:500 12.5px/1 var(--font-cond);letter-spacing:.02em;padding:6px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.chip b{color:var(--ink);font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:8px 22px;font:400 13px/1.3 var(--font-cond);color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{width:24px;height:15px;border:1.5px solid var(--tone);background:var(--tone-bg);border-radius:4px;flex:none}
+nav.toc{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;margin-inline:calc(-1 * var(--gutter));padding:10px var(--gutter);background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+nav.toc .page{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 18px;max-width:none}
+nav.toc a{font:500 13px/1.4 var(--font-cond);letter-spacing:.02em;color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--ink)}
+section{padding-block:44px 8px;scroll-margin-top:52px}
+section > .page > .stack{gap:18px}
+section h3 + p, .col h3 + p{margin-top:-6px}
+
+/* semantic tones */
+.t-bad{--tone:var(--bad);--tone-bg:var(--bad-bg);--tone-ink:var(--bad-ink)}
+.t-warn{--tone:var(--warn);--tone-bg:var(--warn-bg);--tone-ink:var(--warn-ink)}
+.t-ok{--tone:var(--ok);--tone-bg:var(--ok-bg);--tone-ink:var(--ok-ink)}
+.t-fix{--tone:var(--fix);--tone-bg:var(--fix-bg);--tone-ink:var(--fix-ink)}
+.t-idle{--tone:var(--idle);--tone-bg:var(--idle-bg);--tone-ink:var(--idle-ink)}
+.tag{display:inline-block;align-self:flex-start;font:600 11px/1 var(--font-cond);letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:999px;white-space:nowrap;color:var(--tone-ink,var(--muted));background:var(--tone-bg,var(--band-b))}
+
+/* shared card surface */
+.card,.stage,.panel,.wcard,.ledger > div,.aside,.layer,.fork,.nest{background:var(--surface);border:1px solid var(--line);border-radius:10px}
+
+/* summary cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.card{padding:16px 18px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.card[class*="t-"]{box-shadow:inset 3px 0 0 var(--tone)}
+.card h3{font-size:17px}
+.card p{font-size:14px;color:var(--muted)}
+.card p strong{color:var(--ink);font-weight:600}
+.card > a{font:500 13px/1.3 var(--font-cond);margin-top:auto}
+
+/* stage strip */
+.stages{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stage{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.stage[class*="t-"]{border-color:color-mix(in srgb,var(--tone) 45%,var(--line));box-shadow:inset 0 3px 0 var(--tone)}
+.stage.t-idle{background:var(--band-a);box-shadow:none;border-style:dashed}
+.stage .n{font:700 22px/1 var(--font-mono);color:var(--line)}
+.stage .name{font:600 15px/1.3 var(--font-cond)}
+.stage .state{align-self:flex-start;font:600 11px/1 var(--font-cond);letter-spacing:.05em;text-transform:uppercase;padding:4px 8px;border-radius:999px;color:var(--tone-ink,var(--muted));background:var(--tone-bg,var(--band-b))}
+.stage .note{font-size:13px;color:var(--muted);line-height:1.45}
+.pills{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+.pills span{font:600 11px/1 var(--font-mono);padding:5px 6px;border-radius:4px;background:var(--surface);color:var(--muted);border:1px solid var(--line)}
+.pills span[class*="t-"]{background:var(--tone);color:var(--surface);border-color:var(--tone)}
+
+/* side-by-side panels */
+.compare{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.panel{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.panel > header{padding:12px 16px 10px;display:flex;flex-direction:column;gap:3px;border-bottom:1px solid var(--line)}
+.panel > header h3{font-size:16px}
+.panel pre{padding:14px 16px;background:var(--band-a);flex:1}
+.panel > .body{padding:14px 16px;font-size:14px;flex:1}
+.panel > footer{padding:10px 16px 12px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line)}
+.panel[class*="t-"]{border-color:var(--tone);box-shadow:inset 3px 0 0 var(--tone)}
+.panel[class*="t-"] pre{background:var(--tone-bg)}
+mark{background:var(--warn-bg);color:var(--warn-ink);padding:0 2px;border-radius:2px}
+.panel[class*="t-"] mark{background:transparent;color:var(--tone-ink);font-weight:600}
+
+/* diagram nodes and edges (fork, chain) */
+.node{border:1.4px solid var(--edge);border-radius:6px;padding:8px 14px;background:var(--surface);text-align:center;font:500 13px/1.35 var(--font-cond);max-width:100%;min-width:0}
+.node .label{display:block;font-size:10.5px;margin-bottom:2px;letter-spacing:.08em}
+.node.file{border-color:var(--muted);border-radius:2px;font:500 12px/1.4 var(--font-mono)}
+.node[class*="t-"]{border-color:var(--tone);background:var(--tone-bg)}
+.node[class*="t-"] strong{color:var(--tone-ink);font-weight:600}
+.vline{width:1.3px;height:24px;background:var(--edge);position:relative}
+.vline::after{content:"";position:absolute;bottom:-1px;left:50%;transform:translateX(-50%);border:4.5px solid transparent;border-top:6px solid var(--edge);border-bottom:0}
+
+/* fork diagram */
+.fork{padding:24px;display:flex;flex-direction:column;align-items:center}
+.branches{display:grid;grid-template-columns:repeat(var(--n,2),minmax(0,1fr));gap:28px;width:100%;position:relative;padding-top:24px}
+.branches::before{content:"";position:absolute;top:0;left:calc(50% / var(--n,2));right:calc(50% / var(--n,2));height:1.3px;background:var(--edge)}
+.branch{display:flex;flex-direction:column;align-items:center;min-width:0;position:relative}
+.branch::before{content:"";position:absolute;top:-24px;left:50%;width:1.3px;height:14px;background:var(--edge)}
+.branch .who{font:600 11px/1.3 var(--font-cond);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;text-align:center}
+.fork-foot{margin-top:18px;font-size:13px;color:var(--muted);text-align:center;max-width:620px}
+@media (max-width:700px){
+  .branches{grid-template-columns:1fr;padding-top:0;gap:22px}
+  .branches::before,.branch::before{display:none}
+  .branch{border-top:1px dashed var(--line);padding-top:16px}
+}
+
+/* tables */
+.tablewrap{overflow-x:auto}
+table{width:100%;min-width:560px;border-collapse:separate;border-spacing:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:14px}
+th,td{text-align:left;vertical-align:top;padding:10px 16px;border-top:1px solid var(--line)}
+thead th{border-top:0;font:600 12px/1.3 var(--font-cond);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--band-b)}
+td.num{font-family:var(--font-mono);font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+td[class*="t-"]{color:var(--tone-ink);font-weight:500}
+
+/* nested boundaries */
+.nest{padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.nest .nest{background:var(--band-a);border:1.4px dashed var(--muted)}
+.nest[class*="t-"]{background:var(--tone-bg);border:1.4px solid var(--tone)}
+.nest-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+.nest-head h3{font-size:16px}
+.nest-head .label{font-size:11px;letter-spacing:.06em}
+.nest ul{padding-left:18px;font-size:14px}
+.nest li{margin-block:3px}
+
+/* step timeline: attempts, events, or ordered actions */
+.steps{list-style:none;margin:0 0 0 6px;padding:0;border-left:1.3px solid var(--edge)}
+.steps li{position:relative;padding:0 0 14px 20px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1px 14px}
+.steps li:last-child{padding-bottom:0}
+.steps li::before{content:"";position:absolute;left:-6px;top:6px;width:11px;height:11px;border-radius:50%;background:var(--tone,var(--edge));box-shadow:0 0 0 3px var(--bg)}
+.steps .what{font:600 15px/1.4 var(--font-cond)}
+.steps .got{grid-column:1;font:12.5px/1.5 var(--font-mono);color:var(--tone-ink,var(--muted))}
+.steps .ref{grid-row:1 / span 2;grid-column:2;font:12px/1.5 var(--font-mono);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* two-column split */
+.split{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:32px;align-items:start}
+@media (max-width:900px){.split{grid-template-columns:1fr}}
+
+/* outcome layers */
+.layers{display:flex;flex-direction:column;gap:8px}
+.layer{display:grid;grid-template-columns:130px minmax(0,1fr) auto;gap:14px;align-items:center;padding:11px 16px}
+.layer[class*="t-"]{box-shadow:inset 3px 0 0 var(--tone)}
+.layer .k{font:600 12px/1.3 var(--font-cond);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.layer .v{font-size:14px;min-width:0}
+@media (max-width:620px){.layer{grid-template-columns:1fr;gap:6px}}
+
+/* pair: before/after, said/should-say, today/after the fix */
+.pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:700px){.pair{grid-template-columns:1fr}}
+.pair > div{border-radius:10px;padding:12px 16px 14px;background:var(--surface);border:1px solid var(--line);display:flex;flex-direction:column;gap:8px;min-width:0}
+.pair > div[class*="t-"]{background:var(--tone-bg);border-color:color-mix(in srgb,var(--tone) 40%,transparent)}
+.pair > div[class*="t-"] .label{color:var(--tone-ink)}
+
+/* callouts */
+.aside{padding:18px 22px;display:flex;flex-direction:column;gap:10px;background:var(--band-a);border-style:dashed;border-color:var(--muted)}
+.aside h3{font-size:18px}
+.decision{background:var(--fix-bg);border:1.4px solid var(--fix);border-radius:10px;padding:18px 22px;display:flex;flex-direction:column;gap:12px}
+.decision > .label{color:var(--fix-ink)}
+.decision h3{color:var(--fix-ink);font-size:20px}
+.decision .pair > div{background:var(--surface);border-color:var(--line)}
+
+/* work cards */
+.work{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:760px){.work{grid-template-columns:1fr}}
+.wcard{padding:16px 20px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.wcard .top{display:flex;align-items:center;gap:10px}
+.wcard .letter{font:700 14px/1 var(--font-mono);width:28px;height:28px;display:grid;place-items:center;border-radius:6px;background:var(--fix-bg);color:var(--fix-ink);border:1.4px solid var(--fix);flex:none}
+.wcard h3{font-size:18px}
+.wcard ul{padding-left:18px;font-size:14px}
+.wcard li{margin-block:4px}
+.wcard .done{font-size:13px;border-top:1px solid var(--line);padding-top:10px;color:var(--muted);margin-top:auto}
+.wcard .done strong{color:var(--ink);font-weight:600}
+
+/* chain: a short strict sequence, with arrows */
+.chain{display:grid;grid-template-columns:repeat(var(--n,4),minmax(0,1fr));gap:12px 26px}
+.chain .node{position:relative;text-align:left;font-size:13px;background:var(--fix-bg);border-color:var(--fix)}
+.chain .node:not(:last-child)::after{content:"\2192";position:absolute;right:-20px;top:50%;transform:translateY(-50%);color:var(--muted);font:16px var(--font-body)}
+.chain.down{grid-template-columns:minmax(0,1fr);row-gap:24px}
+.chain.down .node:not(:last-child)::after{content:"\2193";right:auto;left:50%;top:auto;bottom:-22px;transform:translateX(-50%)}
+@media (max-width:900px){
+  .chain{grid-template-columns:minmax(0,1fr);row-gap:24px}
+  .chain .node:not(:last-child)::after{content:"\2193";right:auto;left:50%;top:auto;bottom:-22px;transform:translateX(-50%)}
+}
+
+/* history timeline */
+.history{list-style:none;margin:0;padding:0}
+.history li{display:grid;grid-template-columns:130px minmax(0,1fr);gap:16px;padding-block:12px;border-top:1px solid var(--line);font-size:14.5px}
+.history li:first-child{border-top:0}
+.history .when{font:600 14px/1.4 var(--font-cond)}
+.history .when span{display:block;font:400 12px/1.5 var(--font-mono);color:var(--muted)}
+@media (max-width:520px){.history li{grid-template-columns:1fr;gap:4px}}
+
+/* ledger: checked vs not established */
+.ledger{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.ledger > div{padding:16px 20px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.ledger ul{padding-left:18px;font-size:14px}
+.ledger li{margin-block:5px}
+
+/* sources and footer */
+.sources{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:2px 28px;font-size:14px;margin:0;padding:0;list-style:none}
+.sources li{padding-block:8px;border-top:1px solid var(--line);min-width:0}
+.sources code{font-size:12.5px}
+.sources span{display:block;color:var(--muted);font-size:13px}
+footer.end{padding-block:48px 0;font-size:13px;color:var(--muted);max-width:var(--prose)}
+
+/* page additions: row headers in comparison tables */
+tbody th{font:600 13px/1.4 var(--font-cond);letter-spacing:.02em;color:var(--ink);background:var(--band-a)}
+.col ol,.col ul{padding-left:20px}
+.col li{margin-block:4px}
+.tablewrap table.wide{min-width:820px}
+@media (max-width:600px){nav.toc{position:static}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="page stack">
+    <span class="label">MarkPDF · library and exact-word search · plan and implementation record · 31 October and 1 November 2026</span>
+    <h1>Search every indexed PDF <span class="t-fix">by meaning and by exact words</span></h1>
+    <p class="lead">Before this work, MarkPDF searched one indexed document at a time, and only by meaning. This plan adds library search and an exact-word index with three search modes. An independent Codex review reported 15 findings, and the plan accepts 13 in full and 2 in part. The work is implemented in this worktree and is not committed. All six capabilities pass their outer tests. On 1 November 2026 every typecheck, the full test suite, the build and all Electron journeys passed on the final code. The performance target at 10,000 chunks is met, and every target at 100,000 and 500,000 chunks is not met.</p>
+    <div class="chips">
+      <span class="chip">source <b>library-search-plan.md</b></span>
+      <span class="chip">status <b>implemented, not committed</b></span>
+      <span class="chip">outer tests <b>6 of 6 capabilities pass</b></span>
+      <span class="chip">final runs <b>typecheck, 1,538 tests, build and 37 journeys pass</b></span>
+      <span class="chip">targets <b>S met, M and L not met</b></span>
+      <span class="chip">base <b>main at 2125a71</b></span>
+      <span class="chip">decisions <b>4 made, 2 follow-ups</b></span>
+    </div>
+    <div class="legend" aria-label="Colour key">
+      <span class="t-bad"><i></i>Leak or failure</span>
+      <span class="t-warn"><i></i>Risk or partial</span>
+      <span class="t-ok"><i></i>Confirmed or accepted</span>
+      <span class="t-fix"><i></i>Planned change or decision</span>
+      <span class="t-idle"><i></i>Open or not established</span>
+    </div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <div class="page">
+    <a href="#summary">Summary</a>
+    <a href="#status">Status</a>
+    <a href="#decisions">Decisions</a>
+    <a href="#review">Codex review</a>
+    <a href="#today">Today</a>
+    <a href="#surfaces">Surfaces</a>
+    <a href="#consent">Consent</a>
+    <a href="#forget">Forget</a>
+    <a href="#upgrade">Upgrade</a>
+    <a href="#backfill">Backfill</a>
+    <a href="#query">Exact query</a>
+    <a href="#ranking">Ranking</a>
+    <a href="#bounds">Bounds</a>
+    <a href="#performance">Performance</a>
+    <a href="#delivery">Work order</a>
+    <a href="#tdd">Tests</a>
+    <a href="#record">Red and Green</a>
+    <a href="#mutations">Mutations</a>
+    <a href="#adr">ADR</a>
+    <a href="#evidence">Evidence</a>
+  </div>
+</nav>
+
+<main>
+
+<section id="summary">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">In one minute</span>
+      <h2>Two new capabilities, guarded by three safety rules, and one problem left</h2>
+      <p>Library search and exact-word search share one ranking path. The probes and the Codex review produced three safety rules. The implementation left one problem, which is performance at library scale. Each card links to its section.</p>
+    </div>
+    <div class="cards">
+      <article class="card t-fix">
+        <span class="tag">Implemented</span>
+        <h3>One query searches the whole library</h3>
+        <p>The reply is one ranked list of passages. Each passage names its document and page. The command, the MCP server and the app sidebar all get it.</p>
+        <a href="#surfaces">Surfaces</a>
+      </article>
+      <article class="card t-fix">
+        <span class="tag">Implemented</span>
+        <h3>Exact words join search by meaning</h3>
+        <p>An FTS5 index ranked with <code>bm25</code> finds passages that contain the query words. A caller selects <code>semantic</code>, <code>exact</code> or <code>hybrid</code>.</p>
+        <a href="#ranking">Ranking</a>
+      </article>
+      <article class="card t-warn">
+        <span class="tag">Safety rule 1</span>
+        <h3>Forget and clear must merge the full-text index</h3>
+        <p>Without the merge, <strong>a forgotten document's words stay in the file</strong>.</p>
+        <a href="#forget">Forget</a>
+      </article>
+      <article class="card t-warn">
+        <span class="tag">Safety rule 2</span>
+        <h3>The upgrade runs with no other connection attached</h3>
+        <p>An older MarkPDF process that stays open does not know the new forget rule.</p>
+        <a href="#upgrade">Upgrade</a>
+      </article>
+      <article class="card t-warn">
+        <span class="tag">Safety rule 3</span>
+        <h3>Agents discover only paths that MarkPDF resolved</h3>
+        <p>The path must also be inside a current read grant. A path that the app recorded can pass through a link to a folder outside the grant.</p>
+        <a href="#consent">Consent</a>
+      </article>
+      <article class="card t-bad">
+        <span class="tag">Target not met</span>
+        <h3>Search is too slow at 100,000 and 500,000 chunks</h3>
+        <p>Hybrid p95 was 924 ms at 100,000 chunks and 4.8 s at 500,000. The target at 10,000 chunks is met. <strong>This work adds no performance step. It stays a follow-up.</strong></p>
+        <a href="#performance">Performance</a>
+      </article>
+      <article class="card t-ok">
+        <span class="tag">Verified</span>
+        <h3>The final runs pass on the final code</h3>
+        <p><code>npm test</code> passed 128 files and 1,538 tests. The build passed, and all 37 Electron journeys passed. <strong>The runs cover every edit made before and during the pause.</strong></p>
+        <a href="#status">Status</a>
+      </article>
+    </div>
+  </div></div>
+</section>
+
+<section id="status">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Implementation status · not committed</span>
+      <h2>All six capabilities pass, and the final runs pass</h2>
+      <p>The work is implemented in this worktree on 31 October 2026 and is not committed. Each capability went from Red to Green at its outer test. The measurement is recorded. On 1 November 2026 every typecheck, the full test suite, the build and all Electron journeys passed on the final code.</p>
+    </div>
+    <div class="stages">
+      <div class="stage t-ok"><b class="n">1</b><span class="name">Exact words, command line</span><span class="state">passes</span></div>
+      <div class="stage t-ok"><b class="n">2</b><span class="name">Forget and clear</span><span class="state">15 of 15</span></div>
+      <div class="stage t-ok"><b class="n">3</b><span class="name">Upgrade and backfill</span><span class="state">7 of 7</span></div>
+      <div class="stage t-ok"><b class="n">4</b><span class="name">Hybrid through MCP</span><span class="state">passes</span></div>
+      <div class="stage t-ok"><b class="n">5</b><span class="name">Library, command and MCP</span><span class="state">passes</span></div>
+      <div class="stage t-ok"><b class="n">6</b><span class="name">App Library scope</span><span class="state">passes in 7.8 s</span></div>
+      <div class="stage t-bad"><b class="n">7</b><span class="name">Measurement</span><span class="state">M and L not met</span><span class="note">Recorded in docs/records.</span></div>
+      <div class="stage t-ok"><b class="n">8</b><span class="name">Final verification</span><span class="state">passes</span><span class="note">Six typechecks, 1,538 tests, the build and 37 journeys.</span></div>
+    </div>
+    <div class="tablewrap">
+      <table class="wide">
+        <thead><tr><th>Command</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td><code>npm test</code> on an export of the base commit, through <code>heavy-run</code></td><td class="t-ok">117 files, 1,427 tests passed</td></tr>
+          <tr><td><code>npm test</code> on the implementation, through <code>heavy-run</code>, 23:20</td><td class="t-warn">126 files passed, 2 failed: the help synopsis and the core boundary rule. Both were fixed, and their files then passed, 3 files and 31 tests</td></tr>
+          <tr><td><code>npx vitest run core</code> after later edits, 23:30</td><td class="t-ok">71 files, 1,005 tests passed. This run included the performance change that was later reverted</td></tr>
+          <tr><td><code>npm run typecheck</code>, <code>typecheck:core</code>, <code>typecheck:cli</code>, <code>typecheck:mcp</code>, <code>typecheck:tests</code>, <code>npx tsc -p tsconfig.electron.json --noEmit</code></td><td class="t-ok">All clean at 23:24, after two type errors in new tests were fixed. Electron clean again at 23:32</td></tr>
+          <tr><td><code>npx playwright test tests/e2e/library-search.spec.ts</code>, <code>CI=1</code>, through <code>heavy-run</code></td><td class="t-ok">Passed in 7.8 s</td></tr>
+          <tr><td>The six typecheck commands on the final code, 2026-11-01 00:28</td><td class="t-ok">All clean</td></tr>
+          <tr><td><code>npm test</code> on the final code, through <code>heavy-run</code></td><td class="t-ok">128 files, 1,538 tests passed, in 44.5 s</td></tr>
+          <tr><td><code>npm run build</code>, through <code>heavy-run</code></td><td class="t-ok">Passed. Vite built the renderer in 5.95 s</td></tr>
+          <tr><td><code>npm run test:e2e</code>, all journeys, <code>CI=1</code>, through <code>heavy-run</code></td><td class="t-ok">37 passed, in 2.6 min</td></tr>
+          <tr><td>Lint</td><td class="t-idle">No lint command exists in this repository</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <p>The user stopped all heavy runs from 23:51 to 00:28. The final runs in the table cover every edit made before and during that pause.</p>
+    </div>
+    <p class="src">Decision record: <a href="adr/2026-10-31-Library-And-Exact-Word-Search.md">docs/adr/2026-10-31-Library-And-Exact-Word-Search.md</a>. Measurement: <a href="records/2026-10-31-library-search-measurement.md">docs/records/2026-10-31-library-search-measurement.md</a>.</p>
+  </div></div>
+</section>
+
+<section id="decisions">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Default decisions · made by the user</span>
+      <h2>The four former open questions are decided, and two points stay open as follow-ups</h2>
+      <p>The user asked for the recommended option for each open question. For a consent, security or data-loss question, the user asked for the more restrictive option.</p>
+    </div>
+    <div class="decision">
+      <span class="label">User decision · after the Codex review</span>
+      <h3>Apply the recommended options and implement in this worktree</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Question</th><th>Decision</th><th>Reason</th></tr></thead>
+          <tbody>
+            <tr><td>1. Consent rule for library results</td><td>Option C with path provenance. The app searches every indexed document. The command and MCP search only documents whose path MarkPDF resolved when it read the file, inside a current read root</td><td>More restrictive than option A, and than option C as first written. Option B restricts only the person in the app, who has no consent gate today, so it gives agents no extra restriction. Option D adds a second consent model, and the user did not ask for one</td></tr>
+            <tr><td>2. Default mode</td><td><code>hybrid</code> for the command and both MCP tools. The app always sends a mode</td><td>The recommended option. It is not a consent, security or data-loss question. Every reply states its <code>mode</code>, so a caller can see the meaning of <code>score</code></td></tr>
+            <tr><td>3. Eighth MCP tool</td><td>A new tool, <code>search_library</code></td><td>The recommended option. Codex also judged it defensible in finding 15</td></tr>
+            <tr><td>4. App placement</td><td>The Library scope in the search sidebar only</td><td>The recommended option. The start-screen search box stays a later decision</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="aside">
+      <span class="label">Follow-ups · user decision of 1 November 2026</span>
+      <h3>This work adds no new performance step, no package and no start-screen search box</h3>
+      <p>The two points stay open as follow-ups.</p>
+      <ol>
+        <li>A library search box on the app's start screen.</li>
+        <li>What to do about the performance targets that failed at 100,000 and 500,000 chunks. The choices are a cheaper active-scope check, a cache with local write counters, a vector extension that needs a new package, or other backfill batch sizes. The measurement record lists them.</li>
+      </ol>
+    </div>
+    <p class="src">App has no consent gate: <a href="../electron/main.ts">electron/main.ts</a>:582-590.</p>
+  </div></div>
+</section>
+
+<section id="review">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Review disposition · Codex, 31 October 2026, 22:33</span>
+      <h2>Codex reported 15 findings, and the plan accepts 13 in full and 2 in part</h2>
+      <p>Codex reviewed the plan against the code and ran its own probes. Each row gives the finding, the decision and what changed in the plan.</p>
+    </div>
+    <div class="tablewrap">
+      <table class="wide">
+        <thead><tr><th>Finding</th><th>Decision</th><th>What changed</th></tr></thead>
+        <tbody>
+          <tr><td>1. Option C does not fail closed for app paths</td><td class="t-ok">Accepted</td><td>Added <code>path_provenance</code>, and agents discover only <code>resolved</code> rows. The plan states that C restricts discovery and leaves access by hash as it is, and that the count shows how many other documents the index holds</td></tr>
+          <tr><td>2. The upgrade does not exclude old clients or recheck the version</td><td class="t-ok">Accepted</td><td>Exclusive access for an existing file, a version read under the lock, and a typed busy refusal</td></tr>
+          <tr><td>3. Backfill batches are unbounded and do not yield</td><td class="t-ok">Accepted</td><td>Batches of 500 chunks with a <code>(document_id, id)</code> cursor. <code>completeExactIndex</code> awaits an injected yield. Completion is checked in the same transaction</td></tr>
+          <tr><td>4. The update trigger creates unmapped FTS rows</td><td class="t-ok">Accepted</td><td>An immutability trigger replaces it. No code updates chunks today</td></tr>
+          <tr><td>5. Forget has a crash window between delete and <code>optimize</code></td><td class="t-ok">Accepted</td><td>An erase flag, written with the delete, and recovery in forget and clear</td></tr>
+          <tr><td>6. The exact SQL misses the model scope</td><td class="t-ok">Accepted</td><td><code>EXISTS</code> on <code>chunk_embeddings</code>. The latest row per path is chosen first</td></tr>
+          <tr><td>7. Multi-stage reads need one snapshot</td><td class="t-ok">Accepted</td><td>One deferred read transaction for all stages</td></tr>
+          <tr><td>8. Quoting does not make NUL safe</td><td class="t-ok">Accepted</td><td>Control characters are refused, with limits, and each case runs against real FTS5. Exact mode does not embed</td></tr>
+          <tr><td>9. Depth then cap can hide the library</td><td class="t-ok">Accepted</td><td>Depth doubles up to 1,600, <code>candidatesTruncated</code> reports the limit, and each ranking has stable ties</td></tr>
+          <tr><td>10. App mode control and state ownership</td><td class="t-warn">Accepted in part</td><td>A mode switch in the Library scope, and app-level library state that drops stale responses. The per-document panel stays <code>semantic</code> as a documented scope reduction. One E2E journey covers the main outcome. The stale-response and target rules are pure tests, as AGENTS.md prefers for rule matrices</td></tr>
+          <tr><td>11. Output bounds were narrowed</td><td class="t-ok">Accepted</td><td>The command's single-document and library JSON, the human output, <code>search_library</code> and the app library reply all use <code>budget.ts</code></td></tr>
+          <tr><td>12. Mode, score units and explicit min-score</td><td class="t-warn">Accepted, except the default</td><td>Every reply carries <code>mode</code>. The <code>min-score</code> text says "semantic". The adapters pass the raw value. <code>hybrid</code> stays the default, because the user asked for the recommended option</td></tr>
+          <tr><td>13. Tests leave high-risk rules unproved</td><td class="t-ok">Accepted</td><td>Separate pages in the fixture, <code>top_k: 1</code> in the hybrid test, a linked-folder test for no path resolution, MCP revocation in one session, and new mutation rows</td></tr>
+          <tr><td>14. The cache fallback can serve stale data</td><td class="t-ok">Accepted</td><td>The cache is out of the plan. The benchmark runs after the implementation and measures the longest transaction and memory</td></tr>
+          <tr><td>15. Citations and ADR wording</td><td class="t-ok">Accepted</td><td>The skill citation is corrected and unmeasured claims are marked. The new ADR supersedes consequences without editing the earlier decision text</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="src">Review record: <a href="records/2026-10-31-library-search-plan-codex-review.md">docs/records/2026-10-31-library-search-plan-codex-review.md</a>. Finding 1: <a href="../electron/main.ts">electron/main.ts</a>:582-589, <a href="../core/index/indexDocument.ts">core/index/indexDocument.ts</a>:269-272. Finding 2: <a href="../core/store/schema.ts">core/store/schema.ts</a>:80-108.</p>
+  </div></div>
+</section>
+
+<section id="today">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Baseline · the code at 2125a71, before this work</span>
+      <h2>At the base commit, a search reaches one document, by meaning only</h2>
+      <p><code>markpdf search</code> needs exactly one of <code>--path</code> or <code>--id</code>. The store compares the query vector with every stored passage of that one document. None of the seven MCP tools does an exact-text search. The app's Semantic Search pane runs only for a ready, active PDF tab.</p>
+      <p>The plan confirms the claims of the idea brief, with one exception. Before this work, no measurement record existed in <code>docs/records/</code>, and whether anyone measured library-scale cost elsewhere is unverified. The measurement record now exists. Five facts that the brief did not mention change the design.</p>
+      <ol>
+        <li><strong>FTS5 can keep a forgotten document's words in the file.</strong> Probes P2 to P4 and the Codex probes show it. See <a href="#forget">Forget</a>.</li>
+        <li><strong><code>document_chunks</code> has a <code>TEXT</code> primary key.</strong> SQLite documents that <code>VACUUM</code> can change rowids of such a table. The plan gives each chunk its own integer key. See <a href="#upgrade">Upgrade</a>.</li>
+        <li><strong>One file path can have more than one <code>documents</code> row.</strong> A changed file that was indexed again keeps its old row. Library search takes the latest row for each path. See <a href="#ranking">Ranking</a>.</li>
+        <li><strong>The app records the path that the renderer sends, without resolving links.</strong> A bytes request can also carry a path that nothing checked. See <a href="#consent">Consent</a>.</li>
+        <li><strong>The upsert overwrites <code>file_path</code> on every write of a known hash.</strong> A document that the command indexed can later carry a path that the app recorded. See <a href="#consent">Consent</a>.</li>
+      </ol>
+    </div>
+    <p class="src">Brief claims: <a href="../cli/spec.ts">cli/spec.ts</a>:150, <a href="../cli/parse.ts">cli/parse.ts</a>:315-321, <a href="../core/store/index.ts">core/store/index.ts</a>:979-1014, <a href="../mcp/toolSchemas.ts">mcp/toolSchemas.ts</a>:146-253, <a href="../src/App.tsx">src/App.tsx</a>:2582-2603. New facts: <a href="../core/store/legacySchema.ts">core/store/legacySchema.ts</a>:24-33, <a href="../core/store/index.ts">core/store/index.ts</a>:263-268, :901-904, <a href="../electron/main.ts">electron/main.ts</a>:582-589, <a href="../electron/semantic.ts">electron/semantic.ts</a>:185-197, <a href="../core/index/indexDocument.ts">core/index/indexDocument.ts</a>:269-272, <a href="../core/ipc/requests.ts">core/ipc/requests.ts</a>:87-95.</p>
+  </div></div>
+</section>
+
+<section id="surfaces">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 1 · the surfaces</span>
+      <h2>Three surfaces get library search, and <code>cli/spec.ts</code> stays the single source of MCP arguments</h2>
+      <p>The <code>markpdf search</code> command gets <code>--library</code> and <code>--mode</code>. MCP <code>search</code> gets <code>mode</code>, and a new eighth tool, <code>search_library</code>, searches the library. The app gets a Library scope with a mode switch in its Semantic Search pane.</p>
+      <p>Both MCP tools take each valued option from the command table in <code>cli/spec.ts</code> through <code>propertyFromOption</code>. Only <code>query</code> is written by hand, and the two tools share it as one constant.</p>
+    </div>
+    <div class="tablewrap">
+      <table class="wide">
+        <thead><tr><th></th><th><code>markpdf search</code></th><th>MCP <code>search</code></th><th>MCP <code>search_library</code>, new</th><th>App Semantic Search pane</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Library search</th><td><code>--library</code>, a third member of <code>exactlyOneOf</code> with <code>--path</code> and <code>--id</code></td><td>No. One document by <code>path</code>, <code>id</code> or <code>ref</code></td><td>Yes. No identity property and no <code>oneOf</code></td><td>A scope switch, "This document" or "Library". The default is "This document"</td></tr>
+          <tr><th scope="row">Mode</th><td><code>--mode hybrid|semantic|exact</code>, default <code>defaultSearchMode</code>, which is <code>hybrid</code></td><td><code>mode</code>, default <code>hybrid</code></td><td><code>mode</code>, default <code>hybrid</code></td><td>Library has a mode switch, "Both", "Meaning" and "Words". The default is "Both". "This document" stays <code>semantic</code></td></tr>
+          <tr><th scope="row">Arguments come from</th><td>The search entry in <code>cli/spec.ts</code></td><td><code>propertyFromOption("search", "mode")</code></td><td><code>propertyFromOption("search", …)</code> for <code>top_k</code>, <code>min_score</code> and <code>mode</code></td><td><code>parseLibrarySearchRequest</code>. <code>topK</code> from 1 to 100, and control characters refused</td></tr>
+          <tr><th scope="row">Documents a library search discovers</th><td>Resolved paths inside a current read grant</td><td>One named document, as today</td><td>Resolved paths inside a current read grant</td><td>Every indexed document</td></tr>
+          <tr><th scope="row">File path in the reply</th><td>Yes, <code>path</code> in each result</td><td>No</td><td>No. An agent continues with <code>read_pages</code> by <code>id</code></td><td>A click opens the recorded path</td></tr>
+          <tr><th scope="row">Reply bound</th><td><code>boundSearchReply</code> for both JSON shapes and the human output</td><td>Its own two-step code, with the new fields</td><td><code>boundSearchReply</code></td><td><code>boundSearchReply</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <p>Every search reply, single-document and library, carries <code>mode</code>. The <code>search_library</code> reply also carries <code>indexSnapshot: true</code>, which means that it comes from the index and not from the current file. Each hit carries its document's <code>snapshotRecordedAt</code> from <code>chunksWrittenAt</code>, read in the same database snapshot as the ranking.</p>
+      <h3>Library state in the app</h3>
+      <p>Library state belongs to the app, not to a tab. It holds the query, mode, results, loading state, error and its own request id. A Library search works when the active PDF is not indexed. The app drops a response when the query, scope, mode or settings changed after its request.</p>
+      <p>A click uses the pure rule <code>libraryHitTarget(tabs, hit)</code>. If a tab has the same content hash, the app switches to it and sets the page and highlight. Otherwise, if the hit has a path, the app opens it with a pending page and highlight. A failed open clears the pending target and shows a message. A hit without a path shows "This document is in the index without a file path."</p>
+    </div>
+    <p class="src">Command table: <a href="../cli/spec.ts">cli/spec.ts</a>:127-151, parser <a href="../cli/parse.ts">cli/parse.ts</a>:295-308, :315-321. MCP schemas: <a href="../mcp/toolSchemas.ts">mcp/toolSchemas.ts</a>:30-33, :98-104, :172. Dispatch: <a href="../mcp/server.ts">mcp/server.ts</a>:34-48. Snapshot time: <a href="../core/store/index.ts">core/store/index.ts</a>:932-949. Open path: <a href="../src/App.tsx">src/App.tsx</a>:1207-1240.</p>
+  </div></div>
+</section>
+
+<section id="consent">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 2 · consent · decided, option C with provenance</span>
+      <h2>Agents discover only documents that MarkPDF read from a granted folder, and access by hash stays as it is</h2>
+      <p>Today a search of one named document needs no permission, also after the grant is removed. The consent ADR records this as intended. Library search changes the exposure. Today an agent must know a path or a hash. With library search, one broad query lists passages from every document that the search can see.</p>
+    </div>
+    <div class="tablewrap">
+      <table class="wide">
+        <thead><tr><th></th><th>A. Index is consent</th><th>B. Grant filter everywhere</th><th>C. Per surface, with provenance</th><th>D. Library roster</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Rule</th><td>Every surface searches every indexed document</td><td>Every surface searches only granted documents</td><td>The app searches every indexed document. Agents discover only documents with a resolved path inside a current read root</td><td>A new consent record lists folders for library search</td></tr>
+          <tr><th scope="row">For</th><td>Matches the current ADR</td><td>One rule</td><td>Agent discovery follows the person's current grants. No filesystem call</td><td>Explicit</td></tr>
+          <tr><th scope="row">Against</th><td>A removed grant does not limit discovery. Agents discover documents that were never granted</td><td>Restricts the person in the app, who has no consent gate, and gives agents no extra restriction over C</td><td>Two rules to explain</td><td>A second consent model</td></tr>
+          <tr><th scope="row">Status</th><td>Not chosen</td><td>Not chosen</td><td class="t-fix">Chosen</td><td>Not chosen</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pair">
+      <div class="t-fix">
+        <span class="label">Discovery in a library search · changes</span>
+        <p>The command and MCP keep only rows with <code>path_provenance = 'resolved'</code> inside a current read root. The check is lexical through <code>containsPath</code>. It makes no filesystem call and never calls <code>isAllowed</code> or <code>requireAccess</code>. The reply counts the other documents in <code>documentsNotDiscoverable</code>, without names or paths.</p>
+      </div>
+      <div class="t-ok">
+        <span class="label">Access to a known document · unchanged</span>
+        <p>A single-document search and <code>read_pages</code> by hash still work after a grant is removed, as the consent ADR records. The journey test at <code>cli/journeys/consent.test.ts:63</code> stays green. MCP has no option that widens the rule.</p>
+      </div>
+    </div>
+    <div class="col stack">
+      <h3>How provenance is written</h3>
+      <ul>
+        <li>The value <code>resolved</code> means that the writer resolved the path through <code>requireAccess</code> and read the bytes from that resolved path. Any other writer stores <code>NULL</code>.</li>
+        <li>The command's index run writes <code>resolved</code>. The app and every bytes request write <code>NULL</code>.</li>
+        <li>The value is written with <code>file_path</code> on every upsert. So a later app write of the same document removes it.</li>
+        <li>Rows written before version 5 have <code>NULL</code>. A person makes them discoverable again with <code>markpdf index &lt;folder&gt; --recursive</code>, which reuses the index and records the provenance.</li>
+        <li>The count in <code>documentsNotDiscoverable</code> shows how many other documents the index holds. The plan accepts this, because the count explains an empty answer and the command prints the remedy on stderr.</li>
+      </ul>
+    </div>
+    <p class="src">Consent ADR: <a href="adr/2026-08-23-Command-Line-Consent-And-Contracts.md">2026-08-23-Command-Line-Consent-And-Contracts.md</a>:156-157. Allowlist: <a href="../core/consent/allowlist.ts">core/consent/allowlist.ts</a>:84-104, :106-118, :126-158. Resolved path today: <a href="../cli/commands/indexCommand.ts">cli/commands/indexCommand.ts</a>:117, :152. Reuse run: <a href="../core/index/indexPdfDocument.ts">core/index/indexPdfDocument.ts</a>:122-140. Test: <a href="../cli/journeys/consent.test.ts">cli/journeys/consent.test.ts</a>:63.</p>
+  </div></div>
+</section>
+
+<section id="forget">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Safety rule 1 · forget and clear</span>
+      <h2>Forget and clear merge the full-text index, and an erase flag survives a crash</h2>
+      <p>Forget withdraws consent for indexed content. Today it runs <code>secure_delete</code>, a checked checkpoint, <code>VACUUM</code> and a second checkpoint under exclusive access. Deleted FTS5 rows can leave their words in segment records. <code>secure-delete</code> and <code>VACUUM</code> alone did not remove them. FTS5 <code>optimize</code> did.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Probe</th><th>Layout</th><th>Without <code>optimize</code></th><th>With <code>optimize</code></th></tr></thead>
+        <tbody>
+          <tr><td class="num">P2</td><td>50 chunks per document, three transactions</td><td class="t-bad">The token stayed after delete and <code>VACUUM</code>, with or without <code>secure-delete</code></td><td class="t-ok">Removed</td></tr>
+          <tr><td class="num">P3</td><td>200 chunks per document, one transaction</td><td class="t-ok"><code>secure-delete</code> alone removed it</td><td class="t-ok">Removed</td></tr>
+          <tr><td class="num">P4</td><td>50 chunks per document, one or three transactions</td><td class="t-bad"><code>secure-delete</code> alone left it</td><td class="t-ok">Removed</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <h3>The erase rule</h3>
+      <ol>
+        <li><code>removeDocument</code> and <code>wipe</code> set <code>exact_index_erase_pending</code> in their own transaction.</li>
+        <li><code>forgetDocument</code> takes exclusive access and removes the document, if it exists.</li>
+        <li>If the erase flag is set, it runs <code>optimize</code>, then the existing <code>reclaimSpace</code>.</li>
+        <li>It clears the flag and runs one more checked checkpoint.</li>
+      </ol>
+      <p>A crash or a failure after the delete leaves the flag set. The next forget or clear finishes the erase before it reports success, also for a document that no longer exists. <code>clear</code> runs <code>delete-all</code> on the FTS table, then the same steps. The existing refusal before deletion stays.</p>
+      <p>At 100,000 chunks a separate probe measured <code>optimize</code> at 1,065 ms and <code>VACUUM</code> at 2,964 ms on a 436 MB file. That probe used vectors in the chunk row and about 2,500 generated words, so its file is larger than the scale probe's store.</p>
+    </div>
+    <p class="src">Forget and clear: <a href="../core/store/index.ts">core/store/index.ts</a>:756-807, refusal :762-775, :1057-1064, :1092-1099. Byte test today: <a href="../core/store/forget.test.ts">core/store/forget.test.ts</a>:41, :106-114.</p>
+  </div></div>
+</section>
+
+<section id="upgrade">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 3 · schema change and in-place upgrade · safety rule 2</span>
+      <h2>Schema version 5 installs only when no other connection is attached</h2>
+      <p>The store is at schema version 4 today. Its migration reads the version before it takes the write lock, so two processes that both read version 4 can both try the same DDL. A process that opened the file before an upgrade keeps its old code. Codex reproduced both faults. An old process that stayed open kept writing after the upgrade, and its forget left words in the file.</p>
+      <ul>
+        <li><code>documents.path_provenance</code> is a new column for the consent rule.</li>
+        <li><code>chunk_text_keys</code> gives each chunk a stable <code>INTEGER PRIMARY KEY</code>, because <code>VACUUM</code> can renumber an implicit rowid.</li>
+        <li><code>chunk_text_fts</code> is a contentless FTS5 table with the <code>unicode61 remove_diacritics 2</code> tokenizer.</li>
+        <li>An insert trigger and a delete trigger on <code>document_chunks</code> keep the index equal to the table. The delete trigger owns the key row.</li>
+        <li>The trigger <code>document_chunks_immutable</code> refuses an update of <code>id</code> or <code>text</code>. An update would need a key that a legacy row does not have yet. No code updates a chunk row today.</li>
+        <li><code>schema_meta</code> gets three keys: <code>exact_index_state</code>, <code>exact_index_cursor</code> and <code>exact_index_erase_pending</code>.</li>
+      </ul>
+    </div>
+    <div class="chain" style="--n:3">
+      <div class="node"><span class="label">1 · Version under the lock</span>Read the version inside the write transaction. A process that finds the work done does nothing. This also fixes the same race for versions 1 to 4.</div>
+      <div class="node"><span class="label">2 · Exclusive access</span>For an existing file below version 5, take exclusive access first. If another connection is attached, refuse with <code>StoreUpgradeBusyError</code> and change nothing.</div>
+      <div class="node"><span class="label">3 · Install</span>Install the version 5 DDL and stamp the version in the same transaction.</div>
+    </div>
+    <div class="col stack">
+      <p>A brand-new file at version 0 needs no exclusive access, because no older process can have it open. The busy refusal says: "MarkPDF must upgrade its index, but another MarkPDF window, command or agent session has it open. Close them and try again." The command maps it to exit 9, index busy.</p>
+      <p>The DDL does not tokenize existing text. Its duration was not measured on its own. The backfill, which does the tokenizing, is in the measurement record.</p>
+    </div>
+    <p class="src">Migration: <a href="../core/store/schema.ts">core/store/schema.ts</a>:6, :29, :79-111, <code>SchemaTooNewError</code> :81. Open check: <a href="../core/store/index.ts">core/store/index.ts</a>:462. Exclusive access: :775-807. Foreign keys: :456-457. Chunk table: <a href="../core/store/legacySchema.ts">core/store/legacySchema.ts</a>:24-44.</p>
+  </div></div>
+</section>
+
+<section id="backfill">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 3 · backfill of documents that are already indexed</span>
+      <h2>A backfill fills the index in bounded batches of 500 chunks and yields between them</h2>
+      <p>Existing chunks have no key row and no index entry after the upgrade. The backfill adds them. Each batch is one <code>IMMEDIATE</code> transaction, together with its cursor.</p>
+    </div>
+    <div class="chain" style="--n:4">
+      <div class="node"><span class="label">1 · Cursor</span>Read the cursor, a pair of <code>document_id</code> and chunk <code>id</code>.</div>
+      <div class="node"><span class="label">2 · Batch</span>Read the next 500 chunk rows in that order. Add a key row and an index row for each row without a key. Move the cursor.</div>
+      <div class="node"><span class="label">3 · End check</span>At the end, look for any chunk without a key in the same transaction. If none, write <code>complete</code>. If one exists, reset the cursor.</div>
+      <div class="node"><span class="label">4 · Yield</span>Between batches, <code>completeExactIndex</code> checks the signal and awaits <code>yieldControl</code>.</div>
+    </div>
+    <div class="col stack">
+      <p>After a cursor reset, the next batches repair all gaps in the same bounded way. When the state is already <code>complete</code>, a batch does nothing. Clear sets <code>complete</code>.</p>
+      <h3>Who runs it</h3>
+      <ul>
+        <li>The app's main process starts one shared job after the store opens. The job registry holds it, so a clear drains it and quit cancels it. A library search awaits the same job.</li>
+        <li>The command and MCP run it before an <code>exact</code> or <code>hybrid</code> search when the state is not <code>complete</code>. The command shows progress on stderr. MCP sends progress notifications when the client gave a token.</li>
+        <li>Two processes can run batches at the same time, because each one reads the cursor inside its write transaction.</li>
+      </ul>
+    </div>
+    <p class="src">Clear drains jobs: <a href="../core/index/clearIndex.ts">core/index/clearIndex.ts</a>:13-17. MCP progress: <a href="../mcp/operations.ts">mcp/operations.ts</a>:40-41. Yield pattern today: <a href="../electron/semantic.ts">electron/semantic.ts</a>:209-211.</p>
+  </div></div>
+</section>
+
+<section id="query">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Exact query handling</span>
+      <h2>A raw query never reaches FTS5, and control characters are refused</h2>
+      <p><code>buildExactMatch(query)</code> in <code>core/index/exactQuery.ts</code> returns an expression or a refusal. It refuses a control character, including NUL, because Codex showed that NUL makes FTS5 fail even inside quotes. It refuses a query longer than 1,000 characters or with more than 32 parts.</p>
+      <p>It splits the query into quoted phrases and bare words, and drops each part that has no token character. It puts each part in double quotes, doubles each inner quote, and joins the parts with spaces, which FTS5 reads as AND. The result is bound as a parameter.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Input</th><th>Expression</th></tr></thead>
+        <tbody>
+          <tr><td><code>clause 4.2(b)</code></td><td><code>"clause" "4.2(b)"</code></td></tr>
+          <tr><td><code>"net 30" invoice</code></td><td><code>"net 30" "invoice"</code></td></tr>
+          <tr><td><code>text:secret</code></td><td><code>"text:secret"</code></td></tr>
+          <tr><td><code>NEAR(a b)</code></td><td><code>"NEAR(a" "b)"</code></td></tr>
+          <tr><td><code>say "hi</code></td><td><code>"say" """hi"</code></td></tr>
+          <tr><td><code>() --</code></td><td class="t-warn">No words</td></tr>
+          <tr><td><code>abc\u0000def</code></td><td class="t-warn">Refused</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <p>In this plan, "exact" means exact words. The tokenizer folds case and removes diacritics, and a phrase matches consecutive tokens. So "clause 4.2(b)" also matches "Clause 4-2 b".</p>
+    </div>
+  </div></div>
+</section>
+
+<section id="ranking">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 4 · ranking and modes</span>
+      <h2>Hybrid mode fuses the two rankings by position, inside one read snapshot</h2>
+      <p>The command takes <code>--mode</code>, and both MCP tools take <code>mode</code>. The default for these three is <code>hybrid</code>. The app always sends a mode. Every reply states its <code>mode</code>, so a caller can see the meaning of <code>score</code>.</p>
+      <p>All reads of one library search run in one deferred read transaction: candidate documents, both rankings, the text of the selected hits, and <code>chunksWrittenAt</code>. The query embedding runs before it. So a writer between the stages cannot mix two states of the index.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th><code>semantic</code></th><th><code>exact</code></th><th><code>hybrid</code></th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Ranking used</th><td>Cosine only. Order is score, then chunk id</td><td><code>bm25</code> only. Order is rank, then chunk id</td><td>Both, fused with RRF</td></tr>
+          <tr><th scope="row"><code>score</code></th><td>Cosine</td><td><code>-bm25</code>, higher is better</td><td>RRF value</td></tr>
+          <tr><th scope="row"><code>semanticScore</code></th><td>Cosine</td><td><code>null</code></td><td>Cosine, or <code>null</code></td></tr>
+          <tr><th scope="row"><code>matchedBy</code></th><td><code>["semantic"]</code></td><td><code>["exact"]</code></td><td>One or both</td></tr>
+          <tr><th scope="row">Query embedding</th><td>Yes</td><td>Never loads or calls the embedder</td><td>Yes</td></tr>
+          <tr><th scope="row">Explicit <code>--min-score</code></th><td>Filters before fusion. The settings fallback applies</td><td class="t-warn">Refused: "--min-score has no effect with --mode exact."</td><td>Filters the semantic ranking before fusion. The settings fallback applies</td></tr>
+          <tr><th scope="row">Query with no words</th><td>Embeds any query that is not empty after trimming, also a query with no words</td><td class="t-warn">Refused: "The query has no words to match exactly."</td><td>Runs the semantic ranking only. The reply says <code>exactQuery: null</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <p>RRF scores each chunk with <code>fused(c) = Σ 1 / (60 + rank(c))</code>, with rank from 1. It uses rank positions only, so <code>bm25</code> and cosine need no common scale. Ties go first to a chunk in both rankings, then to the higher cosine, then to the chunk id. The adapters pass the raw optional <code>--min-score</code>, and core decides.</p>
+      <h3>Which documents a library search ranks</h3>
+      <ol>
+        <li>For each recorded path, the row with the latest <code>last_opened_at</code>, then the highest <code>id</code>. Each row without a path counts on its own. This runs first, so a newer version that a later step excludes cannot bring back an older one.</li>
+        <li>On the command and MCP, rows with <code>path_provenance = 'resolved'</code> inside a current read root.</li>
+        <li>Chunks with the active profile and version, and an embedding with the active model, model version and dimensions. The exact ranking applies this through <code>EXISTS</code> on <code>chunk_embeddings</code>. A document with no eligible chunk counts in <code>documentsOutsideActiveScope</code>.</li>
+      </ol>
+      <h3>Depth, cap and truncation</h3>
+      <p>Each ranking starts with a depth of <code>min(400, max(50, 4 × topK))</code>. A library list keeps at most <code>libraryHitsPerDocument = 3</code> passages from one document, then cuts to <code>topK</code>. If the list is shorter than <code>topK</code> and a ranking filled its depth, the depth doubles and the search ranks again, up to 1,600. If a ranking still fills 1,600, the reply says <code>candidatesTruncated: true</code>. A library list stays in rank order. A single-document search has no cap and keeps page order.</p>
+    </div>
+    <p class="src">Today's search: <a href="../core/store/index.ts">core/store/index.ts</a>:979-1014, page order :1008-1013, latest row rule :1066-1071, one-snapshot pattern :813-823, :882-891. Full cosine: <a href="../core/store/vector.ts">core/store/vector.ts</a>:27-31. Query trimming: <a href="../core/index/search.ts">core/index/search.ts</a>:81-82. Min-score fallback today: <a href="../mcp/operations.ts">mcp/operations.ts</a>:292-294, <a href="../cli/commands/searchCommand.ts">cli/commands/searchCommand.ts</a>:108-110.</p>
+  </div></div>
+</section>
+
+<section id="bounds">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 5 · output bounds</span>
+      <h2>Every changed command and MCP reply, and the app's library reply, uses <code>budget.ts</code></h2>
+      <p>A new core function, <code>boundSearchReply</code> in <code>core/output/searchReply.ts</code>, takes the hits, the fixed fields and a render function. It bounds the reply in two steps.</p>
+    </div>
+    <div class="chain" style="--n:4">
+      <div class="node"><span class="label">1 · Hits</span>The ranked hits and the fixed fields.</div>
+      <div class="node"><span class="label">2 · Content bound</span><code>boundItems</code> keeps whole hits within <code>DEFAULT_CONTENT_BUDGET</code>, 20,000 bytes of document text.</div>
+      <div class="node"><span class="label">3 · Reply bound</span><code>fitReply</code> fits the finished JSON into <code>DEFAULT_REPLY_BUDGET</code>, 48,000 bytes.</div>
+      <div class="node"><span class="label">4 · Report</span>The reply gives <code>truncated</code>, <code>omittedResults</code>, <code>omittedBytes</code> and <code>totalBytes</code>.</div>
+    </div>
+    <div class="col stack">
+      <p>Document text means the snippet, the heading titles, the document name and the path. <code>boundSearchReply</code> serves the command's single-document and library JSON, MCP <code>search_library</code> and the app's library IPC reply. The command's human output renders the same bounded hit list, and a stderr note says when results were left out. MCP <code>search</code> keeps its own two-step code and adds the new fields. The MCP server already refuses any reply over the reply budget.</p>
+    </div>
+    <p class="src">Budgets: <a href="../core/output/budget.ts">core/output/budget.ts</a>:58, :72, <code>fitReply</code> :117-140, <code>boundItems</code> :333-350. MCP pattern: <a href="../mcp/operations.ts">mcp/operations.ts</a>:300-331. Server refusal: <a href="../mcp/server.ts">mcp/server.ts</a>:199-210. Command output today: <a href="../cli/commands/searchCommand.ts">cli/commands/searchCommand.ts</a>:118-128.</p>
+  </div></div>
+</section>
+
+<section id="performance">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 6 · performance at library scale</span>
+      <h2>The 10,000-chunk target is met, and every target at 100,000 and 500,000 chunks is not met</h2>
+      <p>The benchmark ran after the implementation. The search by meaning sets the hybrid cost, and a fixed cost for each search grows with the library. One attempt to cut the fixed cost was slower in a partial second run, and it is reverted. On 1 November 2026 the user decided that this work adds no new performance step and no package. The failed targets stay a follow-up.</p>
+      <p>Semantic library search reads every vector in the active scope of the visible documents. Pass one reads only the chunk id and the vector and keeps the best candidates. Pass two reads text and headings for those candidates only. The plan has no vector cache.</p>
+    </div>
+    <div class="stack">
+      <span class="label">Targets and the measured result</span>
+      <div class="tablewrap">
+        <table class="wide">
+          <thead><tr><th>Size</th><th>Target</th><th>Measured</th><th>Result</th></tr></thead>
+          <tbody>
+            <tr><td>S, 10,000 chunks, about 100 PDFs</td><td>Hybrid p95 ≤ 150 ms</td><td class="num">87 ms</td><td class="t-ok">Met</td></tr>
+            <tr><td>M, 100,000 chunks, about 1,000 PDFs</td><td>Hybrid p95 ≤ 500 ms</td><td class="num">924 ms</td><td class="t-bad">Not met</td></tr>
+            <tr><td>M, 100,000 chunks</td><td>Exact p95 ≤ 200 ms</td><td class="num">322 ms</td><td class="t-bad">Not met</td></tr>
+            <tr><td>M, 100,000 chunks</td><td>Backfill ≤ 3 s in total</td><td class="num">7.8 s</td><td class="t-bad">Not met</td></tr>
+            <tr><td>L, 500,000 chunks, about 5,000 PDFs</td><td>Hybrid p95 ≤ 2.5 s</td><td class="num">4.8 s</td><td class="t-bad">Not met</td></tr>
+            <tr><td>L, 500,000 chunks</td><td>No backfill transaction over 250 ms</td><td class="num">368 ms, longest</td><td class="t-bad">Not met</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="src">These are store-level targets. They exclude the query embedding, and they are not an app responsiveness guarantee. Full table: <a href="records/2026-10-31-library-search-measurement.md">docs/records/2026-10-31-library-search-measurement.md</a>.</p>
+    </div>
+    <div class="stack">
+      <span class="label">Probe results · indicative, raw SQL</span>
+      <div class="tablewrap">
+        <table class="wide">
+          <thead><tr><th>Chunks</th><th>Store size</th><th>Today's per-row work</th><th>Vectors only</th><th>FTS, two common words</th><th>FTS, rare word</th><th>Backfill, one statement</th></tr></thead>
+          <tbody>
+            <tr><td class="num">20,000</td><td class="num">72 MB</td><td class="num">78 ms</td><td class="num">53 ms</td><td class="num">23 ms</td><td class="num">&lt; 1 ms</td><td class="num">144 ms</td></tr>
+            <tr><td class="num">100,000</td><td class="num">357 MB</td><td class="num">420 ms</td><td class="num">279 ms</td><td class="num">111 ms</td><td class="num">&lt; 1 ms</td><td class="num">858 ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="src">Earlier raw SQL probes, before the implementation. Warm cache, one machine, a 20-word synthetic vocabulary, no query embedding.</p>
+    </div>
+    <div class="col stack">
+      <h3>How the benchmark measures</h3>
+      <ol>
+        <li>After the implementation, <code>scripts/bench/librarySearchBenchmark.mjs</code> was added. Like the chunking benchmark, it runs plain JavaScript against <code>dist-core/</code>.</li>
+        <li>Write stores through the production API at S, M and L, with skewed document sizes and a vocabulary of at least 20,000 words.</li>
+        <li>Report p50 and p95 for each mode, for rare, common, multi-word and no-hit queries. Also report the first query in a new process, backfill time and the longest backfill transaction, trigger overhead on writes, forget and clear time, store size with and without the exact index, and peak resident memory.</li>
+        <li>Run <code>heavy-run --label markpdf -- node scripts/bench/librarySearchBenchmark.mjs</code> after <code>npm run build:core</code>. Record the result in <code>docs/records/&lt;date&gt;-library-search-measurement.md</code>.</li>
+      </ol>
+      <p>If a target fails, the next step is a decision for the user. A per-process cache would need a local write counter in addition to <code>PRAGMA data_version</code>, because <code>data_version</code> does not change for the connection's own commits. This is Codex finding 14.</p>
+    </div>
+    <p class="src">Existing benchmark: <a href="../scripts/bench/chunkingBenchmark.mjs">scripts/bench/chunkingBenchmark.mjs</a>:1-16. Full cosine: <a href="../core/store/vector.ts">core/store/vector.ts</a>:27-31.</p>
+  </div></div>
+</section>
+
+<section id="delivery">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Work order · as planned, all six capabilities pass</span>
+      <h2>Six capabilities, then the benchmark and the documents</h2>
+      <p>Each capability starts with its own outer acceptance test, run Red first. Forget and clear come second, right after the schema exists. The benchmark runs after the six capabilities, because it measures the real implementation.</p>
+    </div>
+    <div class="work">
+      <article class="wcard">
+        <div class="top"><span class="letter">1</span><h3>Capability 1 · exact words in one document, on the command line</h3></div>
+        <ul>
+          <li>Includes the version 5 schema, the triggers and the immutability rule.</li>
+          <li>Outer test <code>cli/journeys/exactSearch.test.ts</code>. A three-page PDF has "clause 4.2(b) applies" on page 1 and "clause 2.4(b) applies" on page 2.</li>
+          <li>Inner loops: <code>core/index/exactQuery.test.ts</code> against real FTS5, <code>core/store/exactIndex.test.ts</code> for each public write method, immutability and rowid reuse, the mixed-model scope rule, and <code>cli/parse.test.ts</code>.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> <code>--mode exact</code> returns one result, page 1, with <code>matchedBy: ["exact"]</code> and <code>mode: "exact"</code>.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">2</span><h3>Capability 2 · forget and clear remove the exact-word index</h3></div>
+        <ul>
+          <li>Outer test extends <code>core/store/forget.test.ts</code>. Three documents in three transactions, with a long lowercase token in the middle one.</li>
+          <li>Recovery test: the chunks are deleted while the erase flag is set, as a crash would leave them. Then <code>forgetDocument</code> runs for a missing hash.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> after forget and after clear, the file and its WAL do not contain the token, <code>fts5vocab</code> has no row for it, and a surviving document is still found.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">3</span><h3>Capability 3 · an existing index is upgraded and backfilled</h3></div>
+        <ul>
+          <li>Outer test <code>core/store/exactIndexUpgrade.test.ts</code> writes a version 4 file with its own DDL and real chunks.</li>
+          <li>Inner loops: an attached connection makes the upgrade refuse and change nothing, two connections that saw version 4 upgrade once, a document larger than one batch, gaps below the cursor, cancellation between batches, and clear during a backfill.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> after <code>completeExactIndex</code>, an exact search finds a word from before the upgrade.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">4</span><h3>Capability 4 · hybrid ranking and modes through MCP <code>search</code></h3></div>
+        <ul>
+          <li>Outer test extends <code>mcp/journeys/toolSession.test.ts</code> with <code>mode: "hybrid"</code>, <code>top_k: 1</code> and the same fixture.</li>
+          <li>Inner loops: <code>core/index/fusion.test.ts</code> with RRF values and ties written by hand, <code>mcp/toolSchemas.test.ts</code>, <code>mcp/arguments.test.ts</code>, and the explicit-versus-absent <code>min_score</code> rule.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> the reply gives page 1 with <code>matched_by</code> that contains <code>exact</code>, and <code>mode: "hybrid"</code>.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">5</span><h3>Capability 5 · library search on the command line and through MCP</h3></div>
+        <ul>
+          <li>Outer test <code>cli/journeys/librarySearch.test.ts</code>. Grant folders A and B, index one PDF in each, write a changed A file at the same path and index it again, then remove the grant for B.</li>
+          <li>Outer MCP test in one session. Eight tools are listed, hits come in rank order with <code>contentHash</code> and no path, and a document stops appearing after its grant is removed.</li>
+          <li>Inner loops: <code>core/index/librarySearch.test.ts</code>, including a stored path whose folder became a link, <code>core/output/searchReply.test.ts</code> and <code>mcp/server.test.ts</code>.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> the command returns hits from the current A document only, with <code>documentsNotDiscoverable: 1</code>.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">6</span><h3>Capability 6 · Library scope in the app</h3></div>
+        <ul>
+          <li>Outer test <code>tests/e2e/library-search.spec.ts</code>. Open and index two PDFs, close the second, switch the pane to Library, and search for a phrase that only the second PDF has.</li>
+          <li>Inner loops: <code>src/libraryHitTarget.test.ts</code> for the three targets and the stale-response rule, and <code>core/ipc/requests.test.ts</code>.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> a click on the hit opens the second PDF at the page, with the passage highlighted.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">7</span><h3>The measurement script and its record</h3></div>
+        <ul>
+          <li><code>scripts/bench/librarySearchBenchmark.mjs</code> at sizes S, M and L.</li>
+          <li>See <a href="#performance">Performance</a> for what it reports.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> the result is recorded in <code>docs/records/</code>.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">8</span><h3>ADR, README, skill and CHANGELOG</h3></div>
+        <ul>
+          <li>See <a href="#adr">ADR</a> for the content.</li>
+          <li><code>CHANGELOG.md</code> gets entries for the completed work, under Added and Fixed.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> the ADR's Verification section names the tests of the test plan.</p>
+      </article>
+    </div>
+    <p class="small muted">Before the merge: <code>npm test</code>, <code>npm run build</code>, the typecheck commands of AGENTS.md, and <code>npm run test:e2e</code> through <code>heavy-run</code>. The repository has no lint command.</p>
+    <div class="aside">
+      <span class="label">Left out on purpose</span>
+      <h3>What this plan does not build</h3>
+      <ul>
+        <li>A vector extension such as <code>sqlite-vec</code>, which is a new package, and any per-process vector cache.</li>
+        <li>Substring search with the <code>trigram</code> tokenizer.</li>
+        <li>A query language beyond words and quoted phrases.</li>
+        <li>A <code>forget</code> command or MCP tool.</li>
+        <li>A library search box on the app's start screen.</li>
+        <li>Exact or hybrid modes in the app's per-document panel. It stays <code>semantic</code>, because the find bar covers exact words in the open document.</li>
+      </ul>
+    </div>
+  </div></div>
+</section>
+
+<section id="tdd">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 7 · the TDD policy</span>
+      <h2>Each capability starts Red at its outer test, and each kind of rule has its own test layer</h2>
+      <p>This work is a new cross-layer user capability. So each vertical capability starts with an outer acceptance test that runs Red first. Inner loops drive the rules, and each capability ends Green after refactor. When a first Red is only a missing option or export, the implementer adds the minimum interface and runs the test again to reach a behavioral failure.</p>
+      <p>The table gives the layer for each kind of rule. Rule matrices, such as the stale-response and hit-target rules, are pure tests. The live quality test with the real model is deferred and not written.</p>
+      <p>The first fixture puts "clause 4.2(b)" and "clause 2.4(b)" on separate pages. The test embedder is a bag of words, so only the phrase match separates the two pages.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Rule</th><th>Layer</th></tr></thead>
+        <tbody>
+          <tr><td>MATCH expression, mode rule, RRF, per-document cap, discovery, latest row per path</td><td><code>core/**/*.test.ts</code></td></tr>
+          <tr><td>Triggers, immutability, backfill, upgrade protocol, forget, clear</td><td><code>core/store/*.test.ts</code> with real temporary files</td></tr>
+          <tr><td>Reply bounds</td><td><code>core/output/searchReply.test.ts</code>, <code>mcp/server.test.ts</code></td></tr>
+          <tr><td>Argument parsing, exit codes, JSON shape, stderr note</td><td><code>cli/**/*.test.ts</code> and <code>cli/journeys/</code></td></tr>
+          <tr><td>Tool schemas, argument checks, adapter rules</td><td><code>mcp/**/*.test.ts</code></td></tr>
+          <tr><td>Tool list and a real stdio session</td><td><code>mcp/journeys/toolSession.test.ts</code></td></tr>
+          <tr><td>IPC request parser</td><td><code>core/ipc/requests.test.ts</code></td></tr>
+          <tr><td>Hit target and stale-response rules</td><td><code>src/libraryHitTarget.test.ts</code></td></tr>
+          <tr><td>Library scope, open and highlight</td><td><code>tests/e2e/library-search.spec.ts</code></td></tr>
+          <tr><td>Retrieval quality with the real model</td><td class="t-idle">Deferred. An opt-in <code>npm run test:live</code> test needs the 133 MB model and a fixture with written ground truth</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="src">Test embedder: <a href="../core/index/deterministicEmbedder.ts">core/index/deterministicEmbedder.ts</a>:4-10. Policy: <a href="../AGENTS.md">AGENTS.md</a>, "Choose the loop shape" and "Verify that the test protects the behavior".</p>
+  </div></div>
+</section>
+
+<section id="record">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Implementation record · Red and Green</span>
+      <h2>Each outer test failed for the expected reason first, then passed</h2>
+      <p>When the first failure was only a missing option or module, the minimum interface was added and the test ran again. The "Behavioral Red" column gives that second failure.</p>
+    </div>
+    <div class="tablewrap">
+      <table class="wide">
+        <thead><tr><th>Capability</th><th>Outer test</th><th>First failure</th><th>Behavioral Red</th><th>Green</th></tr></thead>
+        <tbody>
+          <tr><td>1. Exact words, command line</td><td><code>cli/journeys/exactSearch.test.ts</code></td><td>Exit 2. <code>--mode</code> was an unknown option</td><td>After the option was added: "expected undefined to be 'exact'"</td><td class="t-ok">Passes</td></tr>
+          <tr><td>2. Forget and clear</td><td><code>core/store/forget.test.ts</code>, three new cases</td><td>None needed, the interface existed</td><td>The token was still in the file after forget, after clear and after an interrupted erase</td><td class="t-ok">15 of 15</td></tr>
+          <tr><td>3. Upgrade and backfill</td><td><code>core/store/exactIndexUpgrade.test.ts</code></td><td>The backfill module was missing</td><td>With a stub, the exact search after the upgrade returned <code>[]</code> instead of <code>[1]</code></td><td class="t-ok">7 of 7</td></tr>
+          <tr><td>4. Hybrid through MCP <code>search</code></td><td><code>mcp/journeys/toolSession.test.ts</code>, new case</td><td>"mode is not an argument this tool takes"</td><td>After the schema property: "expected undefined to be 'hybrid'"</td><td class="t-ok">Passes</td></tr>
+          <tr><td>5. Library, command line</td><td><code>cli/journeys/librarySearch.test.ts</code></td><td>Exit 2. <code>--library</code> was unknown</td><td>After the flag: exit 4, not indexed</td><td class="t-ok">Passes</td></tr>
+          <tr><td>5. Library, MCP</td><td><code>mcp/journeys/toolSession.test.ts</code>, two cases</td><td>Seven tools listed, <code>search_library</code> missing</td><td>The same failure</td><td class="t-ok">Passes</td></tr>
+          <tr><td>6. App Library scope</td><td><code>tests/e2e/library-search.spec.ts</code></td><td>Timeout, no Library button</td><td>The same failure</td><td class="t-ok">Passes in 7.8 s</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <h3>Inner loops, each Red before Green</h3>
+      <ul>
+        <li><code>core/index/exactQuery.test.ts</code>: 15 assertion failures against a stub, then 30 of 30.</li>
+        <li><code>core/store/exactIndex.test.ts</code>: 11 failures against a stub, then 15 of 15.</li>
+        <li><code>core/index/searchMode.test.ts</code> and <code>core/index/exactSearch.test.ts</code>: exact mode returned pages 1, 2 and 3 and embedded the query, then 11 of 11.</li>
+        <li><code>cli/commands.test.ts</code>: 2 new failures, then Green.</li>
+        <li><code>core/index/librarySearch.test.ts</code>: 9 failures against stubs, then 9 of 9.</li>
+        <li><code>core/output/searchReply.test.ts</code>: 5 failures against a stub, then 6 of 6.</li>
+        <li><code>core/ipc/requests.test.ts</code> and <code>src/libraryHitTarget.test.ts</code>: missing exports, then 31 of 31.</li>
+      </ul>
+    </div>
+    <div class="aside">
+      <span class="label">Exception to the TDD order</span>
+      <h3>Two pieces of code came before their tests</h3>
+      <p>The upgrade protocol was written in the schema step of capability 1. The hybrid branch of the fusion was written in the semantic step of capability 1. For both, the mutation that removes the rule is the Red evidence. The protocol tests and <code>core/index/fusion.test.ts</code> fail under the mutation and pass when the code is restored.</p>
+    </div>
+    <div class="col stack">
+      <h3>Defects and design problems that the tests found</h3>
+      <ul>
+        <li>The existing forget sequence left the exact-word tokens of a forgotten document in the file.</li>
+        <li>The first Electron journey asserted too early to see a highlight being cleared.</li>
+        <li>Two older migration tests write a version 2 file without <code>schema_meta</code>. The version 5 step now creates that table when it is missing.</li>
+        <li>The core boundary test forbids the identifier <code>document</code>, which the first library code used.</li>
+        <li>A library test indexed documents without their cached text. So their scope was never claimed, and <code>snapshotRecordedAt</code> was <code>null</code>. The fixture now stores the text, as real indexing does.</li>
+      </ul>
+      <h3>Existing tests that changed</h3>
+      <ul>
+        <li><code>cli/commands.test.ts</code> and <code>mcp/operations.test.ts</code>: the threshold-source tests now pass <code>mode: semantic</code>. Under the new <code>hybrid</code> default, the threshold does not filter an exact match. This is the intended contract change.</li>
+        <li><code>cli/help.test.ts</code>: the synopsis now lists <code>--library</code>.</li>
+        <li><code>mcp/toolSchemas.test.ts</code> and <code>mcp/journeys/toolSession.test.ts</code>: eight tools.</li>
+      </ul>
+      <h3>Documentation delivered</h3>
+      <ul>
+        <li><a href="adr/2026-10-31-Library-And-Exact-Word-Search.md"><code>docs/adr/2026-10-31-Library-And-Exact-Word-Search.md</code></a>, with its Verification section.</li>
+        <li><a href="records/2026-10-31-library-search-measurement.md"><code>docs/records/2026-10-31-library-search-measurement.md</code></a>.</li>
+        <li><code>README.md</code>: the command usage, <code>--library</code>, <code>--mode</code>, and the MCP table with eight tools.</li>
+        <li><code>skills/markpdf-retrieval/SKILL.md</code>: the library route and the exact mode.</li>
+        <li><code>CHANGELOG.md</code>: three entries under Added and two under Fixed.</li>
+      </ul>
+      <h3>Deviations from the plan</h3>
+      <ul>
+        <li>The opt-in retrieval quality test with the real model is not written.</li>
+        <li>The Electron journey covers the main outcome. Switching to an open tab, a missing file and a pathless hit are covered by <code>src/libraryHitTarget.test.ts</code>, not by separate journeys.</li>
+        <li><code>migrateFrom</code> is exported, so that a test can pass a stale observation of the version.</li>
+        <li>If two new MarkPDF processes open an older index at the same moment, both can refuse the upgrade. Opening again succeeds. The ADR records this.</li>
+      </ul>
+    </div>
+  </div></div>
+</section>
+
+<section id="mutations">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Implementation record · mutation proofs</span>
+      <h2>16 of 18 mutations made a test fail at once, one did not bite, and one exposed a weak journey</h2>
+      <p>Each mutation removes or breaks one high-risk rule. The plan named the test that must fail under each one. The table gives what happened.</p>
+    </div>
+    <div class="tablewrap">
+      <table class="wide">
+        <thead><tr><th>Rule</th><th>Mutation</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Grant filter for agents</td><td>Allow every document</td><td class="t-ok">3 core tests and the command journey fail</td></tr>
+          <tr><td>Provenance rule</td><td>Ignore <code>path_provenance</code></td><td class="t-ok">2 core tests fail</td></tr>
+          <tr><td>No path resolution</td><td>Resolve the stored path with <code>realpathSync</code></td><td class="t-ok">The linked-folder test fails</td></tr>
+          <tr><td>Latest row per path</td><td>Search every row</td><td class="t-ok">2 core tests and the command journey fail</td></tr>
+          <tr><td>Forget erase</td><td>Remove <code>optimize</code></td><td class="t-ok">The forget and recovery tests fail</td></tr>
+          <tr><td>Clear erase</td><td>Remove <code>delete-all</code> and <code>optimize</code></td><td class="t-warn">Did not bite. Deleting every row empties every FTS5 segment, so <code>secure_delete</code> and <code>VACUUM</code> remove the tokens anyway. Both steps stay as a second guard</td></tr>
+          <tr><td>Erase recovery</td><td>The delete does not record the owed erase</td><td class="t-ok">The forget and recovery tests fail</td></tr>
+          <tr><td>Upgrade exclusivity</td><td>Upgrade without exclusive access</td><td class="t-ok">The attached-connection test fails</td></tr>
+          <tr><td>Version read under the lock</td><td>Use the stale observation</td><td class="t-ok">The two-process test fails</td></tr>
+          <tr><td>Immutability</td><td>Drop the trigger</td><td class="t-ok">The immutability test fails</td></tr>
+          <tr><td>Delete trigger</td><td>Drop the trigger</td><td class="t-ok">The one-row-per-chunk test fails</td></tr>
+          <tr><td>Backfill completion</td><td>Write <code>complete</code> without the gap check</td><td class="t-ok">The gap repair test fails</td></tr>
+          <tr><td>Exact model scope</td><td>Remove the <code>EXISTS</code> clause</td><td class="t-ok">The mixed-model test fails</td></tr>
+          <tr><td>RRF fusion</td><td>Return the semantic ranking in hybrid mode</td><td class="t-ok">2 fusion tests and the MCP journey fail</td></tr>
+          <tr><td>Safe MATCH expression</td><td>Pass the raw query</td><td class="t-ok">13 builder tests fail</td></tr>
+          <tr><td>Reply bound</td><td>Skip <code>fitReply</code></td><td class="t-ok">The escaping test fails</td></tr>
+          <tr><td>App ignores the per-document search in the Library scope</td><td>Remove the early return</td><td class="t-warn">At first the journey still passed, because it asserted before the delayed search cleared the highlight. A check after the window settles was added. Now the journey fails under the mutation and passes restored</td></tr>
+          <tr><td>Hit target by content hash</td><td>Match any PDF tab</td><td class="t-ok">3 rule tests fail</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div></div>
+</section>
+
+<section id="adr">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 8 · ADR · recorded</span>
+      <h2>Yes, the work needs an ADR, and the earlier ADRs keep their decision text</h2>
+      <p>The new ADR is <a href="adr/2026-10-31-Library-And-Exact-Word-Search.md"><code>docs/adr/2026-10-31-Library-And-Exact-Word-Search.md</code></a>. The work needs one for four reasons. It changes the store schema. It adds a derived index that consent withdrawal must erase. It changes a consent consequence of an earlier ADR. It adds an MCP tool to a list that an earlier ADR keeps small.</p>
+      <ul>
+        <li>It records the consent rule with provenance, the FTS5 design, the upgrade protocol, the erase rule, the ranking and the eighth MCP tool.</li>
+        <li>Its Verification section names the tests of the test plan.</li>
+        <li>It states which consequences of the consent ADR and the MCP server ADR it supersedes. It does not edit their decision text.</li>
+      </ul>
+      <p>The other documents are delivered. The README has the command usage, <code>--library</code>, <code>--mode</code>, and the MCP table with eight tools. The <code>markpdf-retrieval</code> skill has the library route and the exact mode, next to its search by hash and by open-document ref. <code>CHANGELOG.md</code> has three entries under Added and two under Fixed. See <a href="#record">Red and Green</a> for the full list.</p>
+    </div>
+    <p class="src">ADRs: <a href="adr/2026-08-23-Command-Line-Consent-And-Contracts.md">2026-08-23-Command-Line-Consent-And-Contracts.md</a>:156-157, <a href="adr/2026-08-23-MCP-Server-Adapter.md">2026-08-23-MCP-Server-Adapter.md</a>:79-85. Skill: <a href="../skills/markpdf-retrieval/SKILL.md">skills/markpdf-retrieval/SKILL.md</a>:14, :19.</p>
+  </div></div>
+</section>
+
+<section id="evidence">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Evidence and limits</span>
+      <h2>The tests, the build, the Electron journeys and the benchmark ran</h2>
+      <p>The plan cites <code>file:line</code> at 2125a71 for each claim about existing behavior. Its six early probes ran raw SQL that imitates the store, and they did not run the production code path. The probe sources are not kept in the repository. The implementation record gives the test runs, and the measurement record gives the benchmark.</p>
+    </div>
+    <div class="ledger">
+      <div>
+        <span class="tag t-ok">Checked</span>
+        <ul>
+          <li>The claims of the idea brief, against the code.</li>
+          <li>P1: FTS5, <code>secure-delete</code>, <code>contentless_delete</code> and <code>trigram</code> are available in SQLite 3.53.4 with <code>better-sqlite3</code> 13.0.3, under Electron 39.8.10 and Node 24.21.0.</li>
+          <li>P2 to P4: <code>optimize</code> removed the deleted token in every layout.</li>
+          <li>P5: query and backfill times at 20,000 and 100,000 chunks, and the cost of forget.</li>
+          <li>Codex probes: the symlink path, an open version 4 connection, the update trigger and NUL in a query. Each one disproved an assumption, and the plan changed.</li>
+          <li>The Codex review, with a decision for each of its 15 findings.</li>
+          <li>The six outer tests, Red first and then Green, and 18 mutation runs.</li>
+          <li>The final runs on 1 November 2026: six typechecks clean, 128 files and 1,538 tests passed, the build passed, and 37 Electron journeys passed.</li>
+          <li>The benchmark at 10,000, 100,000 and 500,000 chunks, with the result in the measurement record.</li>
+        </ul>
+      </div>
+      <div>
+        <span class="tag t-idle">Not established</span>
+        <ul>
+          <li>A mutation proof for the clear erase. The mutation did not bite.</li>
+          <li>Retrieval quality with the real model. The test is not written.</li>
+          <li>App responsiveness. The performance targets are store-level only.</li>
+          <li>Rowid stability through <code>VACUUM</code>. P6 saw no change, but SQLite does not guarantee it.</li>
+          <li>The two follow-ups: the start-screen search box, and the action for the failed targets.</li>
+          <li>Lint. The repository has no lint command.</li>
+        </ul>
+      </div>
+    </div>
+    <ul class="sources">
+      <li><a href="library-search-plan.md">library-search-plan.md</a><span>The full plan, the record behind this page</span></li>
+      <li><a href="records/2026-10-31-library-search-plan-codex-review.md">Codex review record</a><span>The 15 findings and the Codex probes</span></li>
+      <li><a href="adr/2026-10-31-Library-And-Exact-Word-Search.md">New ADR</a><span>The decision record for this work</span></li>
+      <li><a href="records/2026-10-31-library-search-measurement.md">Measurement record</a><span>The full benchmark table and the options after the failed targets</span></li>
+      <li><a href="../cli/spec.ts"><code>cli/spec.ts</code></a><span>127-151 search entry</span></li>
+      <li><a href="../mcp/toolSchemas.ts"><code>mcp/toolSchemas.ts</code></a><span>30-33 SchemaBranch · 98-104 propertyFromOption · 146-253 tools</span></li>
+      <li><a href="../core/store/index.ts"><code>core/store/index.ts</code></a><span>263-268 old rows · 756-811 forget and wipe · 901-904 upsert · 979-1014 search</span></li>
+      <li><a href="../core/store/schema.ts"><code>core/store/schema.ts</code></a><span>6 version · 79-111 migration</span></li>
+      <li><a href="../core/consent/allowlist.ts"><code>core/consent/allowlist.ts</code></a><span>106-118 containsPath · 126-158 realpathSync</span></li>
+      <li><a href="../core/output/budget.ts"><code>core/output/budget.ts</code></a><span>58, 72 budgets · 117-140 fitReply · 333-350 boundItems</span></li>
+      <li><a href="../electron/main.ts"><code>electron/main.ts</code></a><span>582-590 file read without a consent gate</span></li>
+      <li><a href="../core/index/indexDocument.ts"><code>core/index/indexDocument.ts</code></a><span>269-272 the app's recorded path</span></li>
+      <li><a href="adr/2026-08-23-Command-Line-Consent-And-Contracts.md">Consent ADR</a><span>156-157 search after a removed grant</span></li>
+      <li><a href="../AGENTS.md"><code>AGENTS.md</code></a><span>TDD policy and ADR rule</span></li>
+    </ul>
+  </div></div>
+</section>
+
+</main>
+
+<footer class="end">
+  <div class="page">Explainer for library-search-plan.md, with its implementation record of 31 October 2026. Branch cwik-tech/library-search, based on main at 2125a71, implementation not committed. This page restates the plan and its record. It adds no test runs of its own. The work is not committed. Uses IBM Plex from Google Fonts, with system fallbacks. No scripts.</div>
+</footer>
+
+</body>
+</html>

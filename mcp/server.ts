@@ -14,7 +14,7 @@ import { parseToolArguments, type ArgumentValue } from "./arguments.js";
 import { runReadComments } from "./commentOperations.js";
 import { runReveal, runSuggest } from "./evidenceOperations.js";
 import { runListOpenDocuments, runReadOpenDocument } from "./openDocumentOperations.js";
-import { runOutline, runReadPages, runSearch, runToMarkdown, type ToolContext, type ToolOutcome } from "./operations.js";
+import { runOutline, runReadPages, runSearch, runSearchLibrary, runToMarkdown, type ToolContext, type ToolOutcome } from "./operations.js";
 import type { ToolProgress } from "./progress.js";
 import { TOOLS } from "./toolSchemas.js";
 
@@ -43,6 +43,7 @@ const RUNNERS: Record<string, Runner> = {
   },
   outline: runOutline,
   search: runSearch,
+  search_library: runSearchLibrary,
   read_pages: runReadPages,
   to_markdown: runToMarkdown,
   list_open_documents: runListOpenDocuments,
