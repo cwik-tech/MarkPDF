@@ -92,3 +92,18 @@ The original hidden-window mode is unchanged. Because those windows have
 including the section's refresh on real window focus. Native-dialog hands-on
 acceptance remains outside this hidden run. Results and Red evidence are appended
 to the delivery report's Feedback round 1 section.
+
+## Folder row alignment and tooltip visibility, 2026-11-01
+
+Source: the user's screenshot and request to align folder controls and use shadcn tooltips.
+
+The shared shadcn tooltips were mounted, but their default layer sat beneath the
+Settings overlay. The Electron regression now checks the painted element at the
+tooltip center rather than accepting DOM visibility alone. The section uses the
+same tooltip layer as the existing Settings information tooltip and adds a
+shadcn tooltip to Remove.
+
+A section-specific grid keeps the R/RW group and Remove in consistent columns
+when folder path lengths differ. Folder icons retain their size and long paths
+can wrap. This is presentational work; no test asserts CSS classes or row markup.
+Rendered inspection checks alignment. Hidden-window mode is unchanged.

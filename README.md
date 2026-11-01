@@ -159,7 +159,7 @@ For a client that reads a JSON configuration file, the same thing as entries in 
 }
 ```
 
-Add `MARKPDF_DATA_DIR` in `env` if you keep your index somewhere other than the default.
+Add `MARKPDF_DATA_DIR` in `env` if you keep your index somewhere other than the default. After replacing or updating MarkPDF, reconnect its MCP server in your client so requests use the current application; an already-running server keeps its previously loaded code.
 
 Eleven tools:
 

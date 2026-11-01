@@ -3070,3 +3070,16 @@ select {
   cursor: not-allowed;
   opacity: 0.45;
 }
+
+.folder-access-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.folder-access-row .agent-main > svg {
+  flex-shrink: 0;
+}
+
+.folder-access-row .agent-main strong {
+  overflow-wrap: anywhere;
+}

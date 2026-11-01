@@ -201,6 +201,14 @@ test("explains unavailable access choices by keyboard without changing grants", 
     const write = group.getByRole("button", { name: "Read and write", exact: true });
     await write.focus();
     await expect(page.getByRole("tooltip", { name: "Read and write. Agents can also save files here.", exact: true })).toBeVisible();
+    const tooltipIsTopmost = await page.getByRole("tooltip", {
+      name: "Read and write. Agents can also save files here.", exact: true,
+    }).evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const painted = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return painted !== null && element.contains(painted);
+    });
+    expect(tooltipIsTopmost).toBe(true);
     await write.press("Enter");
     // aria-disabled remains focusable; dispatch the pointer click that a browser permits.
     await write.click({ force: true });
@@ -209,6 +217,8 @@ test("explains unavailable access choices by keyboard without changing grants", 
     await read.focus();
     await expect(page.getByRole("tooltip", { name: "Read. Agents can find and read files here.", exact: true })).toBeVisible();
     await read.press("Space");
+    await page.getByRole("button", { name: `Remove ${f.a}`, exact: true }).focus();
+    await expect(page.getByRole("tooltip", { name: "Remove folder access", exact: true })).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(0);
     expect(await readFile(f.record, "utf8")).toBe(before);
   } finally { await close(app, f); }

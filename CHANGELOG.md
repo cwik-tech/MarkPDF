@@ -26,6 +26,8 @@
 
 ### Fixed
 
+- Folder access controls stay aligned across rows, and their shadcn tooltips, including Remove, appear above the Settings dialog.
+
 - Opening an index written by an earlier version of MarkPDF upgrades it in place and adds its existing passages to the exact-word index in small batches. The upgrade waits until no other MarkPDF window, command or agent session has the index open, and says so instead of upgrading beside a process that still follows the old rules. Two MarkPDF processes that opened an old or new index at the same moment can no longer both try the same upgrade.
 - Forgetting a document or clearing the index now also erases its words from the exact-word index, in the file and in its log, and an erase that was interrupted is finished by the next forget or clear.
 

@@ -130,7 +130,7 @@ export function FolderAccessSection() {
             const readDisabled = busy || (row.status !== "present" && row.level === "write");
             const writeDisabled = busy || row.status !== "present";
             return (
-              <div className="agent-row" key={row.path}>
+              <div className="agent-row folder-access-row" key={row.path}>
                 <div className="agent-main">
                   {row.kind === "file" ? <FileText size={16} aria-label="File" /> : <Folder size={16} />}
                   <div>
@@ -158,7 +158,7 @@ export function FolderAccessSection() {
                         R
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent>Read. Agents can find and read files here.</TooltipContent>
+                    <TooltipContent className="z-[200]">Read. Agents can find and read files here.</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -174,17 +174,22 @@ export function FolderAccessSection() {
                         RW
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent>Read and write. Agents can also save files here.</TooltipContent>
+                    <TooltipContent className="z-[200]">Read and write. Agents can also save files here.</TooltipContent>
                   </Tooltip>
                 </div>
-                <button
-                  className="secondary-button"
-                  aria-label={`Remove ${row.path}`}
-                  disabled={busy}
-                  onClick={() => run(() => folderAccess.remove(row.path))}
-                >
-                  <Trash2 size={15} />
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      className="secondary-button"
+                      aria-label={`Remove ${row.path}`}
+                      disabled={busy}
+                      onClick={() => run(() => folderAccess.remove(row.path))}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="z-[200]">Remove folder access</TooltipContent>
+                </Tooltip>
               </div>
             );
           })}

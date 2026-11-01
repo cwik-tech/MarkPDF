@@ -222,7 +222,7 @@ Decision: the confirmations are native message boxes in main, not renderer dialo
 - If the initial list call rejects unexpectedly, loading ends, the error is shown, and Retry reloads through the same bridge (feedback round 1, findings 2 and 5).
 - The section reloads the list when the window gains focus, so a command-line change shows up.
 
-Reuse the existing classes: `settings-section`, `settings-section-heading`, `agent-list`, `agent-row`, `secondary-button`, `empty-row`, `settings-note` (`src/AISettings.tsx:676-741`). Add CSS to `src/styles.css` only for the two-button group.
+Reuse the existing classes: `settings-section`, `settings-section-heading`, `agent-list`, `agent-row`, `secondary-button`, `empty-row`, `settings-note` (`src/AISettings.tsx:676-741`). Scope the row alignment and two-button group CSS in `src/styles.css` to folder access. The row uses a flexible path column followed by fixed-width access controls and Remove; shadcn tooltips render above the Settings overlay.
 
 ### 4.5 Agent refusal text
 
@@ -400,7 +400,7 @@ Codex reviewed the requirements document (11 findings) and then this plan (11 fi
 
 ## 11. Implementation verification map
 
-- `tests/e2e/folder-access-settings.spec.ts`: journeys A and B and sender boundary C through the real preload, handlers, filesystem and MCP process; rejected-first-load recovery through Retry; keyboard tooltips and guarded activation for unavailable choices.
+- `tests/e2e/folder-access-settings.spec.ts`: journeys A and B and sender boundary C through the real preload, handlers, filesystem and MCP process; rejected-first-load recovery through Retry; keyboard tooltips and guarded activation for unavailable choices; tooltip visibility above the Settings overlay and the Remove tooltip.
 - `core/consent/folderAccess.test.ts`: explicit and inherited access, root inspection, planning, locked changes, affected-set checks, remaining access and real lock contention; unresolvable picked folders and inherited access for moved symlink targets.
 - `electron/folderAccess.test.ts`: sender URLs and frames, input validation, native dialog outcomes and typed failures.
 - `mcp/commentOperations.test.ts`: open-document refusal directs the person to Settings or the command line.
