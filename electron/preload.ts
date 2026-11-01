@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld("pdfReader", {
     ipcRenderer.invoke("dialog:save-pdf", defaultPath),
   saveMarkdownDialog: (defaultPath?: string) =>
     ipcRenderer.invoke("dialog:save-markdown", defaultPath),
+  saveDiagramSvg: (fileName: string, svg: string) =>
+    ipcRenderer.invoke("dialog:save-diagram-svg", fileName, svg),
   confirmUnsaved: (documentName?: string) =>
     ipcRenderer.invoke("dialog:confirm-unsaved", documentName),
   readPdf: (filePath: string) => ipcRenderer.invoke("file:read-pdf", filePath),

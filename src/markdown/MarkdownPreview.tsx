@@ -19,6 +19,12 @@ interface MarkdownPreviewProps {
   baseUrl?: string;
   /** Document scale; 1 is actual size. Scales the sheet, its text and its diagrams together. */
   zoom?: number;
+  /** The document's file name. Names a diagram the reader downloads. */
+  documentName?: string;
+  /** The pane the document is shown in. An expanded diagram fills it. */
+  diagramHost?: HTMLElement | null;
+  /** Told when a diagram opens over the document pane and when it closes again. */
+  onDiagramExpandedChange?: (expanded: boolean) => void;
 }
 
 // Highlights are numbered as they are rendered, so the counter is created once
@@ -169,9 +175,17 @@ export function MarkdownPreview({
   activeMatchIndex,
   baseUrl,
   zoom = 1,
+  documentName,
+  diagramHost,
+  onDiagramExpandedChange,
 }: MarkdownPreviewProps) {
   const blocks = parseMarkdown(markdown);
   const headingIds = headingAnchorIds(blocks);
+  // Each diagram's position among the document's diagrams, counted from 1, by block index.
+  const diagramNumbers = new Map<number, number>();
+  blocks.forEach((block, index) => {
+    if (isMermaidBlock(block)) diagramNumbers.set(index, diagramNumbers.size + 1);
+  });
   const query = searchQuery?.trim();
   const highlight: HighlightRun | null = query
     ? { query, activeIndex: activeMatchIndex ?? -1, nextOrdinal: 0 }
@@ -229,7 +243,17 @@ export function MarkdownPreview({
 
         if (block.kind === "code") {
           if (isMermaidBlock(block)) {
-            return <MermaidDiagram key={index} source={block.text} theme={theme} />;
+            return (
+              <MermaidDiagram
+                key={index}
+                source={block.text}
+                theme={theme}
+                expandedHost={diagramHost}
+                documentName={documentName}
+                diagramNumber={diagramNumbers.get(index)}
+                onExpandedChange={onDiagramExpandedChange}
+              />
+            );
           }
 
           return (

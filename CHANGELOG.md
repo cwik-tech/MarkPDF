@@ -4,6 +4,7 @@
 
 ### Added
 
+- Mermaid diagrams in a Markdown document now have a header with controls, so a large diagram is readable. Zoom in and Zoom out change only the diagram, in steps from 25% to 400% of its fitted size, and the chart stays sharp at every step. Click the percentage to return to 100%. Full screen opens the diagram over the whole document pane, below the application toolbar, with the same controls. Escape or the same button returns it to its place in the document, at the same reading position. While a diagram is open over the pane, the keyboard cannot reach the document hidden behind it. Download saves the diagram as an SVG file at its own size, on the background you saw it on, in a folder you pick. An open diagram and its zoom belong to one document: when you change to another Markdown tab, its diagrams show in place at 100%. As a result, each Markdown tab now opens at the top of its document when you select it. Before, it kept the scroll offset of the tab you left.
 - Agents can prepare a PDF through `markpdf prepare` or MCP `prepare_document`: open it in MarkPDF, save eligible generated outline metadata, and retrieve from the final saved document using existing storage and separate read/write grants.
 - Preparation, search and open-document listings report extraction completeness so agents can identify missing content and use a disclosed fallback.
 

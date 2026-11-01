@@ -4074,7 +4074,9 @@ function DocumentView({
   onFollowInternalLink: (page: number) => void;
 }) {
   if (tab.kind === "markdown") {
-    return <MarkdownDocumentView tab={tab} theme={theme} />;
+    // Keyed by tab, so a diagram's expanded view and zoom belong to one document and do not
+    // carry over to the next Markdown tab the reader selects.
+    return <MarkdownDocumentView key={tab.id} tab={tab} theme={theme} />;
   }
 
   return (
@@ -4249,6 +4251,12 @@ function MarkdownDocumentView({
   theme: ThemeMode;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // An expanded diagram is drawn here, beside the scrolling sheet rather than inside it, so it
+  // fills the document pane and is not scaled by the document's own zoom.
+  const [diagramHost, setDiagramHost] = useState<HTMLDivElement | null>(null);
+  // While a diagram covers the pane, the document under it takes no focus and is hidden from
+  // assistive technology, so the keyboard cannot reach controls the reader cannot see.
+  const [diagramExpanded, setDiagramExpanded] = useState(false);
   const matchCount = tab.searchMatches.length;
 
   // Bring the current match into view whenever the reader steps through the
@@ -4266,16 +4274,27 @@ function MarkdownDocumentView({
   }, [tab.id, tab.searchQuery, tab.activeSearchMatch, matchCount]);
 
   return (
-    <div className="markdown-document-scroll" ref={scrollRef}>
-      <MarkdownPreview
-        markdown={tab.markdown}
-        theme={theme}
-        searchQuery={tab.searchQuery}
-        activeMatchIndex={tab.activeSearchMatch}
-        baseUrl={tab.baseUrl}
-        zoom={tab.zoom}
-      />
-    </div>
+    <>
+      <div
+        className="markdown-document-scroll"
+        ref={scrollRef}
+        inert={diagramExpanded}
+        aria-hidden={diagramExpanded || undefined}
+      >
+        <MarkdownPreview
+          markdown={tab.markdown}
+          theme={theme}
+          searchQuery={tab.searchQuery}
+          activeMatchIndex={tab.activeSearchMatch}
+          baseUrl={tab.baseUrl}
+          zoom={tab.zoom}
+          documentName={tab.name}
+          diagramHost={diagramHost}
+          onDiagramExpandedChange={setDiagramExpanded}
+        />
+      </div>
+      <div className="markdown-diagram-host" ref={setDiagramHost} />
+    </>
   );
 }
 
