@@ -25,6 +25,48 @@ export interface PreparationReply {
 }
 
 
+/** An agent's request to show a passage. Mirrors `RevealCommand` in core/agent/desktopRequests.ts. */
+export interface RevealCommand {
+  requestId: string;
+  target: { tabId: string } | { path: string };
+  page: number;
+  quote: string | null;
+  /** The cleaned agent name, or empty for a reveal from a link. */
+  agent: string;
+}
+
+export type AgentRequestReason =
+  | "access_denied" | "stale_ref" | "ambiguous" | "not_open" | "not_indexed" | "expired" | "busy"
+  | "invalid_request" | "invalid_page" | "quote_not_found" | "document_changed" | "limit_reached"
+  | "window_closed" | "timeout" | "no_answer" | "cancelled";
+
+/** What the window did with a reveal. Mirrors `RevealOutcome` in core. */
+export interface RevealOutcome {
+  status: "shown" | "page_only" | "refused" | "failed";
+  reason?: AgentRequestReason;
+  message?: string;
+  occurrences?: number;
+}
+
+/** An agent's suggestion for an open tab. Mirrors `SuggestCommand` in core. */
+export interface SuggestCommand {
+  requestId: string;
+  tabId: string;
+  page: number;
+  quote: string | null;
+  note: string | null;
+  agent: string;
+}
+
+/** What the window did with a suggestion. Mirrors `SuggestOutcome` in core. */
+export interface SuggestOutcome {
+  status: "added" | "refused" | "failed";
+  reason?: AgentRequestReason;
+  message?: string;
+  suggestionId?: string;
+  occurrences?: number;
+}
+
 export type AIProviderKind =
   | "openai-compatible"
   | "openrouter"
@@ -282,6 +324,8 @@ export interface ReportedOpenDocument {
   /** Private IPC payload. The main process writes it to a bounded 0600 snapshot, never metadata. */
   contentSnapshot: string | null;
   unsavedChanges: boolean;
+  /** Agent suggestions on a PDF tab: ids and decisions, never text. */
+  suggestions?: Array<{ id: string; status: "pending" | "accepted" | "rejected" | "discarded" }>;
 }
 
 export interface OpenDocumentsReport {
@@ -300,6 +344,9 @@ declare global {
       prepareDocument: () => Promise<PreparationReply>;
       onPrepareDocument: (callback: (path?: string) => Promise<PreparationReply>) => () => void;
       savePreparation: (path: string, source: Uint8Array, bytes: Uint8Array) => Promise<void>;
+      onRevealRequest?: (callback: (command: RevealCommand) => Promise<RevealOutcome>) => () => void;
+      onAgentNotice?: (callback: (text: string) => void) => () => void;
+      onSuggestionRequest?: (callback: (command: SuggestCommand) => Promise<SuggestOutcome>) => () => void;
       getPathForFile: (file: File) => string;
       openPdfDialog: () => Promise<string[]>;
       savePdfDialog: (defaultPath?: string) => Promise<string | null>;

@@ -149,7 +149,13 @@ function orderGrants(argv: readonly string[], grants: readonly Grant[]): Grant[]
 function coerce(option: OptionSpec, raw: string): { ok: true; value: OptionValue } | { ok: false; message: string } {
   const usage = renderOptionUsage(option);
   const type = option.type;
-  if (type.kind === "string") return { ok: true, value: raw };
+  if (type.kind === "string") {
+    // Counted in code points, so a limit means the same for any script.
+    if (type.maxLength !== undefined && [...raw].length > type.maxLength) {
+      return { ok: false, message: `${usage} must be at most ${type.maxLength} characters long.` };
+    }
+    return { ok: true, value: raw };
+  }
   if (type.kind === "choice") {
     return type.choices.includes(raw)
       ? { ok: true, value: raw }
@@ -283,6 +289,14 @@ export function parseCliArgs(argv: readonly string[]): ParseOutcome {
   }
 
   const synopsis = renderSynopsis(command);
+  // A command an agent runs uses the grants that exist. Granting in the same run would let the
+  // command widen its own access, so the grant has to be its own, separate command.
+  if (command.agentFacing === true && global.grants.length > 0) {
+    return usageError(
+      `Grant access as a separate command first. The ${command.name} command uses only the grants that already exist.`,
+      synopsis,
+    );
+  }
   const variadic = command.positionals.some((positional) => positional.variadic);
   if (positionals.length < command.positionals.length) {
     const missing = command.positionals[positionals.length];
@@ -318,6 +332,10 @@ export function parseCliArgs(argv: readonly string[]): ParseOutcome {
       const list = command.exactlyOneOf.map((name) => `--${name}`).join(" or ");
       return usageError(`Give exactly one of ${list}.`, synopsis);
     }
+  }
+
+  for (const name of command.requiredOptions ?? []) {
+    if (coerced.get(name) === undefined) return usageError(`--${name} is required.`, synopsis);
   }
 
   for (const name of command.singleTargetOptions ?? []) {

@@ -140,6 +140,33 @@ describe("options that constrain each other", () => {
   });
 });
 
+describe("commands an agent runs against a document", () => {
+  it("reads the comments of one document named by path, hash or open-document reference", () => {
+    for (const identity of [["--path", "a.pdf"], ["--id", "a".repeat(64)], ["--ref", "active"]]) {
+      const outcome = expectRun(["comments", ...identity]);
+      expect(outcome.options.number("offset")).toBe(0);
+    }
+  });
+
+  it("refuses comments for no document, and for two identities at once", () => {
+    const none = expectUsageError(["comments"]);
+    expect(none).toContain("--path or --id or --ref");
+    expect(expectUsageError(["comments", "--path", "a.pdf", "--ref", "active"])).toContain("one of");
+  });
+
+  it("refuses a negative offset", () => {
+    expect(expectUsageError(["comments", "--path", "a.pdf", "--offset", "-1"])).toContain("--offset");
+  });
+
+  it("refuses a grant given with a command an agent runs, so the command cannot widen its own access", () => {
+    const message = expectUsageError(["--allow-read", "/one", "comments", "--path", "/one/a.pdf"]);
+    expect(message).toContain("Grant access as a separate command first.");
+    expect(expectUsageError(["comments", "--path", "/one/a.pdf", "--revoke-read", "/one"])).toContain(
+      "Grant access as a separate command first.",
+    );
+  });
+});
+
 describe("grants", () => {
   it("collects a grant given on its own, with no command to run", () => {
     const outcome = runOutcome(["--allow-read", "/Users/me/Papers"]);
@@ -203,7 +230,9 @@ describe("reading a parsed option", () => {
   it("answers every option the table declares for that command", () => {
     for (const command of commandSpecs) {
       const argv = [command.name, ...command.positionals.map(() => "a.pdf")];
-      if (command.name === "search") argv.push("--path", "a.pdf");
+      const identity = command.exactlyOneOf?.[0];
+      if (identity !== undefined) argv.push(`--${identity}`, "a.pdf");
+      for (const name of command.requiredOptions ?? []) argv.push(`--${name}`, "1");
       const outcome = expectRun(argv);
       for (const option of command.options) {
         expect(() => outcome.options.declared(option.name)).not.toThrow();

@@ -111,6 +111,14 @@
     },
     "icon": "build/icon.png",
     "mac": {
+      "protocols": [
+        {
+          "name": "MarkPDF evidence link",
+          "schemes": [
+            "markpdf"
+          ]
+        }
+      ],
       "target": [
         {
           "target": "dmg",

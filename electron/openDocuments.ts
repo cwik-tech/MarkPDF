@@ -82,6 +82,7 @@ function write(window: BrowserWindow, payload: OpenDocumentsPayload): void {
         contentBytes: content?.contentBytes ?? 0,
         snapshotTruncated: content?.snapshotTruncated ?? false,
         unsavedChanges: document.unsavedChanges,
+        ...(document.suggestions === undefined ? {} : { suggestions: document.suggestions }),
       };
     });
     writeOpenDocuments(dataDir(), {

@@ -1,6 +1,60 @@
 import { parsePreparationReply, type PreparationReply } from "../dist-core/agent/preparation.js";
+import {
+  parseRevealCommand,
+  parseSuggestCommand,
+  type RevealCommand,
+  type RevealOutcome,
+  type SuggestCommand,
+  type SuggestOutcome,
+} from "../dist-core/agent/desktopRequests.js";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { parseSemanticProgressEvent } from "../dist-core/ipc/progress.js";
+
+/**
+ * One request channel from main to the window: commands checked with core's parser, exactly one
+ * answer for each, and a short queue for commands that arrive before the window has registered its
+ * handler — a document an agent opened, or a cold start. The listener is registered as the preload
+ * runs, before any page script, so no command can arrive unheard.
+ */
+function agentChannel<Command extends { requestId: string }, Outcome>(
+  requestChannel: string,
+  replyChannel: string,
+  parse: (value: unknown) => Command | null,
+) {
+  let handler: ((command: Command) => Promise<Outcome>) | null = null;
+  const queue: Array<{ requestId: string; value: unknown }> = [];
+  const fail = (requestId: string, message: string): void => {
+    ipcRenderer.send(replyChannel, requestId, { status: "failed", reason: "invalid_request", message });
+  };
+  const answer = (requestId: string, value: unknown): void => {
+    const command = parse(value);
+    if (command === null || command.requestId !== requestId) {
+      fail(requestId, "The window received an invalid request.");
+      return;
+    }
+    const current = handler;
+    if (current === null) {
+      queue.push({ requestId, value });
+      return;
+    }
+    void current(command)
+      .then((outcome) => ipcRenderer.send(replyChannel, requestId, outcome))
+      .catch(() => fail(requestId, "The window could not carry out the request."));
+  };
+  ipcRenderer.on(requestChannel, (_event, requestId: unknown, value: unknown) => {
+    if (typeof requestId === "string" && queue.length < 16) answer(requestId, value);
+  });
+  return (callback: (command: Command) => Promise<Outcome>) => {
+    handler = callback;
+    for (const queued of queue.splice(0)) answer(queued.requestId, queued.value);
+    return () => {
+      if (handler === callback) handler = null;
+    };
+  };
+}
+
+const onRevealRequest = agentChannel<RevealCommand, RevealOutcome>("agent:reveal", "agent:revealed", parseRevealCommand);
+const onSuggestionRequest = agentChannel<SuggestCommand, SuggestOutcome>("agent:suggest", "agent:suggested", parseSuggestCommand);
 
 contextBridge.exposeInMainWorld("pdfReader", {
   agentPreparationWindow: process.argv.includes("--markpdf-agent-window"),
@@ -18,6 +72,17 @@ contextBridge.exposeInMainWorld("pdfReader", {
     return () => ipcRenderer.removeListener("agent:prepare", listener);
   },
   savePreparation: (path: string, source: Uint8Array, bytes: Uint8Array) => ipcRenderer.invoke("agent:save", path, source, bytes),
+  // An agent asks this window to show a passage, or to hold a suggestion for the person.
+  onRevealRequest,
+  onSuggestionRequest,
+  // A short sentence from the main process about an agent's request, such as an ignored link.
+  onAgentNotice: (callback: (text: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, text: unknown): void => {
+      if (typeof text === "string" && text.length > 0 && text.length <= 300) callback(text);
+    };
+    ipcRenderer.on("agent:notice", listener);
+    return () => ipcRenderer.removeListener("agent:notice", listener);
+  },
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   openPdfDialog: () => ipcRenderer.invoke("dialog:open-pdf"),
   savePdfDialog: (defaultPath?: string) =>

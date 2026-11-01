@@ -1,4 +1,6 @@
 import { prepareDesktopDocument } from "../dist-core/agent/desktopClient.js";
+import { sendDesktopRequest } from "../dist-core/agent/desktopChannel.js";
+import { readOrCreateLinkKey } from "../dist-core/agent/evidenceLink.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { BoundedScheduler, SchedulerCancelled } from "../dist-core/index/boundedScheduler.js";
 import { readAllowlist } from "../dist-core/consent/allowlistFile.js";
@@ -127,6 +129,8 @@ export function createToolContext(
       return onProgress === undefined ? created : watchedEmbedder(created, onProgress);
     },
     prepareDocument: async (path, signal) => await prepareDesktopDocument({ path, dataDir: input.dataDir, signal }),
+    desktopRequest: async (request, signal) => await sendDesktopRequest({ dataDir: input.dataDir, request, signal }),
+    evidenceLinkKey: () => readOrCreateLinkKey(input.dataDir),
     allowlist: () => readAllowlist(input.dataDir),
     // Per call, like the consent record above and for the same reason: a client session lasts
     // hours, and which document somebody is looking at changes by the minute.

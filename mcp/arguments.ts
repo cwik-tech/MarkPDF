@@ -1,5 +1,5 @@
 import { hasTerminalControlCharacter, safeForTerminal } from "../dist-core/text/safeForTerminal.js";
-import type { SchemaProperty, ToolInputSchema } from "./toolSchemas.js";
+import type { SchemaBranch, SchemaProperty, ToolInputSchema } from "./toolSchemas.js";
 
 export type ArgumentValue = string | number;
 export type ParsedArguments =
@@ -26,6 +26,9 @@ function checkValue(name: string, spec: SchemaProperty, raw: unknown): { ok: tru
     if (raw.trim().length === 0) return { ok: false, message: `${name} must not be empty.` };
     if (spec.enum !== undefined && !spec.enum.includes(raw)) {
       return { ok: false, message: `${name} must be one of: ${spec.enum.join(", ")}. Received ${JSON.stringify(safeForTerminal(raw))}.` };
+    }
+    if (spec.maxLength !== undefined && [...raw].length > spec.maxLength) {
+      return { ok: false, message: `${name} must be at most ${spec.maxLength} characters long.` };
     }
     // The same rule the command line applies to its own arguments: a value that can forge a line
     // of output is refused before anything resolves it.
@@ -59,6 +62,13 @@ function checkValue(name: string, spec: SchemaProperty, raw: unknown): { ok: tru
  * each tool's schema as a `oneOf`, and read back from there below rather than restated — so a
  * client validating against what the tool list said reaches the same verdict this does.
  */
+/** The names a branch forbids, in either of the two shapes a `not` is published in. */
+function forbiddenBy(branch: SchemaBranch): readonly string[] {
+  const not = branch.not;
+  if (not === undefined) return [];
+  return "anyOf" in not ? not.anyOf.flatMap((alternative) => alternative.required) : not.required;
+}
+
 export function parseToolArguments(schema: ToolInputSchema, raw: unknown): ParsedArguments {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return refuse("Arguments must be an object.");
@@ -95,7 +105,7 @@ export function parseToolArguments(schema: ToolInputSchema, raw: unknown): Parse
     const satisfied = branches.filter(
       (branch) =>
         branch.required.every((name) => value[name] !== undefined) &&
-        (branch.not?.required ?? []).every((name) => value[name] === undefined),
+        forbiddenBy(branch).every((name) => value[name] === undefined),
     );
     if (satisfied.length !== 1) {
       const alternatives = branches.map((branch) => branch.required.join(" and ")).join(" or ");

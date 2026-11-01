@@ -117,3 +117,21 @@ describe("reading overlays a saved document carries", () => {
     ]);
   });
 });
+
+describe("who wrote an annotation the person accepted from an agent", () => {
+  const origin = { kind: "agent", agent: "claude-code", quote: "q", suggestedAt: "2026-10-31T10:00:00.000Z", acceptedAt: "2026-10-31T10:01:00.000Z" };
+  const base = { id: "comment-1", kind: "comment", page: 1, x: 1, y: 2, width: 3, height: 4, text: "Note" };
+
+  it("survives a save and a reopen", () => {
+    expect(parsePersistedOverlays([{ ...base, origin }])[0]?.origin).toEqual(origin);
+    expect(parsePersistedOverlays([{ ...base, origin: { ...origin, editedByPerson: true } }])[0]?.origin?.editedByPerson).toBe(true);
+  });
+
+  it("is dropped when it cannot be trusted, and the annotation stays", () => {
+    for (const broken of [{ ...origin, kind: "person" }, { ...origin, agent: 5 }, { ...origin, agent: "" }, "agent", { ...origin, agent: "a".repeat(65) }]) {
+      const [overlay] = parsePersistedOverlays([{ ...base, origin: broken }]);
+      expect(overlay?.id).toBe("comment-1");
+      expect(overlay?.origin).toBeUndefined();
+    }
+  });
+});

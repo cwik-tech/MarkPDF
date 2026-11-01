@@ -135,3 +135,19 @@ describe("reporting the documents a window has open", () => {
     expect(projectOpenDocuments([makePdfTab()], "tab-gone").activeTabId).toBeNull();
   });
 });
+
+describe("agent suggestions in the report", () => {
+  it("carries a PDF tab's suggestion decisions, with no note or quote, and nothing for a tab without any", async () => {
+    const { projectOpenDocuments } = await import("./openDocuments");
+    const id = "suggestion-12345678-1234-4234-8234-123456789012";
+    const report = projectOpenDocuments(
+      [
+        { kind: "pdf", id: "tab-a", name: "a.pdf", path: "/a.pdf", pageCount: 1, dirty: false, suggestions: { log: [{ id, status: "pending" }] } },
+        { kind: "pdf", id: "tab-b", name: "b.pdf", path: "/b.pdf", pageCount: 1, dirty: false },
+      ],
+      "tab-a",
+    );
+    expect(report.documents[0]?.suggestions).toEqual([{ id, status: "pending" }]);
+    expect(report.documents[1]).not.toHaveProperty("suggestions");
+  });
+});

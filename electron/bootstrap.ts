@@ -3,10 +3,14 @@ import { app } from "electron";
 type OpenFileBootstrapState = {
   pendingOpenPaths: string[];
   onOpenFile?: (filePath: string) => void;
+  /** `markpdf://` addresses macOS delivered before the main module was ready for them. */
+  pendingOpenUrls: string[];
+  onOpenUrl?: (url: string) => void;
 };
 
 const bootstrapState: OpenFileBootstrapState = {
-  pendingOpenPaths: []
+  pendingOpenPaths: [],
+  pendingOpenUrls: []
 };
 
 function rememberOpenPath(filePath: string) {
@@ -23,6 +27,17 @@ app.on("open-file", (event, filePath) => {
     return;
   }
   rememberOpenPath(filePath);
+});
+
+// An evidence link clicked in another application. On a cold start macOS delivers it before the
+// main module has loaded, so it is held here the same way an opened file is.
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  if (bootstrapState.onOpenUrl) {
+    bootstrapState.onOpenUrl(url);
+    return;
+  }
+  if (bootstrapState.pendingOpenUrls.length < 8) bootstrapState.pendingOpenUrls.push(url);
 });
 
 await import("./main.js");

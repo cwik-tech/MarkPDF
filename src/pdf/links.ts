@@ -171,6 +171,7 @@ const ACTION_FIELDS = ["url", "unsafeUrl", "action", "resetForm", "setOCGState",
  *
  * Mirrored in `electron/externalUrl.ts`, which is the side that enforces it.
  */
+// `markpdf:` must never join this list: see `electron/externalUrl.ts`.
 export const OPENABLE_LINK_SCHEMES = ["http:", "https:", "mailto:"] as const;
 
 /**

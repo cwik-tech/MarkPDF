@@ -11,6 +11,8 @@ import {
 import { boundText, DEFAULT_REPLY_BUDGET, renderReply, type OutputBudget } from "../dist-core/output/budget.js";
 import { safeForTerminal } from "../dist-core/text/safeForTerminal.js";
 import { parseToolArguments, type ArgumentValue } from "./arguments.js";
+import { runReadComments } from "./commentOperations.js";
+import { runReveal, runSuggest } from "./evidenceOperations.js";
 import { runListOpenDocuments, runReadOpenDocument } from "./openDocumentOperations.js";
 import { runOutline, runReadPages, runSearch, runToMarkdown, type ToolContext, type ToolOutcome } from "./operations.js";
 import type { ToolProgress } from "./progress.js";
@@ -45,6 +47,9 @@ const RUNNERS: Record<string, Runner> = {
   to_markdown: runToMarkdown,
   list_open_documents: runListOpenDocuments,
   read_open_document: runReadOpenDocument,
+  read_comments: runReadComments,
+  reveal: runReveal,
+  suggest_annotation: runSuggest,
 };
 
 /** What a call that was given up on is told, whether it had started or was still waiting. */
@@ -258,7 +263,9 @@ export function createMarkpdfServer(identity: ServerIdentity, context: ToolConte
           budget: context.replyBudget,
         })
       : undefined;
-    return await callTool(context, name, args, extra.signal, reporter);
+    // The client's own name from the handshake, read per call: it is known only after initialize.
+    const named: ToolContext = { ...context, clientName: () => server.getClientVersion()?.name };
+    return await callTool(named, name, args, extra.signal, reporter);
   });
 
   return server;

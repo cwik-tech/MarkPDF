@@ -314,3 +314,24 @@ describe("the record of what a window has open", () => {
     expect(readOpenDocuments(dataDir).documents).toHaveLength(1);
   });
 });
+
+describe("agent suggestion decisions in the record", () => {
+  const id = "suggestion-12345678-1234-4234-8234-123456789012";
+
+  it("carry a tab's suggestion decisions to a reader, and nothing for a record that has none", () => {
+    writeOpenDocuments(dataDir, makeSnapshot({ documents: [makeRecord({ suggestions: [{ id, status: "rejected" }] })] }));
+    expect(readOpenDocuments(dataDir).documents[0]?.suggestions).toEqual([{ id, status: "rejected" }]);
+
+    writeOpenDocuments(dataDir, makeSnapshot());
+    expect(readOpenDocuments(dataDir).documents[0]?.suggestions).toBeUndefined();
+  });
+
+  it("does not believe a decision list that is not one", () => {
+    writeOpenDocuments(dataDir, makeSnapshot({ documents: [makeRecord({ suggestions: [{ id, status: "rejected" }] })] }));
+    const file = join(openDocumentsDir(dataDir), `${String(process.pid)}-1.json`);
+    const written = JSON.parse(readFileSync(file, "utf8")) as { documents: Array<Record<string, unknown>> };
+    written.documents[0] = { ...written.documents[0], suggestions: [{ id, status: "rejected", note: "text" }] };
+    writeFileSync(file, JSON.stringify(written));
+    expect(readOpenDocuments(dataDir)).toMatchObject({ documents: [], unreadableWindows: 1 });
+  });
+});

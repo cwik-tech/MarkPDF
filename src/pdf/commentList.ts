@@ -14,6 +14,8 @@ import type { OverlayItem } from "../types";
 
 export function listComments(overlays: readonly OverlayItem[]): OverlayItem[] {
   return overlays
-    .filter((overlay) => overlay.kind === "comment")
+    // An agent's accepted highlight is listed too. It has no note, but the pane is where a person
+    // sees which annotations an agent wrote, and colour alone must not be the only place.
+    .filter((overlay) => overlay.kind === "comment" || (overlay.kind === "highlight" && overlay.origin?.kind === "agent"))
     .sort((a, b) => a.page - b.page || a.y - b.y || a.x - b.x);
 }

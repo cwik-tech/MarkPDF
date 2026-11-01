@@ -1,5 +1,6 @@
 import { hasTerminalControlCharacter } from "../text/safeForTerminal.js";
 import type { OpenDocumentKind } from "./openDocuments.js";
+import { readSuggestionStatuses, type SuggestionStatusEntry } from "./suggestionStatuses.js";
 
 /**
  * Validation for what a window says about its own tabs.
@@ -34,6 +35,8 @@ export interface PublishedOpenDocument {
   contentHash: string | null;
   contentSnapshot: string | null;
   unsavedChanges: boolean;
+  /** Agent suggestions on a PDF tab: ids and decisions only. Absent when there are none. */
+  suggestions?: SuggestionStatusEntry[];
 }
 
 /**
@@ -147,7 +150,7 @@ export function parseOpenDocumentsPayload(raw: unknown): OpenDocumentsPayload {
     seen.add(tabId);
     const kind = requireKind(fields.kind);
     const pageCount = requirePageCount(fields.pageCount);
-    documents.push({
+    const published: PublishedOpenDocument = {
       tabId,
       kind,
       name: requireText(fields.name, "name", MAX_NAME),
@@ -157,7 +160,14 @@ export function parseOpenDocumentsPayload(raw: unknown): OpenDocumentsPayload {
       contentHash: requireOptionalHash(fields.contentHash),
       contentSnapshot: requireContentSnapshot(fields.contentSnapshot, kind),
       unsavedChanges: requireFlag(fields.unsavedChanges, "unsavedChanges"),
-    });
+    };
+    if (fields.suggestions !== undefined) {
+      if (kind !== "pdf") refuse("Only a PDF tab carries agent suggestions.");
+      const suggestions = readSuggestionStatuses(fields.suggestions);
+      if (suggestions === null) refuse("suggestions must list at most 100 ids with their decisions, and nothing else.");
+      published.suggestions = suggestions;
+    }
+    documents.push(published);
   }
 
   const rawActive = record.activeTabId;

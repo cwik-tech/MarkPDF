@@ -1,5 +1,13 @@
 import { preparationAbortSignal, preparationSettings, queueExternalPreparation, registerAgentPreparation, withDocumentSave } from "./agentPreparation.js";
 import {
+  clearExpiredAgentRequests,
+  dispatchColdStartRequest,
+  dispatchDesktopRequest,
+  handleColdStartLink,
+  handleEvidenceLink,
+  registerAgentRequests,
+} from "./agentRequests.js";
+import {
   app,
   BrowserWindow,
   dialog,
@@ -80,7 +88,14 @@ import {
 type OpenFileBootstrapState = {
   pendingOpenPaths: string[];
   onOpenFile?: (filePath: string) => void;
+  pendingOpenUrls?: string[];
+  onOpenUrl?: (url: string) => void;
 };
+
+/** An evidence link on a command line: how Windows and Linux deliver one, and how a test does. */
+function evidenceLinkFromArgv(argv: readonly string[]): string | undefined {
+  return argv.find((arg) => arg.startsWith("markpdf://"));
+}
 
 type SingleInstanceData = {
   filePaths?: string[];
@@ -112,6 +127,23 @@ if (dataDirectoryOverride !== undefined) {
 }
 
 registerAgentPreparation(() => app.getPath("userData"), () => currentSemanticSettings());
+registerAgentRequests({
+  dataDir: () => app.getPath("userData"),
+  openDocument: async (path) => {
+    const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
+    const target = BrowserWindow.getFocusedWindow() ?? windows.at(-1);
+    if (target === undefined) return (await createWindow([path])).webContents;
+    sendOpenPathsToWindow(target, [path]);
+    return target.webContents;
+  },
+  indexedPath: (contentHash) => {
+    try {
+      return getSemanticDocument(contentHash)?.filePath ?? null;
+    } catch {
+      return null;
+    }
+  },
+});
 
 const store = new Store<AIStoreSchema>({
   defaults: {
@@ -421,6 +453,10 @@ if (!isTestRun || process.env.MARKPDF_TEST_SINGLE_INSTANCE === "1") {
   app.on("second-instance", (_event, argv, ...args: unknown[]) => {
     const preparation = argv.find((arg) => arg.startsWith("--markpdf-prepare="));
     if (preparation !== undefined) { void dispatchExternalPreparation(preparation.slice("--markpdf-prepare=".length)); return; }
+    const desktopRequest = argv.find((arg) => arg.startsWith("--markpdf-request="));
+    if (desktopRequest !== undefined) { void dispatchDesktopRequest(desktopRequest.slice("--markpdf-request=".length)); return; }
+    const link = evidenceLinkFromArgv(argv);
+    if (link !== undefined) { void handleEvidenceLink(link); return; }
     const additionalData = (args.at(1) ?? {}) as SingleInstanceData;
     const filePaths = uniqueFilePaths([
       ...(additionalData.filePaths ?? []),
@@ -457,11 +493,22 @@ app.whenReady().then(async () => {
   setDockIcon();
   const stopDockPageTurn = startDockPageTurn(appIconPath);
   app.once("will-quit", stopDockPageTurn);
+  clearExpiredAgentRequests();
   const initialOpenPaths = pendingOpenPaths;
   pendingOpenPaths = [];
   const preparation = process.argv.find((arg) => arg.startsWith("--markpdf-prepare="));
-  if (preparation === undefined) await createWindow(initialOpenPaths);
-  else await dispatchExternalPreparation(preparation.slice("--markpdf-prepare=".length));
+  const desktopRequest = process.argv.find((arg) => arg.startsWith("--markpdf-request="));
+  // Links macOS delivered before this module loaded, then the ones it delivers from now on.
+  const startLink = openFileBootstrapState?.pendingOpenUrls?.shift() ?? evidenceLinkFromArgv(process.argv);
+  if (openFileBootstrapState !== undefined) {
+    for (const queued of openFileBootstrapState.pendingOpenUrls?.splice(0) ?? []) void handleEvidenceLink(queued);
+    openFileBootstrapState.onOpenUrl = (url) => void handleEvidenceLink(url);
+  }
+  if (preparation !== undefined) await dispatchExternalPreparation(preparation.slice("--markpdf-prepare=".length));
+  // A request or a link that started MarkPDF decides about its window itself, before one exists.
+  else if (desktopRequest !== undefined) await dispatchColdStartRequest(desktopRequest.slice("--markpdf-request=".length));
+  else if (startLink !== undefined && initialOpenPaths.length === 0) await handleColdStartLink(startLink);
+  else await createWindow(initialOpenPaths);
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {

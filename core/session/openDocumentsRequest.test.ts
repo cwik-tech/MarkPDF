@@ -174,3 +174,34 @@ describe("checking what a window claims it has open", () => {
     expect(() => parseOpenDocumentsPayload({ activeTabId: null, documents: many })).toThrow(/documents/);
   });
 });
+
+describe("what a window reports about agent suggestions", () => {
+  const id = (n: number) => `suggestion-${String(n).padStart(8, "0")}-1234-4234-8234-123456789012`;
+
+  it("keeps each suggestion's id and decision, and nothing else", () => {
+    const parsed = parseOpenDocumentsPayload(
+      payload({ documents: [document({ suggestions: [{ id: id(1), status: "pending" }, { id: id(2), status: "accepted" }] })] }),
+    );
+    expect(parsed.documents[0]?.suggestions).toEqual([
+      { id: id(1), status: "pending" },
+      { id: id(2), status: "accepted" },
+    ]);
+    expect(parseOpenDocumentsPayload(payload()).documents[0]?.suggestions).toBeUndefined();
+  });
+
+  it("refuses text where a decision belongs, an unknown decision, and an unbounded list", () => {
+    const refused = [
+      [{ id: id(1), status: "pending", note: "Ask for 60 days." }],
+      [{ id: id(1), status: "maybe" }],
+      [{ id: "comment-1", status: "pending" }],
+      Array.from({ length: 101 }, (_, index) => ({ id: id(index), status: "pending" })),
+      "pending",
+    ];
+    for (const suggestions of refused) {
+      expect(() => parseOpenDocumentsPayload(payload({ documents: [document({ suggestions })] }))).toThrow(OpenDocumentsRequestError);
+    }
+    expect(() =>
+      parseOpenDocumentsPayload(payload({ documents: [document({ kind: "markdown", pageCount: 0, currentPage: null, contentSnapshot: "# x", suggestions: [] })] })),
+    ).toThrow(OpenDocumentsRequestError);
+  });
+});

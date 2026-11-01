@@ -12,7 +12,10 @@
  * with an anchored annotation must keep every line it was anchored to.
  */
 
-import type { OverlayItem, OverlayKind, OverlayRect } from "../types";
+import type { OverlayItem, OverlayKind, OverlayOrigin, OverlayRect } from "../types";
+
+/** The longest agent name an origin may carry: the same limit the desktop applies to a request. */
+const MAX_AGENT_NAME = 64;
 
 const overlayKinds: readonly OverlayKind[] = [
   "text",
@@ -60,7 +63,24 @@ function readOverlay(value: unknown): OverlayItem | null {
   const fragments = readFragments(value.fragments);
   if (fragments !== null) overlay.fragments = fragments;
 
+  // An origin that cannot be trusted is dropped and the annotation kept: losing who wrote it is
+  // better than losing what was written, and a forged origin must not make a person's note read as
+  // an agent's — or the other way round.
+  const origin = readOrigin(value.origin);
+  if (origin !== null) overlay.origin = origin;
+
   return overlay;
+}
+
+function readOrigin(value: unknown): OverlayOrigin | null {
+  if (!isRecord(value) || value.kind !== "agent") return null;
+  const { agent, quote, suggestedAt, acceptedAt, editedByPerson } = value;
+  if (typeof agent !== "string" || agent.trim().length === 0 || [...agent].length > MAX_AGENT_NAME) return null;
+  if (typeof suggestedAt !== "string" || typeof acceptedAt !== "string") return null;
+  const origin: OverlayOrigin = { kind: "agent", agent, suggestedAt, acceptedAt };
+  if (typeof quote === "string") origin.quote = quote;
+  if (editedByPerson === true) origin.editedByPerson = true;
+  return origin;
 }
 
 /**

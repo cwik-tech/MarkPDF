@@ -34,6 +34,15 @@ import type { ToolProgress } from "./progress.js";
  */
 export interface ToolContext {
   prepareDocument?: (path: string, signal: AbortSignal) => Promise<import("../dist-core/agent/preparation.js").PreparationReply>;
+  /** Hand one request to the running window and wait for its answer. */
+  desktopRequest?: (
+    request: import("../dist-core/agent/desktopRequests.js").DesktopRequest,
+    signal: AbortSignal,
+  ) => Promise<import("../dist-core/agent/desktopRequests.js").DesktopResult>;
+  /** The name the client gave in the MCP handshake. Its own claim, used only as a label. */
+  clientName?: () => string | undefined;
+  /** The key that signs evidence links, made on first use. */
+  evidenceLinkKey?: () => Buffer;
   store: () => SemanticStore;
   /** The embedder for one model id. Held per model, capped, so a change of model does not strand the old runtime nor pile up new ones without limit. */
   embedder: (modelId: string, onProgress?: (progress: { loaded: number; total: number }) => void) => Embedder;

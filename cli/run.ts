@@ -9,7 +9,10 @@ import {
 } from "../dist-core/consent/allowlistFile.js";
 import { resolveDataDir } from "../dist-core/paths.js";
 import { readSemanticSettings } from "../dist-core/settings/appSettings.js";
+import { runCommentsCommand } from "./commands/commentsCommand.js";
 import { runConvertCommand } from "./commands/convertCommand.js";
+import { runRevealCommand } from "./commands/revealCommand.js";
+import { runSuggestCommand } from "./commands/suggestCommand.js";
 import { runIndexCommand } from "./commands/indexCommand.js";
 import { runOutlineCommand } from "./commands/outlineCommand.js";
 import { runSearchCommand } from "./commands/searchCommand.js";
@@ -184,6 +187,12 @@ async function dispatch(
       return await runOutlineCommand(context, positionals, options);
     case "convert":
       return await runConvertCommand(context, positionals, options);
+    case "comments":
+      return await runCommentsCommand(context, options);
+    case "reveal":
+      return await runRevealCommand(context, options);
+    case "suggest":
+      return await runSuggestCommand(context, options);
     default:
       // Unreachable: the parser only returns a command the table declares, and every declared
       // command has a case above. Throwing rather than exiting quietly keeps a table entry added

@@ -21,6 +21,9 @@
     "core/modelParity.test.ts",
     // The same reason: it compares the main process's rule for opening an address against the
     // window's copy, and the window half is written for Vite's bundler resolution.
-    "electron/externalUrl.test.ts"
+    "electron/externalUrl.test.ts",
+    // The same reason again: it compares core's annotation reader with the window's readers, and
+    // saves its fixture with the window's own writer.
+    "core/annotations/rendererParity.test.ts"
   ]
 }

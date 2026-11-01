@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ACTIVE_DOCUMENT, propertyFromOption, TOOLS } from "./toolSchemas.js";
+import { ACTIVE_DOCUMENT, exclusiveBranches, propertyFromOption, TOOLS } from "./toolSchemas.js";
 
 /**
  * The tool schemas a client sees, generated from the command table rather than written twice.
@@ -75,6 +75,9 @@ describe("the tools this server offers", () => {
       "to_markdown",
       "list_open_documents",
       "read_open_document",
+      "reveal",
+      "suggest_annotation",
+      "read_comments",
     ]);
   });
 
@@ -196,6 +199,48 @@ describe("the tools this server offers", () => {
     expect(byName.search).toMatch(/snapshot/i);
     expect(byName.read_pages).toMatch(/snapshot/i);
     expect(byName.to_markdown).toMatch(/current|live/i);
+  });
+
+  it("takes read_comments' arguments from the comments command, with no default identity", () => {
+    const read = TOOLS.find((tool) => tool.name === "read_comments");
+
+    expect(read?.inputSchema.properties).toEqual({
+      path: { ...propertyFromOption("comments", "path") },
+      id: { ...propertyFromOption("comments", "id") },
+      ref: { ...propertyFromOption("comments", "ref") },
+      pages: propertyFromOption("comments", "pages"),
+      offset: propertyFromOption("comments", "offset"),
+    });
+    expect(read?.inputSchema.properties.ref?.default).toBeUndefined();
+    expect(read?.inputSchema.required).toEqual([]);
+  });
+
+  it("publishes a three-way identity that refuses every pair, generated from the table", () => {
+    const read = TOOLS.find((tool) => tool.name === "read_comments");
+
+    expect(read?.inputSchema.oneOf).toEqual([
+      { required: ["path"], not: { anyOf: [{ required: ["id"] }, { required: ["ref"] }] } },
+      { required: ["id"], not: { anyOf: [{ required: ["path"] }, { required: ["ref"] }] } },
+      { required: ["ref"], not: { anyOf: [{ required: ["path"] }, { required: ["id"] }] } },
+    ]);
+  });
+
+  it("says that reading comments needs read permission for the file", () => {
+    const read = TOOLS.find((tool) => tool.name === "read_comments");
+
+    expect(read?.description).toMatch(/read permission/i);
+    expect(read?.description).toMatch(/saved/i);
+  });
+
+  it("takes reveal's arguments from the reveal command, without the command line's agent name", () => {
+    const reveal = TOOLS.find((tool) => tool.name === "reveal");
+
+    expect(Object.keys(reveal?.inputSchema.properties ?? {})).toEqual(["path", "id", "ref", "page", "quote", "mode"]);
+    expect(reveal?.inputSchema.properties.mode).toMatchObject({ enum: ["show", "link"], default: "show" });
+    expect(reveal?.inputSchema.properties.quote).toEqual(propertyFromOption("reveal", "quote"));
+    expect(reveal?.inputSchema.properties.quote?.maxLength).toBe(500);
+    expect(reveal?.inputSchema.required).toEqual(["page"]);
+    expect(reveal?.inputSchema.oneOf).toEqual(exclusiveBranches("reveal"));
   });
 
   it("offers no tool that indexes, grants, or deletes", () => {

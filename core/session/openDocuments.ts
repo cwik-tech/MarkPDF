@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { openDocumentsDir } from "../paths.js";
 import { removeOpenDocumentContentForProcess } from "./openDocumentContent.js";
 import { processIsRunning } from "./processLiveness.js";
+import { readSuggestionStatuses, type SuggestionStatusEntry } from "./suggestionStatuses.js";
 
 /**
  * What the application tells other processes about the documents it has open.
@@ -57,6 +58,11 @@ export interface OpenDocumentRecord {
    * see the tool descriptions — so what this supports is an honest sentence, not a decision.
    */
   unsavedChanges: boolean;
+  /**
+   * The person's decisions about an agent's suggestions on this tab: ids and statuses, no text.
+   * Absent on a record written before suggestions existed, and on a tab that has none.
+   */
+  suggestions?: readonly SuggestionStatusEntry[];
 }
 
 export interface WindowSnapshot {
@@ -240,6 +246,12 @@ function readSnapshot(file: string): WindowSnapshot | null {
     if (typeof hasContentSnapshot !== "boolean") return null;
     if (!isNonNegativeInteger(contentChars) || !isNonNegativeInteger(contentBytes)) return null;
     if (typeof snapshotTruncated !== "boolean") return null;
+    let suggestions: SuggestionStatusEntry[] | undefined;
+    if (entry.suggestions !== undefined) {
+      const read = readSuggestionStatuses(entry.suggestions);
+      if (read === null) return null;
+      suggestions = read;
+    }
     documents.push({
       tabId,
       kind,
@@ -253,6 +265,7 @@ function readSnapshot(file: string): WindowSnapshot | null {
       contentBytes,
       snapshotTruncated,
       unsavedChanges,
+      ...(suggestions === undefined ? {} : { suggestions }),
     });
   }
 

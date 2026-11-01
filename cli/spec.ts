@@ -16,7 +16,7 @@ import type { SemanticSearchSettings } from "../dist-core/ipc/settings.js";
 /** What an option's value is, and what would make one invalid. */
 export type OptionKind =
   | { kind: "boolean" }
-  | { kind: "string"; placeholder: string }
+  | { kind: "string"; placeholder: string; maxLength?: number }
   | { kind: "choice"; placeholder: string; choices: readonly string[] }
   | { kind: "integer"; placeholder: string; minimum: number; maximum: number }
   | { kind: "number"; placeholder: string; minimum: number; maximum: number };
@@ -62,7 +62,26 @@ export interface CommandSpec {
    * parser, so the rule is visible in the same table that generates the help.
    */
   singleTargetOptions?: readonly string[];
+  /** Options that must be present. Published as `required` in the MCP schema. */
+  requiredOptions?: readonly string[];
+  /**
+   * A command an agent runs against a document. It may use only the grants that already exist:
+   * a grant option given with it is refused, and it never asks at the terminal for a new one, so
+   * the command cannot widen its own access.
+   */
+  agentFacing?: true;
 }
+
+/** The three ways a document is named by a command an agent runs. Exactly one is given. */
+const documentIdentityOptions: readonly OptionSpec[] = [
+  { name: "path", type: { kind: "string", placeholder: "<pdf>" }, description: "The document, by path." },
+  { name: "id", type: { kind: "string", placeholder: "<hash>" }, description: "The document, by content hash." },
+  {
+    name: "ref",
+    type: { kind: "string", placeholder: "<ref>" },
+    description: 'The document, by a reference from list_open_documents, or "active" for the one in front.',
+  },
+];
 
 /**
  * Options every command accepts, plus the grant options that need no command at all.
@@ -185,6 +204,92 @@ export const commandSpecs: readonly CommandSpec[] = [
       },
     ],
     singleTargetOptions: ["out"],
+  },
+  {
+    name: "reveal",
+    summary: "Show a page of a PDF in MarkPDF, and mark a quoted passage on it for a few seconds.",
+    positionals: [],
+    options: [
+      ...documentIdentityOptions,
+      {
+        name: "page",
+        type: { kind: "integer", placeholder: "<n>", minimum: 1, maximum: 100_000 },
+        description: "The page to show, counted from 1.",
+      },
+      {
+        name: "quote",
+        type: { kind: "string", placeholder: "<text>", maxLength: 500 },
+        description: "Words on that page to mark, as they appear there.",
+      },
+      {
+        name: "mode",
+        type: { kind: "choice", placeholder: "<mode>", choices: ["show", "link"] },
+        description: "Show the passage now, or only return a markpdf:// link that shows it when clicked.",
+        default: "show",
+      },
+      {
+        name: "agent",
+        type: { kind: "string", placeholder: "<name>", maxLength: 64 },
+        description: "The name MarkPDF shows beside the mark.",
+        default: "markpdf command line",
+      },
+    ],
+    exactlyOneOf: ["path", "id", "ref"],
+    requiredOptions: ["page"],
+    agentFacing: true,
+  },
+  {
+    name: "suggest",
+    summary: "Propose a highlight or a comment on a PDF open in MarkPDF, for the person to accept or reject.",
+    positionals: [],
+    options: [
+      ...documentIdentityOptions,
+      {
+        name: "page",
+        type: { kind: "integer", placeholder: "<n>", minimum: 1, maximum: 100_000 },
+        description: "The page the suggestion is about, counted from 1.",
+      },
+      {
+        name: "quote",
+        type: { kind: "string", placeholder: "<text>", maxLength: 500 },
+        description: "Words on that page to anchor it to. Without a note, this suggests a highlight.",
+      },
+      {
+        name: "note",
+        type: { kind: "string", placeholder: "<text>", maxLength: 2_000 },
+        description: "The comment. Without a quote, it is pinned to the top of the page.",
+      },
+      {
+        name: "agent",
+        type: { kind: "string", placeholder: "<name>", maxLength: 64 },
+        description: "The name MarkPDF shows as the suggestion's author.",
+        default: "markpdf command line",
+      },
+    ],
+    exactlyOneOf: ["path", "id", "ref"],
+    requiredOptions: ["page"],
+    agentFacing: true,
+  },
+  {
+    name: "comments",
+    summary: "List the comments and highlights a saved PDF carries, with author, page, quote and note.",
+    positionals: [],
+    options: [
+      ...documentIdentityOptions,
+      {
+        name: "pages",
+        type: { kind: "string", placeholder: "<range>" },
+        description: "Only these pages, as 3, 3-7, or 1,4-6.",
+      },
+      {
+        name: "offset",
+        type: { kind: "integer", placeholder: "<n>", minimum: 0, maximum: 100_000 },
+        description: "Start at this comment, in reading order. A reply names the next offset.",
+        default: 0,
+      },
+    ],
+    exactlyOneOf: ["path", "id", "ref"],
+    agentFacing: true,
   },
 ];
 

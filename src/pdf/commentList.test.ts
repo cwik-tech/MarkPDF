@@ -70,3 +70,15 @@ describe("the comments a document has to show", () => {
     expect(listComments([makeOverlay({ kind: "highlight" })])).toEqual([]);
   });
 });
+
+describe("annotations an agent wrote", () => {
+  const origin = { kind: "agent" as const, agent: "claude-code", suggestedAt: "t", acceptedAt: "t" };
+
+  it("lists an accepted agent highlight with the comments, so it is reachable without its colour", () => {
+    const agentHighlight = makeOverlay({ id: "agent-highlight", kind: "highlight", text: undefined, origin, y: 50 });
+    const plainHighlight = makeOverlay({ id: "plain-highlight", kind: "highlight", text: undefined });
+    const comment = makeOverlay({ id: "comment", y: 200 });
+
+    expect(listComments([comment, plainHighlight, agentHighlight]).map((entry) => entry.id)).toEqual(["agent-highlight", "comment"]);
+  });
+});

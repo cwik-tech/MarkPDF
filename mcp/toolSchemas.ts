@@ -17,6 +17,8 @@ export interface SchemaProperty {
   minimum?: number;
   maximum?: number;
   default?: string | number;
+  /** For a string: the most code points it may hold. */
+  maxLength?: number;
 }
 
 /**
@@ -29,7 +31,8 @@ export interface SchemaProperty {
  */
 export interface SchemaBranch {
   required: readonly string[];
-  not?: { required: readonly string[] };
+  /** One forbidden name, or several of which none may be present. */
+  not?: { required: readonly string[] } | { anyOf: ReadonlyArray<{ required: readonly string[] }> };
 }
 
 export interface ToolInputSchema {
@@ -81,7 +84,12 @@ function toProperty(option: OptionSpec): SchemaProperty {
     case "choice":
       return { type: "string", enum: kind.choices, description: option.description, ...withDefault };
     case "string":
-      return { type: "string", description: option.description, ...withDefault };
+      return {
+        type: "string",
+        description: option.description,
+        ...(kind.maxLength === undefined ? {} : { maxLength: kind.maxLength }),
+        ...withDefault,
+      };
     case "boolean":
       // No tool here takes one, and a silent `type: "string"` would be worse than saying so.
       throw new Error(`--${option.name} is a flag, which has no meaning in a tool that has no flags.`);
@@ -101,6 +109,28 @@ export function propertyFromOption(commandName: string, optionName: string): Sch
   const option = command.options.find((candidate) => candidate.name === optionName);
   if (option === undefined) throw new Error(`The ${commandName} command does not declare --${optionName}.`);
   return toProperty(option);
+}
+
+/**
+ * The command's `exactlyOneOf`, published as a `oneOf` that refuses every pair.
+ *
+ * Generated rather than written per tool, so the schema a client validates against and the rule
+ * the command line enforces are one rule. Each branch forbids every other name with `anyOf`: a
+ * `not` over a single `required` list would forbid only all of them together.
+ */
+export function exclusiveBranches(commandName: string): readonly SchemaBranch[] {
+  const command = findCommand(commandName);
+  const names = command?.exactlyOneOf;
+  if (names === undefined || names.length < 2) throw new Error(`The ${commandName} command declares no exclusive options.`);
+  return names.map((name) => ({
+    required: [name],
+    not: { anyOf: names.filter((other) => other !== name).map((other) => ({ required: [other] })) },
+  }));
+}
+
+/** Every named option of one command, as schema properties under their tool argument names. */
+function propertiesFromCommand(commandName: string, names: readonly string[]): Record<string, SchemaProperty> {
+  return Object.fromEntries(names.map((name) => [name.replace(/-/g, "_"), propertyFromOption(commandName, name)]));
 }
 
 /** `path` and `id` mean the same thing in every tool, and come from the same table entries. */
@@ -226,7 +256,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   {
     name: "read_open_document",
     description:
-      "Read a PDF or Markdown tab that is open in MarkPDF, named by a reference from list_open_documents. Defaults to whichever document is active. PDF pages come from the index when available; annotations, highlights and comments appear only after they have been saved into the PDF. Markdown comes from the current private open buffer, whether saved or unsaved, and is paged with offset. No filesystem path is returned.",
+      "Read a PDF or Markdown tab that is open in MarkPDF, named by a reference from list_open_documents. Defaults to whichever document is active. PDF pages come from the index when available; annotations, highlights and comments appear only after they have been saved into the PDF, and read_comments lists them as data. Markdown comes from the current private open buffer, whether saved or unsaved, and is paged with offset. No filesystem path is returned.",
     inputSchema: {
       type: "object",
       properties: {
@@ -247,6 +277,42 @@ export const TOOLS: readonly ToolDefinition[] = [
         },
       },
       required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "reveal",
+    description:
+      "Show the person a cited passage: bring the document forward in MarkPDF at a page and mark the quoted words for a few seconds. Changes nothing in the document. Name it by path, content hash or a ref from list_open_documents (\"active\" for the one in front); a closed document within the read grants is opened. Needs read permission for the file. Says whether the quote was found and how often it occurs on the page. With mode \"link\", shows nothing and returns a markpdf:// link to cite instead; that needs only the index.",
+    inputSchema: {
+      type: "object",
+      properties: propertiesFromCommand("reveal", ["path", "id", "ref", "page", "quote", "mode"]),
+      required: ["page"],
+      oneOf: exclusiveBranches("reveal"),
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "suggest_annotation",
+    description:
+      "Propose a highlight (quote only), a comment on quoted words (quote and note) or a page note (note only) on a PDF open in MarkPDF. The person sees it marked as an AI agent's suggestion and accepts or rejects it; nothing reaches the file unless they accept it and save. Needs read permission for the file; the document must be open in one tab. read_comments reports the person's decisions.",
+    inputSchema: {
+      type: "object",
+      properties: propertiesFromCommand("suggest", ["path", "id", "ref", "page", "quote", "note"]),
+      required: ["page"],
+      oneOf: exclusiveBranches("suggest"),
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "read_comments",
+    description:
+      "List the comments and highlights of a saved PDF: author, whether a person, an AI agent or another application wrote it, page, the marked words and the note. Name the document by path, content hash or a ref from list_open_documents (\"active\" for the one in front). Needs read permission for the file, also when it is indexed. Unsaved comments in an open tab are not included. Long lists continue with offset.",
+    inputSchema: {
+      type: "object",
+      properties: propertiesFromCommand("comments", ["path", "id", "ref", "pages", "offset"]),
+      required: [],
+      oneOf: exclusiveBranches("comments"),
       additionalProperties: false,
     },
   },

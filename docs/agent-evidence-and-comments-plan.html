@@ -1,0 +1,1235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="generator" content="html-problem-visualization">
+<meta name="source-md" content="agent-evidence-and-comments-plan.md">
+<meta name="source-sha256" content="02becc76878483148f33fcba328a44a5da1a3a2f63bad4d11d4e5d73ef471887">
+<title>Agent Evidence and Agent Comments</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: an engineering sheet. Prose sits in a 74ch column; every visual breaks out to the full track.
+   Semantic tones: bad = broke, warn = misleading or risky, ok = worked, fix = the change, idle = not reached.
+   Colour is used sparingly: tinted fills with a coloured stroke, or a 3px inset stripe. Surfaces stay white.
+   Do not change tokens per project. Add new rules only from these tokens. */
+:root{
+  --bg:#f3f5f8; --surface:#ffffff; --ink:#17202d; --muted:#576274; --line:#d2d8e1;
+  --band-a:#f8f9fb; --band-b:#edf0f4; --edge:#3b4657;
+  --fix:#2b61a8;  --fix-bg:#e4ecf8;  --fix-ink:#24548f;
+  --bad:#c0392f;  --bad-bg:#fae6e4;  --bad-ink:#a8302a;
+  --warn:#b0680a; --warn-bg:#fcefd8; --warn-ink:#8a5006;
+  --ok:#2a8a3d;   --ok-bg:#e2f2e5;   --ok-ink:#21712f;
+  --idle:#4b5466; --idle-bg:#e6e9ee; --idle-ink:#576274;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-cond:"IBM Plex Sans Condensed","Roboto Condensed","Arial Narrow",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --gutter:clamp(16px,5vw,96px);
+  --prose:max(74ch,50%);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#10141a; --surface:#171c24; --ink:#e3e7ed; --muted:#98a2b2; --line:#2a313c;
+    --band-a:#141920; --band-b:#1a2029; --edge:#a9b2c1;
+    --fix:#7aa7e9;  --fix-bg:#1a2940;  --fix-ink:#9cbdf0;
+    --bad:#f0736b;  --bad-bg:#3a1c1a;  --bad-ink:#f59a93;
+    --warn:#e8a74a; --warn-bg:#382810; --warn-ink:#f1be72;
+    --ok:#62c476;   --ok-bg:#16301c;   --ok-ink:#86d496;
+    --idle:#9ba4b3; --idle-bg:#222932; --idle-ink:#98a2b2;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10141a; --surface:#171c24; --ink:#e3e7ed; --muted:#98a2b2; --line:#2a313c;
+  --band-a:#141920; --band-b:#1a2029; --edge:#a9b2c1;
+  --fix:#7aa7e9;  --fix-bg:#1a2940;  --fix-ink:#9cbdf0;
+  --bad:#f0736b;  --bad-bg:#3a1c1a;  --bad-ink:#f59a93;
+  --warn:#e8a74a; --warn-bg:#382810; --warn-ink:#f1be72;
+  --ok:#62c476;   --ok-bg:#16301c;   --ok-ink:#86d496;
+  --idle:#9ba4b3; --idle-bg:#222932; --idle-ink:#98a2b2;
+  color-scheme:dark;
+}
+
+/* base */
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.6 var(--font-body);padding-inline:var(--gutter);padding-block:0 64px}
+a{color:var(--fix)}
+a:focus-visible{outline:2px solid var(--fix);outline-offset:2px}
+code{font-family:var(--font-mono);font-size:.86em;overflow-wrap:anywhere}
+pre{font-family:var(--font-mono);font-size:12.5px;line-height:1.65;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+p{margin:0}
+ul,ol{margin:0}
+h1,h2,h3{font-family:var(--font-cond);text-wrap:balance;margin:0}
+h1{font-weight:700;font-size:clamp(34px,5vw,52px);line-height:1.05;letter-spacing:-.01em}
+h1 .quiet{color:var(--muted);font-weight:400}
+h1 [class*="t-"]{color:var(--tone)}
+h2{font-weight:700;font-size:28px;line-height:1.15}
+h3{font-weight:600;font-size:18px;line-height:1.3}
+.label{font:600 12px/1.3 var(--font-cond);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.muted{color:var(--muted)}
+.small{font-size:13.5px}
+.src{font-size:12.5px;line-height:1.5;color:var(--muted)}
+.src a{color:var(--muted)}
+.page{max-width:1400px}
+.col{max-width:var(--prose)}
+.stack{display:flex;flex-direction:column;gap:14px}
+
+/* header, legend and nav */
+header.hero{padding-block:56px 28px}
+header.hero .stack{gap:16px}
+.lead{font-size:17px;max-width:66ch}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font:500 12.5px/1 var(--font-cond);letter-spacing:.02em;padding:6px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.chip b{color:var(--ink);font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:8px 22px;font:400 13px/1.3 var(--font-cond);color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{width:24px;height:15px;border:1.5px solid var(--tone);background:var(--tone-bg);border-radius:4px;flex:none}
+nav.toc{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;margin-inline:calc(-1 * var(--gutter));padding:10px var(--gutter);background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+nav.toc .page{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 18px;max-width:none}
+nav.toc a{font:500 13px/1.4 var(--font-cond);letter-spacing:.02em;color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--ink)}
+section{padding-block:44px 8px;scroll-margin-top:52px}
+section > .page > .stack{gap:18px}
+section h3 + p, .col h3 + p{margin-top:-6px}
+
+/* semantic tones */
+.t-bad{--tone:var(--bad);--tone-bg:var(--bad-bg);--tone-ink:var(--bad-ink)}
+.t-warn{--tone:var(--warn);--tone-bg:var(--warn-bg);--tone-ink:var(--warn-ink)}
+.t-ok{--tone:var(--ok);--tone-bg:var(--ok-bg);--tone-ink:var(--ok-ink)}
+.t-fix{--tone:var(--fix);--tone-bg:var(--fix-bg);--tone-ink:var(--fix-ink)}
+.t-idle{--tone:var(--idle);--tone-bg:var(--idle-bg);--tone-ink:var(--idle-ink)}
+.tag{display:inline-block;align-self:flex-start;font:600 11px/1 var(--font-cond);letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:999px;white-space:nowrap;color:var(--tone-ink,var(--muted));background:var(--tone-bg,var(--band-b))}
+
+/* shared card surface */
+.card,.stage,.panel,.wcard,.ledger > div,.aside,.layer,.fork,.nest{background:var(--surface);border:1px solid var(--line);border-radius:10px}
+
+/* summary cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.card{padding:16px 18px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.card[class*="t-"]{box-shadow:inset 3px 0 0 var(--tone)}
+.card h3{font-size:17px}
+.card p{font-size:14px;color:var(--muted)}
+.card p strong{color:var(--ink);font-weight:600}
+.card > a{font:500 13px/1.3 var(--font-cond);margin-top:auto}
+
+/* stage strip */
+.stages{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stage{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.stage[class*="t-"]{border-color:color-mix(in srgb,var(--tone) 45%,var(--line));box-shadow:inset 0 3px 0 var(--tone)}
+.stage.t-idle{background:var(--band-a);box-shadow:none;border-style:dashed}
+.stage .n{font:700 22px/1 var(--font-mono);color:var(--line)}
+.stage .name{font:600 15px/1.3 var(--font-cond)}
+.stage .state{align-self:flex-start;font:600 11px/1 var(--font-cond);letter-spacing:.05em;text-transform:uppercase;padding:4px 8px;border-radius:999px;color:var(--tone-ink,var(--muted));background:var(--tone-bg,var(--band-b))}
+.stage .note{font-size:13px;color:var(--muted);line-height:1.45}
+.pills{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+.pills span{font:600 11px/1 var(--font-mono);padding:5px 6px;border-radius:4px;background:var(--surface);color:var(--muted);border:1px solid var(--line)}
+.pills span[class*="t-"]{background:var(--tone);color:var(--surface);border-color:var(--tone)}
+
+/* side-by-side panels */
+.compare{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.panel{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.panel > header{padding:12px 16px 10px;display:flex;flex-direction:column;gap:3px;border-bottom:1px solid var(--line)}
+.panel > header h3{font-size:16px}
+.panel pre{padding:14px 16px;background:var(--band-a);flex:1}
+.panel > .body{padding:14px 16px;font-size:14px;flex:1}
+.panel > footer{padding:10px 16px 12px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line)}
+.panel[class*="t-"]{border-color:var(--tone);box-shadow:inset 3px 0 0 var(--tone)}
+.panel[class*="t-"] pre{background:var(--tone-bg)}
+mark{background:var(--warn-bg);color:var(--warn-ink);padding:0 2px;border-radius:2px}
+.panel[class*="t-"] mark{background:transparent;color:var(--tone-ink);font-weight:600}
+
+/* diagram nodes and edges (fork, chain) */
+.node{border:1.4px solid var(--edge);border-radius:6px;padding:8px 14px;background:var(--surface);text-align:center;font:500 13px/1.35 var(--font-cond);max-width:100%;min-width:0}
+.node .label{display:block;font-size:10.5px;margin-bottom:2px;letter-spacing:.08em}
+.node.file{border-color:var(--muted);border-radius:2px;font:500 12px/1.4 var(--font-mono)}
+.node[class*="t-"]{border-color:var(--tone);background:var(--tone-bg)}
+.node[class*="t-"] strong{color:var(--tone-ink);font-weight:600}
+.vline{width:1.3px;height:24px;background:var(--edge);position:relative}
+.vline::after{content:"";position:absolute;bottom:-1px;left:50%;transform:translateX(-50%);border:4.5px solid transparent;border-top:6px solid var(--edge);border-bottom:0}
+
+/* fork diagram */
+.fork{padding:24px;display:flex;flex-direction:column;align-items:center}
+.branches{display:grid;grid-template-columns:repeat(var(--n,2),minmax(0,1fr));gap:28px;width:100%;position:relative;padding-top:24px}
+.branches::before{content:"";position:absolute;top:0;left:calc(50% / var(--n,2));right:calc(50% / var(--n,2));height:1.3px;background:var(--edge)}
+.branch{display:flex;flex-direction:column;align-items:center;min-width:0;position:relative}
+.branch::before{content:"";position:absolute;top:-24px;left:50%;width:1.3px;height:14px;background:var(--edge)}
+.branch .who{font:600 11px/1.3 var(--font-cond);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;text-align:center}
+.fork-foot{margin-top:18px;font-size:13px;color:var(--muted);text-align:center;max-width:620px}
+@media (max-width:700px){
+  .branches{grid-template-columns:1fr;padding-top:0;gap:22px}
+  .branches::before,.branch::before{display:none}
+  .branch{border-top:1px dashed var(--line);padding-top:16px}
+}
+
+/* tables */
+.tablewrap{overflow-x:auto}
+table{width:100%;min-width:560px;border-collapse:separate;border-spacing:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:14px}
+th,td{text-align:left;vertical-align:top;padding:10px 16px;border-top:1px solid var(--line)}
+thead th{border-top:0;font:600 12px/1.3 var(--font-cond);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--band-b)}
+td.num{font-family:var(--font-mono);font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+td[class*="t-"]{color:var(--tone-ink);font-weight:500}
+
+/* nested boundaries */
+.nest{padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.nest .nest{background:var(--band-a);border:1.4px dashed var(--muted)}
+.nest[class*="t-"]{background:var(--tone-bg);border:1.4px solid var(--tone)}
+.nest-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+.nest-head h3{font-size:16px}
+.nest-head .label{font-size:11px;letter-spacing:.06em}
+.nest ul{padding-left:18px;font-size:14px}
+.nest li{margin-block:3px}
+
+/* step timeline: attempts, events, or ordered actions */
+.steps{list-style:none;margin:0 0 0 6px;padding:0;border-left:1.3px solid var(--edge)}
+.steps li{position:relative;padding:0 0 14px 20px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1px 14px}
+.steps li:last-child{padding-bottom:0}
+.steps li::before{content:"";position:absolute;left:-6px;top:6px;width:11px;height:11px;border-radius:50%;background:var(--tone,var(--edge));box-shadow:0 0 0 3px var(--bg)}
+.steps .what{font:600 15px/1.4 var(--font-cond)}
+.steps .got{grid-column:1;font:12.5px/1.5 var(--font-mono);color:var(--tone-ink,var(--muted))}
+.steps .ref{grid-row:1 / span 2;grid-column:2;font:12px/1.5 var(--font-mono);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* two-column split */
+.split{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:32px;align-items:start}
+@media (max-width:900px){.split{grid-template-columns:1fr}}
+
+/* outcome layers */
+.layers{display:flex;flex-direction:column;gap:8px}
+.layer{display:grid;grid-template-columns:130px minmax(0,1fr) auto;gap:14px;align-items:center;padding:11px 16px}
+.layer[class*="t-"]{box-shadow:inset 3px 0 0 var(--tone)}
+.layer .k{font:600 12px/1.3 var(--font-cond);text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.layer .v{font-size:14px;min-width:0}
+@media (max-width:620px){.layer{grid-template-columns:1fr;gap:6px}}
+
+/* pair: before/after, said/should-say, today/after the fix */
+.pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:700px){.pair{grid-template-columns:1fr}}
+.pair > div{border-radius:10px;padding:12px 16px 14px;background:var(--surface);border:1px solid var(--line);display:flex;flex-direction:column;gap:8px;min-width:0}
+.pair > div[class*="t-"]{background:var(--tone-bg);border-color:color-mix(in srgb,var(--tone) 40%,transparent)}
+.pair > div[class*="t-"] .label{color:var(--tone-ink)}
+
+/* callouts */
+.aside{padding:18px 22px;display:flex;flex-direction:column;gap:10px;background:var(--band-a);border-style:dashed;border-color:var(--muted)}
+.aside h3{font-size:18px}
+.decision{background:var(--fix-bg);border:1.4px solid var(--fix);border-radius:10px;padding:18px 22px;display:flex;flex-direction:column;gap:12px}
+.decision > .label{color:var(--fix-ink)}
+.decision h3{color:var(--fix-ink);font-size:20px}
+.decision .pair > div{background:var(--surface);border-color:var(--line)}
+
+/* work cards */
+.work{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:760px){.work{grid-template-columns:1fr}}
+.wcard{padding:16px 20px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.wcard .top{display:flex;align-items:center;gap:10px}
+.wcard .letter{font:700 14px/1 var(--font-mono);width:28px;height:28px;display:grid;place-items:center;border-radius:6px;background:var(--fix-bg);color:var(--fix-ink);border:1.4px solid var(--fix);flex:none}
+.wcard h3{font-size:18px}
+.wcard ul{padding-left:18px;font-size:14px}
+.wcard li{margin-block:4px}
+.wcard .done{font-size:13px;border-top:1px solid var(--line);padding-top:10px;color:var(--muted);margin-top:auto}
+.wcard .done strong{color:var(--ink);font-weight:600}
+
+/* chain: a short strict sequence, with arrows */
+.chain{display:grid;grid-template-columns:repeat(var(--n,4),minmax(0,1fr));gap:12px 26px}
+.chain .node{position:relative;text-align:left;font-size:13px;background:var(--fix-bg);border-color:var(--fix)}
+.chain .node:not(:last-child)::after{content:"\2192";position:absolute;right:-20px;top:50%;transform:translateY(-50%);color:var(--muted);font:16px var(--font-body)}
+.chain.down{grid-template-columns:minmax(0,1fr);row-gap:24px}
+.chain.down .node:not(:last-child)::after{content:"\2193";right:auto;left:50%;top:auto;bottom:-22px;transform:translateX(-50%)}
+@media (max-width:900px){
+  .chain{grid-template-columns:minmax(0,1fr);row-gap:24px}
+  .chain .node:not(:last-child)::after{content:"\2193";right:auto;left:50%;top:auto;bottom:-22px;transform:translateX(-50%)}
+}
+
+/* history timeline */
+.history{list-style:none;margin:0;padding:0}
+.history li{display:grid;grid-template-columns:130px minmax(0,1fr);gap:16px;padding-block:12px;border-top:1px solid var(--line);font-size:14.5px}
+.history li:first-child{border-top:0}
+.history .when{font:600 14px/1.4 var(--font-cond)}
+.history .when span{display:block;font:400 12px/1.5 var(--font-mono);color:var(--muted)}
+@media (max-width:520px){.history li{grid-template-columns:1fr;gap:4px}}
+
+/* ledger: checked vs not established */
+.ledger{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.ledger > div{padding:16px 20px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.ledger ul{padding-left:18px;font-size:14px}
+.ledger li{margin-block:5px}
+
+/* sources and footer */
+.sources{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:2px 28px;font-size:14px;margin:0;padding:0;list-style:none}
+.sources li{padding-block:8px;border-top:1px solid var(--line);min-width:0}
+.sources code{font-size:12.5px}
+.sources span{display:block;color:var(--muted);font-size:13px}
+footer.end{padding-block:48px 0;font-size:13px;color:var(--muted);max-width:var(--prose)}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="page stack">
+    <span class="label">MarkPDF · agent evidence and agent comments · 31 October 2026 · plan, review and implementation record</span>
+    <h1>Agents will point to evidence and propose comments. <span class="t-fix">Only the person can put a proposal in the file.</span></h1>
+    <p class="lead">This plan adds two features to MarkPDF that share one route from an agent to the running window. With reveal, an agent brings a document to the front and marks the passage that it cites for a few seconds. With agent comments, an agent reads every comment as data and proposes new ones in a separate suggested layer. A proposal reaches the file only when the person accepts it and then saves. Codex reviewed the plan, and the plan accepted all 13 findings. The plan is now implemented in this worktree and not committed.</p>
+    <div class="chips">
+      <span class="chip">source <b>agent-evidence-and-comments-plan.md</b></span>
+      <span class="chip">status <b>implemented, uncommitted</b></span>
+      <span class="chip">base <b>main at 2125a71</b></span>
+      <span class="chip">Codex review <b>13 findings, all accepted</b></span>
+      <span class="chip">first-version citations <b>149 resolve</b></span>
+      <span class="chip">defects found by tests <b>3</b></span>
+      <span class="chip">gates <b>npm test, build and 48 of 48 journeys pass</b></span>
+      <span class="chip">deviations from the plan <b>7</b></span>
+      <span class="chip">default decisions <b>9</b></span>
+      <span class="chip">deferred journeys <b>2</b></span>
+    </div>
+    <div class="legend" aria-label="Colour key">
+      <span class="t-fix"><i></i>Planned change</span>
+      <span class="t-ok"><i></i>Exists today, or correct</span>
+      <span class="t-warn"><i></i>Incomplete, risky or unverified</span>
+      <span class="t-bad"><i></i>Wrong, refused or discarded</span>
+      <span class="t-idle"><i></i>Deferred or not established</span>
+    </div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <div class="page">
+    <a href="#summary">Summary</a>
+    <a href="#brief">Brief check</a>
+    <a href="#scope">Scope</a>
+    <a href="#route">Route</a>
+    <a href="#channel">Channel</a>
+    <a href="#closed">Closed app</a>
+    <a href="#link">Link</a>
+    <a href="#grants">Grants</a>
+    <a href="#store">Suggestions</a>
+    <a href="#look">Look</a>
+    <a href="#authorship">Authorship</a>
+    <a href="#ipc">IPC</a>
+    <a href="#bounds">Bounds</a>
+    <a href="#tests">Tests</a>
+    <a href="#adr">ADRs</a>
+    <a href="#decisions">Decisions</a>
+    <a href="#review">Review</a>
+    <a href="#implementation">Implementation</a>
+    <a href="#evidence">Evidence</a>
+  </div>
+</nav>
+
+<main>
+
+<section id="summary">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">In one minute</span>
+      <h2>The plan answers each of your nine questions</h2>
+      <p>Each row gives the short answer and links to the detail. No tool in this plan writes a file, and no tool can add a grant, on any surface.</p>
+      <p>The answers include the changes from the <a href="#review">Codex review</a> and the nine <a href="#decisions">default decisions</a> that the user delegated on 2026-10-31. The <a href="#implementation">implementation record</a> shows where the built code differs from the plan.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>#</th><th>Your question</th><th>Short answer in the plan</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td>How does an agent request reach the running app? What if the app is closed or the document is not open?</td><td>A new, hardened file channel beside agent preparation, which does not change. Reveal opens a document or starts MarkPDF only with a read grant. A suggestion never opens a window.</td><td><a href="#route">Route</a>, <a href="#channel">Channel</a>, <a href="#closed">Closed app</a></td></tr>
+          <tr><td class="num">2</td><td>Is the <code>markpdf://</code> link secure?</td><td>Each link carries an HMAC signature from a local key. A link inside a document never reaches the operating system. A click checks the read grant again.</td><td><a href="#link">Link</a></td></tr>
+          <tr><td class="num">3</td><td>Where do proposals live, for how long, and what happens at tab close?</td><td>Only in the window's memory, in <code>PdfTab.suggestions</code>. A page-structure change discards them. A tab close or window close asks first.</td><td><a href="#store">Suggestions</a>, <a href="#lifetime">Lifetime</a></td></tr>
+          <tr><td class="num">4</td><td>Which read and write grants does each tool need?</td><td>No new tool writes. Reveal in mode show, every suggestion and every comment read need a read grant. The new commands refuse grant flags and never prompt.</td><td><a href="#grants">Grants</a></td></tr>
+          <tr><td class="num">5</td><td>How do agent comments look different, and how is authorship stored?</td><td>A <code>Bot</code> pin, a violet mark and the badge "AI agent · &lt;name&gt;", also for highlights. The file stores the agent in <code>origin</code>, <code>/T</code>, <code>/Subj</code> and the colour.</td><td><a href="#look">Look</a>, <a href="#authorship">Authorship</a></td></tr>
+          <tr><td class="num">6</td><td>Which IPC changes are made, and where?</td><td>Five new channels and one extended payload. Each change touches the main process, <code>electron/preload.ts</code> and <code>src/global.d.ts</code> together.</td><td><a href="#ipc">IPC</a></td></tr>
+          <tr><td class="num">7</td><td>How are outputs bounded?</td><td>One core reply builder bounds <code>read_comments</code> for the command line and for MCP, with offset pagination. Reveal and suggestions use <code>fitReply</code>.</td><td><a href="#bounds">Bounds</a></td></tr>
+          <tr><td class="num">8</td><td>Do the tests follow the AGENTS.md TDD policy?</td><td>Six capabilities, each with an outer test that runs Red first. Five end in Electron journeys, one in an MCP stdio journey. Fifteen mutation proofs. The record gives the Red and Green evidence.</td><td><a href="#tests">Tests</a>, <a href="#mutations">Mutations</a>, <a href="#implementation">Record</a></td></tr>
+          <tr><td class="num">9</td><td>Does the work need an ADR?</td><td>Yes, two. One covers the hardened channel, reveal and links. One covers suggested annotations.</td><td><a href="#adr">ADRs</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div></div>
+</section>
+
+<section id="brief">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Your concern · the idea brief against the code</span>
+      <h2>Three citations in the brief were wrong, and the brief missed five facts</h2>
+      <p>The plan checks each claim of "Idea 3" and "Idea 4" in <code>docs/feature-ideas.md</code> against this worktree. The brief itself is in the main checkout, not in this worktree.</p>
+      <p>Three claims are correct as written. Three claims point to the wrong lines or the wrong file. Two claims are correct but incomplete.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Claim in the brief</th><th>What this worktree shows</th><th>Verdict</th></tr></thead>
+        <tbody>
+          <tr><td>The running app accepts agent requests through its single-instance handler, <code>electron/main.ts:413-424</code>.</td><td>The lock is at lines 410-418. The handler is at lines 420-443. Only the <code>--markpdf-prepare=</code> branch at lines 422-423 is an agent request.</td><td><span class="tag t-warn">Lines offset</span><br><span class="small muted">The handler knows one request kind only.</span></td></tr>
+          <tr><td>Open documents have opaque references, <code>core/session/openDocuments.ts:107</code>.</td><td><code>openDocumentReference</code> builds <code>&lt;pid&gt;-&lt;window&gt;:&lt;tab&gt;</code> at lines 107-109.</td><td><span class="tag t-ok">Correct</span><br><span class="small muted">A reference dies with its tab. It cannot be the identity in a durable link.</span></td></tr>
+          <tr><td>The renderer places highlights for semantic results, <code>core/index/search.ts:96-98</code>.</td><td>Those lines are a comment in core about plain-text snippets. The renderer draws the mark at <code>src/App.tsx:4546-4576</code>, with <code>getSemanticHighlightRects</code> at lines 4813-4846.</td><td><span class="tag t-bad">Wrong file</span><br><span class="small muted">That mark matches only the first 8 to 18 words, and it stays until the person clicks the page.</span></td></tr>
+          <tr><td>No URL scheme exists. Nothing calls <code>setAsDefaultProtocolClient</code>.</td><td>No match for <code>setAsDefaultProtocolClient</code> or <code>open-url</code> in <code>electron/</code>. The <code>package.json</code> build section has no <code>protocols</code> key.</td><td><span class="tag t-ok">Correct</span></td></tr>
+          <tr><td>Only the renderer reads comments and highlights, <code>src/pdf/documentAnnotations.ts</code>.</td><td>The renderer reads two sources: MarkPDF's keyword and other applications' <code>/Annots</code>. Core has no annotation reader.</td><td><span class="tag t-warn">Incomplete</span><br><span class="small muted">A core reader must read both sources.</span></td></tr>
+          <tr><td>The MCP description says that agents see annotations only after a save, <code>mcp/toolSchemas.ts:229</code>.</td><td><code>read_open_document</code> says this at line 229.</td><td><span class="tag t-ok">Correct</span></td></tr>
+          <tr><td>Core already loads <code>pdfjs-dist</code>, <code>core/outline/documentOutline.ts</code>.</td><td>That file only mentions it in a comment, at lines 15-16. Core loads pdf.js in <code>core/ocr/rasterisePages.ts:72-83</code> and <code>core/extract/imageRegions.ts:165</code>. Only core tests import <code>pdf-lib</code> today.</td><td><span class="tag t-bad">Wrong citation</span><br><span class="small muted">The capability is real. Core can read <code>/NM</code> with <code>pdf-lib</code> without a new package.</span></td></tr>
+          <tr><td>The suggested layer keeps the current read and write grant model.</td><td>Agents get no write path. The person's save uses <code>file:write-pdf</code>, which has no grant check, because a save is a person action.</td><td><span class="tag t-warn">Correct, one addition</span><br><span class="small muted">Every new tool needs a read rule, which the plan defines.</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="src">Source refs: <a href="../electron/main.ts">electron/main.ts</a>:410-443, 614-621 · <a href="../core/session/openDocuments.ts">core/session/openDocuments.ts</a>:107-109 · <a href="../src/App.tsx">src/App.tsx</a>:4546-4576, 4618-4621, 4813-4846, 4830-4835 · <a href="../src/pdf/document.ts">src/pdf/document.ts</a>:465-480, 492-522 · <a href="../mcp/toolSchemas.ts">mcp/toolSchemas.ts</a>:229</p>
+
+    <div class="col stack">
+      <h3>Five facts that the brief did not mention, and each one changes the design</h3>
+    </div>
+    <div class="cards">
+      <article class="card t-warn">
+        <span class="tag">Missed by the brief</span>
+        <h3>Every saved annotation names "MarkPDF" as its author</h3>
+        <p>MarkPDF writes <code>/T (MarkPDF)</code> on each annotation that it saves. Without a change, an accepted agent comment shows <strong>"MarkPDF" as its author in every other reader</strong>.</p>
+        <a href="#authorship">Authorship</a>
+      </article>
+      <article class="card t-warn">
+        <span class="tag">Missed by the brief · Codex R1</span>
+        <h3>The current string form is unsafe for agent text</h3>
+        <p>The writer uses <code>PDFString.of</code> for notes and authors. pdf-lib does not escape parentheses in that form, and it copies UTF-16 code units into single bytes. Agent text needs <code>PDFHexString.fromText</code>.</p>
+        <a href="#authorship">Authorship</a>
+      </article>
+      <article class="card t-warn">
+        <span class="tag">Missed by the brief</span>
+        <h3>A highlight without a note is not read today</h3>
+        <p>The renderer drops an annotation that has no note, so a plain Acrobat highlight is not read. <code>read_comments</code> must include it.</p>
+        <a href="#tests">Capability 4</a>
+      </article>
+      <article class="card t-warn">
+        <span class="tag">Missed by the brief</span>
+        <h3>The comments pane closes when a tab has no comments</h3>
+        <p>The comments control is disabled in that case. Pending suggestions must count in both rules.</p>
+        <a href="#look">Look</a>
+      </article>
+      <article class="card t-warn">
+        <span class="tag">Missed by the brief</span>
+        <h3>A dirty tab patch stops a running preparation</h3>
+        <p>Any tab patch with <code>dirty: true</code> counts as a user edit. A new suggestion must not set <code>dirty</code>. An accepted suggestion must set it.</p>
+        <a href="#lifetime">Lifetime</a>
+      </article>
+    </div>
+    <p class="src">Source refs: <a href="../src/pdf/document.ts">src/pdf/document.ts</a>:44, 991-994, 992, 1033-1036, 1034 · <a href="../src/pdf/documentAnnotations.ts">src/pdf/documentAnnotations.ts</a>:94-95 · <a href="../src/App.tsx">src/App.tsx</a>:3180, 2745-2747, 633-637</p>
+  </div></div>
+</section>
+
+<section id="scope">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Scope</span>
+      <h2>Three new tools for PDF documents, and the link on macOS only</h2>
+      <p>The plan adds the commands <code>reveal</code>, <code>comments</code> and <code>suggest</code>, and the MCP tools <code>reveal</code>, <code>read_comments</code> and <code>suggest_annotation</code>. It also changes the app UI, the IPC contract, the command table, the output bounds, the docs and the retrieval skill, and it adds two ADRs.</p>
+    </div>
+    <div class="decision">
+      <span class="label">Scope decisions · 31 October 2026</span>
+      <h3>Both features are planned together, and <code>cli/spec.ts</code> stays the single source for MCP schemas</h3>
+      <p>The two features share one route from an agent to the window. The new MCP tools take every property from their <code>cli/spec.ts</code> entries with <code>propertyFromOption</code>. They do not repeat the hand-written <code>ref</code> of <code>search</code> and <code>read_open_document</code>.</p>
+    </div>
+    <div class="col stack">
+      <h3>What the command table gets</h3>
+      <ul>
+        <li>String options get an optional <code>maxLength</code>. The MCP schema publishes it, and both the MCP validator and the command-line parser enforce it.</li>
+        <li>All three commands take <code>exactlyOneOf: ["path", "id", "ref"]</code> and have no default identity (finding R7). Today the validator fills defaults before it checks <code>oneOf</code>.</li>
+        <li>A generator in <code>mcp/toolSchemas.ts</code> derives a three-branch <code>oneOf</code> from <code>exactlyOneOf</code>. Each branch has <code>not</code> clauses for the other two identities.</li>
+        <li>A new flag <code>agentFacing: true</code> makes the parser refuse grant flags for these commands (finding R6).</li>
+        <li>The tool count goes from seven to ten. The stdio journey that lists exactly seven tools changes with it.</li>
+      </ul>
+      <h3>Left out on purpose</h3>
+      <ul>
+        <li>Markdown tabs. The three tools accept PDF documents only in this iteration.</li>
+        <li>Reply threads. <code>read_comments</code> reports the <code>/IRT</code> link as data, and the UI does not change.</li>
+        <li>Edits or deletion of an existing comment by an agent. An agent can only propose.</li>
+        <li>A new author name for annotations by people. It stays <code>MarkPDF</code>.</li>
+        <li>A change to the existing preparation protocol. The new channel is separate (finding R4).</li>
+        <li>URL scheme registration on Windows and Linux.</li>
+        <li>More than one suggestion in one call. MCP arguments cannot be arrays today, so batching is deferred.</li>
+        <li>The uncommitted Mermaid viewer work in the main checkout. This plan does not depend on it.</li>
+      </ul>
+    </div>
+    <p class="src">Source refs: <a href="../cli/spec.ts">cli/spec.ts</a>:17-22, 116-189 · <a href="../mcp/toolSchemas.ts">mcp/toolSchemas.ts</a>:13-20, 70-89, 98-104, 146 · <a href="../mcp/arguments.ts">mcp/arguments.ts</a>:27-44, 74-99 · <a href="../mcp/journeys/toolSession.test.ts">mcp/journeys/toolSession.test.ts</a>:66-75 · <a href="../docs/adr/2026-09-19-Annotations-Another-Application-Wrote.md">2026-09-19 ADR</a>:120-121</p>
+  </div></div>
+</section>
+
+<section id="route">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 1 · how a request reaches the running app</span>
+      <h2>Each request names one concrete target and travels through a private file channel</h2>
+      <p>The client is <code>core/agent/desktopChannel.ts</code>. It writes a request file and starts the Electron binary with <code>--markpdf-request=&lt;id&gt;</code>. The single-instance lock forwards that argument to the running app. If no app runs, the new process becomes the app.</p>
+      <p>The right column names the Codex finding behind the rule of each step.</p>
+    </div>
+    <ol class="steps">
+      <li class="t-fix"><span class="what">The agent calls reveal or suggest_annotation</span><span class="got">The server validates the arguments, resolves ref "active" to one concrete tab or path, and checks the read grant.</span><span class="ref">R5</span></li>
+      <li class="t-fix"><span class="what">The client writes &lt;id&gt;.request.json</span><span class="got">Mode 0600, flag wx, with its own deadline, in session/desktop-requests/.</span><span class="ref">R4</span></li>
+      <li class="t-fix"><span class="what">The client starts the Electron binary</span><span class="got">The single-instance lock forwards --markpdf-request=&lt;id&gt; to the running app.</span><span class="ref">new</span></li>
+      <li class="t-fix"><span class="what">The desktop consumes the request once and checks the grant again</span><span class="got">It validates the request, checks the grant, revalidates the tab, then writes &lt;id&gt;.ack.</span><span class="ref">R4</span></li>
+      <li class="t-fix"><span class="what">Main sends agent:reveal or agent:suggest to the owning window</span><span class="got">The window checks the tab and its revision, anchors the quote, and shows the mark or adds the suggestion.</span><span class="ref">R3</span></li>
+      <li class="t-fix"><span class="what">The window answers with agent:revealed or agent:suggested</span><span class="got">Main accepts the answer only from the window that owns the request.</span><span class="ref">new</span></li>
+      <li class="t-fix"><span class="what">Main writes &lt;id&gt;.result.json</span><span class="got">Exclusive temporary file and rename. The client checks the id and the size, and the agent gets a bounded reply.</span><span class="ref">R4</span></li>
+    </ol>
+    <p class="src">Existing single-instance handling: <a href="../electron/main.ts">electron/main.ts</a>:420-423 second-instance branch, 455-464 start path, 434-441 unknown argument · precedents <a href="../electron/agentPreparation.ts">electron/agentPreparation.ts</a>:100-103, 135-138</p>
+    <div class="col stack">
+      <h3>Target binding (finding R5)</h3>
+      <ul>
+        <li>There is no default identity. The caller names exactly one of <code>path</code>, <code>id</code> or <code>ref</code>. <code>--ref active</code> names the document at the front.</li>
+        <li>The client resolves <code>ref: "active"</code> once into a concrete reference. A stale reference fails at once, and no process starts.</li>
+        <li>An <code>id</code> becomes the path that the index records.</li>
+        <li>The desktop accepts a reference only when its process part is the desktop's own <code>process.pid</code>. Just before the IPC message, it checks again that the window and the tab still exist.</li>
+        <li>If a path or an id matches more than one open tab, the desktop refuses with <code>ambiguous</code>. The remedy is "Name the tab with a ref from list_open_documents."</li>
+        <li>The window answers <code>document_changed</code> when the tab is gone, or when its document revision changed while the quote was matched.</li>
+      </ul>
+      <h3>Timing</h3>
+      <ul>
+        <li>If no acknowledgement arrives within 5 seconds, the client answers "MarkPDF did not answer. An older MarkPDF can be running. Restart MarkPDF and try again." An old app treats the unknown argument as "focus the window".</li>
+        <li>The deadline is 30 seconds for reveal and suggest, including a cold start. The desktop refuses an expired request before it changes anything in a window.</li>
+        <li>At most 4 desktop requests run at a time. Another request receives <code>busy</code>.</li>
+        <li><code>read_comments</code> does not use this route. It reads the saved file in core.</li>
+      </ul>
+    </div>
+    <div class="aside">
+      <span class="label">Risk · measured in the implementation</span>
+      <h3>Each request starts the Electron binary only to forward its argument</h3>
+      <p>The plan did not measure the start time to the single-instance lock. Capability 1 measures the time from the call to the reply with a warm app. If the median is above 1.5 seconds, the follow-up is a directory watcher in the running app.</p>
+      <p>The implementation record gives a warm call-to-reply time of 258 ms for the first reveal journey.</p>
+    </div>
+  </div></div>
+</section>
+
+<section id="channel">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 1 · the request files</span>
+      <h2>The new requests use a separate, hardened channel, and the preparation code does not change</h2>
+      <p>Codex found four limits in the preparation channel (finding R4). The preparation ADR chose a file channel over a socket, and this plan keeps that kind of channel. It builds the new requests on a separate channel with strict file rules.</p>
+    </div>
+    <div class="compare">
+      <div class="panel t-warn">
+        <header><span class="label">Preparation channel today · unchanged</span><h3>Four limits that Codex found</h3></header>
+        <div class="body">
+          <ul>
+            <li>The desktop calls <code>stat</code> and <code>readFile</code> separately.</li>
+            <li>The temporary result name is predictable and not created exclusively.</li>
+            <li>The client reads the result without a size limit.</li>
+            <li>Abandoned files stay.</li>
+          </ul>
+        </div>
+        <footer>agentPreparation.ts:92-94, 85-88 · desktopClient.ts:30, 22-27</footer>
+      </div>
+      <div class="panel t-fix">
+        <header><span class="label">New request channel · planned</span><h3>File rules for the new channel</h3></header>
+        <div class="body">
+          <ul>
+            <li>The desktop opens a request with <code>O_NOFOLLOW</code>, checks it with <code>fstat</code> on the opened descriptor, and reads at most 16 KiB.</li>
+            <li>The result goes to a temporary file with a random name and flag <code>wx</code>, then a rename.</li>
+            <li>The client reads the result through a descriptor with the same 16 KiB limit and <code>fstat</code> check.</li>
+            <li>On start, the desktop removes matching files that are older than one hour.</li>
+          </ul>
+        </div>
+        <footer>Plan section A2, file lifecycle.</footer>
+      </div>
+    </div>
+    <div class="col stack">
+      <h3>Other file rules</h3>
+      <ul>
+        <li>A request id is a UUID that matches one strict pattern. The desktop builds every path from the fixed directory and that id, and refuses any other name.</li>
+        <li>The desktop creates the directory with mode <code>0700</code>. It refuses the directory when it is a symbolic link or belongs to another user.</li>
+        <li>The desktop consumes a request once. It renames the request to <code>&lt;id&gt;.taken</code> before it parses it, so a second delivery finds nothing.</li>
+        <li>A bounded in-memory set of recent ids blocks a replay in the same run.</li>
+        <li>The result carries the request id, and the client refuses a result with another id. Then the client removes the request, acknowledgement and result files.</li>
+      </ul>
+    </div>
+    <div class="aside">
+      <span class="label">Threat model</span>
+      <h3>The files do not authenticate the agent</h3>
+      <p>Any process of the same user can write a request, read the signing key and start the binary. The file rules protect against other users and against malformed or replayed input. The grant checks protect the person's files.</p>
+    </div>
+    <p class="src">Source refs: <a href="../electron/agentPreparation.ts">electron/agentPreparation.ts</a>:85-88, 92-94 · <a href="../core/agent/desktopClient.ts">core/agent/desktopClient.ts</a>:22-27, 30 · <a href="../docs/adr/2026-10-28-Agent-PDF-Preparation.md">2026-10-28 ADR</a>:13-21</p>
+  </div></div>
+</section>
+
+<section id="closed">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 1 · closed app, or document not open</span>
+      <h2>Reveal opens a document only within the read grants, and a stale ref starts nothing</h2>
+      <p>Mode <code>show</code> moves the window to the passage. Mode <code>link</code> only returns the signed link and never changes the window. The cold start in the row "App closed" follows default decision 1.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Situation</th><th>reveal, mode show</th><th>reveal, mode link</th></tr></thead>
+        <tbody>
+          <tr><td>App runs, document open in one tab, read grant</td><td>The front window shows the passage.</td><td>Link returned. The window does not change.</td></tr>
+          <tr><td>App runs, document open in two or more tabs (by path or id)</td><td class="t-bad">Refused with <code>ambiguous</code>.</td><td>Link returned.</td></tr>
+          <tr><td>App runs, document not open, read grant on its path</td><td>The front window opens it in a new tab, waits for the first page, then shows the passage.</td><td>Link returned.</td></tr>
+          <tr><td>No read grant on the path</td><td class="t-bad">Refused with <code>access_denied</code> and the grant remedy. Nothing opens.</td><td>Link returned only when the document is indexed.</td></tr>
+          <tr><td>App closed, <code>path</code> or <code>id</code>, read grant</td><td>MarkPDF starts, opens the document and shows the passage.</td><td>Link returned. MarkPDF does not start.</td></tr>
+          <tr><td>App closed, <code>ref</code></td><td class="t-bad">Refused with <code>stale_ref</code>. MarkPDF does not start.</td><td class="t-bad">Refused with <code>stale_ref</code>.</td></tr>
+          <tr><td>Document open but never saved (no path)</td><td class="t-bad">Refused with <code>access_denied</code>, because no rule can prove read access.</td><td class="t-bad">Refused with <code>not_indexed</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <p>The reply has one of four statuses. <code>shown</code> means that the quote is marked. <code>page_only</code> means that the page is shown but the quote was not found. The other two are <code>refused</code> with a reason code, and <code>failed</code> with <code>window_closed</code>, <code>document_changed</code> or <code>timeout</code>.</p>
+      <p>The reply also includes <code>ref</code>, <code>page</code>, <code>occurrences</code> and, when possible, <code>link</code>. The count of occurrences lets the agent make an ambiguous quote longer.</p>
+      <h3>The other two tools</h3>
+      <ul>
+        <li><code>read_comments</code> reads the saved file in core, so it works when the app is closed.</li>
+        <li><code>suggest_annotation</code> needs the document open in exactly one tab. It never opens a document and never opens a window.</li>
+        <li>If the app is not running, the client refuses the suggestion at once. If the app exits after that check, the started process becomes the app, refuses the request and quits without a window (finding R5).</li>
+      </ul>
+      <p>A document that reveal opens behaves like one that the person opened, including automatic indexing when semantic search is on.</p>
+    </div>
+    <p class="src">Source refs: <a href="../core/store/index.ts">core/store/index.ts</a>:56-65 · <a href="../src/App.tsx">src/App.tsx</a>:1452-1466</p>
+  </div></div>
+</section>
+
+<section id="link">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 2 · security of the markpdf:// link</span>
+      <h2>Only a link that this MarkPDF signed can reveal a passage</h2>
+      <p>The operating system can deliver a <code>markpdf://</code> address from any application, for example a web page, an email or a PDF in another reader. MarkPDF cannot stop that delivery. Thus the plan signs every link that MarkPDF makes, and every other link is inert.</p>
+    </div>
+    <div class="fork" role="img" aria-label="A markpdf link meets MarkPDF in three ways. A link that this MarkPDF signed reveals the passage within the read grants. An edited or foreign link fails the strict parser or the signature and is ignored. A link inside a document is refused by the scheme rule and never reaches the operating system.">
+      <div class="node file">markpdf://reveal?v=1&amp;doc=…&amp;page=…&amp;q=…&amp;sig=…</div>
+      <div class="vline"></div>
+      <div class="branches" style="--n:3">
+        <div class="branch">
+          <span class="who">A · link from an agent reply</span>
+          <div class="node"><span class="label">delivered by</span>macOS open-url, or argv on a cold start</div>
+          <div class="vline"></div>
+          <div class="node"><span class="label">strict parser and signature</span>pass</div>
+          <div class="vline"></div>
+          <div class="node t-fix"><strong>Passage revealed</strong> in the one tab that shows it, or opened from the indexed path with a read grant</div>
+        </div>
+        <div class="branch">
+          <span class="who">B · edited, forged, or another data directory</span>
+          <div class="node"><span class="label">delivered by</span>macOS open-url, or argv on a cold start</div>
+          <div class="vline"></div>
+          <div class="node"><span class="label">strict parser and signature</span>fail</div>
+          <div class="vline"></div>
+          <div class="node t-bad"><strong>Ignored.</strong> A running app shows a short notice. A cold start ends without a window.</div>
+        </div>
+        <div class="branch">
+          <span class="who">C · link inside a PDF or Markdown document</span>
+          <div class="node"><span class="label">clicked in</span>the MarkPDF window</div>
+          <div class="vline"></div>
+          <div class="node"><span class="label">scheme rule allows only</span>http, https, mailto</div>
+          <div class="vline"></div>
+          <div class="node t-bad"><strong>Never sent out.</strong> A PDF link is not drawn, and a Markdown link reveals nothing.</div>
+        </div>
+      </div>
+      <p class="fork-foot">A forged link does nothing, and a document cannot trigger a reveal. A valid link still opens only files within the read grants.</p>
+    </div>
+    <p class="src">Source refs: scheme rule in <a href="../electron/externalUrl.ts">electron/externalUrl.ts</a>:17, 20, 29-42 and <a href="../src/pdf/links.ts">src/pdf/links.ts</a>:174, 232-235 · Markdown link <a href="../src/markdown/MarkdownPreview.tsx">src/markdown/MarkdownPreview.tsx</a>:122-131 · window-open handler <a href="../electron/main.ts">electron/main.ts</a>:348-351 · <code>open-file</code> capture <a href="../electron/bootstrap.ts">electron/bootstrap.ts</a>:19-26</p>
+
+    <div class="col stack">
+      <h3>The link format</h3>
+      <p><code>markpdf://reveal?v=1&amp;doc=&lt;64 hex content hash&gt;&amp;page=12&amp;q=&lt;quote, URL-encoded&gt;&amp;sig=&lt;base64url&gt;</code></p>
+      <ul>
+        <li><code>doc</code> is the content hash in the index. A <code>ref</code> dies with its tab. A path must not leave these tools, and a link goes into chat transcripts.</li>
+        <li><code>q</code> holds the whole quote, never a shortened one, because a shortened quote can match an earlier occurrence (finding R13).</li>
+        <li>The whole link holds at most 4096 characters, the same limit that the link rule uses. A longer link gives <code>link: null</code> and <code>linkUnavailable: "quote_too_long"</code>.</li>
+        <li><code>sig</code> is an HMAC-SHA256 over the text <code>v1\n&lt;doc&gt;\n&lt;page&gt;\n&lt;q&gt;</code>. The signature binds the page and the quote, so nobody can edit a link to point somewhere else.</li>
+        <li>The key is 32 random bytes in <code>&lt;data dir&gt;/agent-link.key</code>, mode 0600, made with <code>wx</code> on first use. The MCP server, the command and the desktop read the same file.</li>
+        <li>The desktop compares signatures with <code>timingSafeEqual</code>.</li>
+        <li>MarkPDF makes a link only for an indexed document. Otherwise the reply carries <code>link: null</code> and <code>linkUnavailable: "not_indexed"</code>, with the remedy "Prepare the document first."</li>
+      </ul>
+      <h3>Cold start arbitration (finding R5)</h3>
+      <p>When MarkPDF starts only because of a link, it decides about the link before it creates any window. An invalid link, or a valid link that MarkPDF cannot honor, ends the process without a window. A valid link that MarkPDF can honor opens one window with the document.</p>
+      <h3>Security rules for the link</h3>
+      <ul>
+        <li>A link inside a document never triggers a reveal. A comment beside both scheme lists says why <code>markpdf:</code> must never join them. Through <code>shell.openExternal</code>, the operating system would route the link back to MarkPDF.</li>
+        <li>A link never opens a file outside the read grants. The desktop checks the grant at click time, not when the link was made.</li>
+        <li>A link carries no write action and no text that MarkPDF shows as its own. The quote is only a search key.</li>
+        <li>The label shows "Shown by AI agent" without a name, because the link does not carry one.</li>
+        <li>The handler accepts only the host <code>reveal</code>. Unknown parameters, a repeated parameter, another host, a wrong version or a bad signature end the handling.</li>
+        <li>When MarkPDF already runs, an invalid link changes nothing. The front window shows "MarkPDF ignored a link that it did not make."</li>
+        <li>If the file now has another hash, the reveal still runs. The label says "This document changed after the link was made." <span class="tag t-warn">not built yet</span></li>
+        <li>If the index has no such document, or the grant is missing, the desktop opens nothing. A running app shows a notice with the reason.</li>
+      </ul>
+      <h3>Registration</h3>
+      <p>On macOS, <code>package.json</code> <code>build.mac</code> gets a <code>protocols</code> entry for the scheme <code>markpdf</code>. The Info.plist then registers the scheme at install. Windows and Linux are out of scope.</p>
+      <p class="muted small">Unverified: some agent clients make only <code>http:</code> and <code>https:</code> addresses clickable. The plain citation (document, page, quote) stays in the reply as the fallback.</p>
+    </div>
+  </div></div>
+</section>
+
+<section id="grants">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 4 · read and write grants</span>
+      <h2>Every new tool only reads, needs a read grant, and cannot add a grant</h2>
+      <p>No new tool has a write rule. The person's save is the only write. Every reveal in mode show and every suggestion needs a current read grant on the document's file, as default decision 7 confirms. Mode link reads no file and needs only the index.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Tool</th><th>Read rule</th><th>Write rule</th><th>Can it add a grant?</th></tr></thead>
+        <tbody>
+          <tr><td><code>reveal</code>, mode show</td><td>Read grant on the path. The client checks it, and the desktop checks it again.</td><td>None</td><td>No</td></tr>
+          <tr><td><code>reveal</code>, mode link</td><td>The document must be in the index. No file is read.</td><td>None</td><td>No</td></tr>
+          <tr><td>Link click</td><td>Read grant on the indexed path at click time, unless one tab already shows the document</td><td>None</td><td>No</td></tr>
+          <tr><td><code>read_comments</code></td><td>Read grant on the path, always</td><td>None</td><td>No</td></tr>
+          <tr><td><code>suggest_annotation</code></td><td>Read grant on the path, and the document open in exactly one tab</td><td>None. The person's save is the only write.</td><td>No</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <h3>Why reveal and suggestions need a read grant (finding R2)</h3>
+      <p>This rule is stricter than the <code>index-first</code> rule of <code>read_open_document</code>, on purpose. Reveal matches the quote against the live document in the window. That document can differ from the indexed snapshot that the agent is allowed to read.</p>
+      <p>Without the rule, the answer <code>shown</code> or <code>page_only</code>, and <code>occurrences</code>, tell an agent about text that it cannot read. <code>read_comments</code> needs the grant also for an indexed document, because the index holds no annotations.</p>
+      <h3>Why no tool can widen its own access (finding R6)</h3>
+      <ul>
+        <li>The MCP server has no grant operation.</li>
+        <li>The three new commands call <code>requireAccess</code> from core directly. They never use the prompting path in <code>cli/context.ts</code>, also at a terminal.</li>
+        <li>A grant flag (<code>--allow-read</code>, <code>--allow-write</code>, <code>--revoke-read</code>, <code>--revoke-write</code>) with one of these commands is a usage error: "Grant access as a separate command first." The run changes nothing in the consent record.</li>
+        <li>The desktop checks every request again with <code>readAllowlist</code> and <code>requireAccess</code>, because any process of the same user can write a request file.</li>
+      </ul>
+      <p>A person can still run <code>markpdf --allow-read &lt;dir&gt;</code> alone. An agent with a shell can run that command too. That is the existing out-of-band consent model, and this plan does not change it.</p>
+    </div>
+    <p class="src">Source refs: <a href="../mcp/toolSchemas.ts">mcp/toolSchemas.ts</a>:141-145 · grant flags today <a href="../cli/run.ts">cli/run.ts</a>:65-75, 99-101 · prompting path <a href="../cli/context.ts">cli/context.ts</a>:108-133 · <a href="../core/consent/allowlist.ts">core/consent/allowlist.ts</a>:145 · <a href="../mcp/openDocumentOperations.ts">mcp/openDocumentOperations.ts</a>:208-224</p>
+  </div></div>
+</section>
+
+<section id="store">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 3 · where proposals live</span>
+      <h2>A suggestion lives only in the window's memory, in its own tab field</h2>
+      <p>A suggestion is not an overlay. It goes into a new tab field, <code>PdfTab.suggestions</code>. The save and the undo history work on <code>overlays</code> only. Thus no code path can save a pending suggestion, and undo cannot bring back a rejected one.</p>
+    </div>
+    <div class="col stack">
+      <ul>
+        <li><strong>Existing field <code>overlays</code>.</strong> <code>exportPdfBytes</code> receives it, the person's save writes it, and the undo history holds it. An accepted suggestion moves here as an owned <code>OverlayItem</code>.</li>
+        <li><strong>New field <code>PdfTab.suggestions</code>.</strong> <code>exportPdfBytes</code> never receives it, and the undo history does not hold it. The person cannot edit a pending suggestion. To change the words, the person accepts it and then edits it.</li>
+      </ul>
+    </div>
+    <div class="col stack">
+      <p>The 2026-09-19 ADR rejected a separate tab field for imported annotations, because they are comments. A suggestion is not an annotation of the document until the person accepts it. A new ADR records this exception.</p>
+      <h3>Outside the window, a suggestion exists only as:</h3>
+      <ul>
+        <li>The request file in <code>session/desktop-requests/</code>, until the client removes it after the result, or the desktop removes it after one hour.</li>
+        <li>An entry <code>{ id, status }</code> in the tab's open-documents record. The entry has no note and no quote.</li>
+      </ul>
+      <h3>Status for the agent</h3>
+      <p>The status is <code>pending</code>, <code>accepted</code>, <code>rejected</code> or <code>discarded</code>. <code>accepted</code> records the person's decision only. It does not say that the annotation is still present or saved, and <code>read_comments</code> answers that from the saved file.</p>
+      <p>The window reports at most 100 statuses for each PDF tab, newest first. <code>list_open_documents</code> adds <code>pendingSuggestions</code> as a count. The field is optional, so the record version stays 2.</p>
+    </div>
+    <p class="src">Source refs: export <a href="../src/pdf/document.ts">src/pdf/document.ts</a>:572-588 · history and tab types <a href="../src/types.ts">src/types.ts</a>:154-161, 163-206 · <a href="../docs/adr/2026-09-19-Annotations-Another-Application-Wrote.md">2026-09-19 ADR</a>:136-139 · validator <a href="../core/session/openDocumentsRequest.ts">core/session/openDocumentsRequest.ts</a>:129-170 · no document text <a href="../core/session/openDocuments.ts">core/session/openDocuments.ts</a>:16-24, 213-226</p>
+  </div></div>
+</section>
+
+<section id="lifetime">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 3 · how long proposals live</span>
+      <h2>Suggestions live until the person decides, the pages change, or the tab closes after a question</h2>
+      <p>There is no time limit. A cap of 50 pending suggestions in one tab bounds the memory.</p>
+      <p>Each tab gets a <code>documentRevision</code> counter (finding R3). It increases when the bytes change their page structure: a page insert, delete or move, and an undo or redo that restores other bytes. A suggestion records the revision that it was anchored against.</p>
+      <p>When the revision changes, every pending suggestion is discarded, and a toast says how many. This rule never leaves a suggestion on the wrong page. A save does not change the revision.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Event</th><th>What happens to pending suggestions</th></tr></thead>
+        <tbody>
+          <tr><td>The person accepts or rejects one</td><td>It leaves the pending list. Its status becomes <code>accepted</code> or <code>rejected</code>.</td></tr>
+          <tr><td>The person saves</td><td>They stay. The revision does not change.</td></tr>
+          <tr><td>The person inserts, deletes or moves a page, or undoes or redoes such a change</td><td class="t-bad">All are discarded with status <code>discarded</code>.</td></tr>
+          <tr><td>The person closes the tab</td><td>MarkPDF asks first (default decision 2). On confirmation they are discarded, and the tab's record disappears.</td></tr>
+          <tr><td>The window closes or MarkPDF quits</td><td>MarkPDF asks first, once for the window. On confirmation they are discarded. The implementation asks, but no Electron journey covers the window close.</td></tr>
+          <tr><td>The window reloads, or MarkPDF crashes</td><td class="t-bad">They are discarded. The record becomes empty or disappears.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="src">Source refs: undo history stores bytes and overlays <a href="../src/App.tsx">src/App.tsx</a>:2173-2180 · undo reloads bytes 2352-2375 · page changes replace bytes 2401-2432 · record lifecycle <a href="../electron/openDocuments.ts">electron/openDocuments.ts</a>:150-180</p>
+    <div class="col stack">
+      <h3>Accept and reject</h3>
+      <ul>
+        <li><strong>Accept</strong> turns the suggestion into an owned <code>OverlayItem</code> with <code>origin: { kind: "agent", agent, suggestedAt, acceptedAt }</code>. It uses the normal edit path: one history entry and <code>dirty: true</code>. The person can undo it, and a running preparation stops.</li>
+        <li><strong>Reject</strong> removes the suggestion. It changes no overlay, adds no history entry and does not set <code>dirty</code>.</li>
+        <li>A new suggestion updates the tab as an automatic change without <code>dirty</code>, so it does not count as a user edit.</li>
+        <li>After acceptance, the annotation belongs to the person, who can edit, move or delete it.</li>
+      </ul>
+    </div>
+    <p class="src">Source refs: <a href="../src/App.tsx">src/App.tsx</a>:627-637, 633-637, 2315-2319</p>
+  </div></div>
+</section>
+
+<section id="look">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 5 · the visual difference</span>
+      <h2>Agent comments and highlights look different on the page and in the pane, and not only by colour</h2>
+      <p>Agent annotations and suggestions have a violet colour, a <code>Bot</code> pin and an accessible name that says "AI agent". The colour is never the only signal, because some people cannot see the difference.</p>
+      <p>Today the pane lists comments only, and only comments get a pin. Thus accepted agent highlights get their own <code>Bot</code> pin and pane card (finding R12).</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Kind</th><th>Mark on the page</th><th>Pin</th><th>Accessible name</th><th>In the comments pane</th></tr></thead>
+        <tbody>
+          <tr><td>Person comment</td><td>Yellow, solid (existing)</td><td><code>MessageSquarePlus</code> (existing)</td><td>"Open comment" (existing)</td><td>Listed in page order, as today.</td></tr>
+          <tr><td>Other application</td><td>The document's own appearance (existing)</td><td><code>MessageSquare</code> (existing)</td><td>"Comment by &lt;author&gt;" (existing)</td><td>Listed with the author after the page number, as today.</td></tr>
+          <tr><td>Pending agent suggestion <span class="tag t-fix">new</span></td><td>Violet, dashed outline, light fill</td><td><code>Bot</code> with a small "?"</td><td>"Suggestion by AI agent &lt;name&gt;, not accepted"</td><td>Group "Suggested by agents (N)" at the top. Each card: page, badge "AI agent · &lt;name&gt;", quote, note, "Accept" and "Reject".</td></tr>
+          <tr><td>Accepted agent comment <span class="tag t-fix">new</span></td><td>Violet, solid</td><td><code>Bot</code></td><td>"Comment by AI agent &lt;name&gt;"</td><td>In the normal list, with the badge "AI agent · &lt;name&gt;" and a <code>Bot</code> icon.</td></tr>
+          <tr><td>Accepted agent highlight <span class="tag t-fix">new</span></td><td>Violet, solid</td><td><code>Bot</code> (finding R12)</td><td>"Highlight by AI agent &lt;name&gt;"</td><td>In the normal list. The card shows "Highlight" and the quote instead of a note.</td></tr>
+          <tr><td>Evidence mark from reveal <span class="tag t-fix">new</span></td><td>Violet glow, fades after 6 seconds</td><td>None</td><td>Live region: "Shown by AI agent · &lt;name&gt;, page &lt;n&gt;"</td><td>Not listed. Reveal adds no overlay.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <ul>
+        <li>The comments control is enabled, and the pane stays open, while comments, agent highlights or pending suggestions exist. The control's accessible name includes the count of pending suggestions.</li>
+        <li>A new suggestion does not open the pane. The plan shows a short toast, for example "claude-code suggested a comment on page 3", with a button that opens the pane (default decision 5). <span class="tag t-warn">deviation</span> The built toast has no button. The comments control shows the count of waiting suggestions.</li>
+        <li>If the person edits the note of an accepted agent annotation, the overlay records <code>origin.editedByPerson: true</code>. The pane then shows "AI agent · claude-code, edited by you".</li>
+        <li>The evidence mark stays for 6 seconds and fades for 1 second. With <code>prefers-reduced-motion</code>, it disappears without the fade.</li>
+        <li>A label beside the mark reads "Shown by AI agent · &lt;name&gt;". For a reveal from a link, which carries no name, the label and the live region read "Shown by AI agent". <span class="tag t-warn">deviation</span> The built live region is a visible toast for every agent message.</li>
+        <li>Outer tests assert accessible names, visible text, measured geometry, file bytes and tool replies. They never assert CSS classes.</li>
+      </ul>
+      <p>New UI goes into new components under <code>src/components/</code> where possible. <code>src/App.tsx</code> has 5927 lines and only wires state and handlers.</p>
+    </div>
+    <p class="src">Source refs: existing pins and labels <a href="../src/App.tsx">src/App.tsx</a>:4936-4939, 5037, 5052-5056, 5493-5496 · page order <a href="../src/pdf/commentList.ts">src/pdf/commentList.ts</a>:15-19</p>
+  </div></div>
+</section>
+
+<section id="authorship">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 5 · how authorship is stored</span>
+      <h2>After a save, the file names the agent as the author, so other readers show it too</h2>
+      <p>Accept gives the overlay a new optional field, <code>origin</code>. The save writes that field into MarkPDF's own keyword. It also writes standard annotation keys that other PDF readers show. The absence of <code>origin</code> means that a person made the overlay in MarkPDF.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Record in the file</th><th>Person annotation (unchanged)</th><th>Agent annotation (new)</th><th>Where the reader sees it</th></tr></thead>
+        <tbody>
+          <tr><td>MarkPDF keyword <code>markpdf-overlays:</code></td><td>No <code>origin</code> field</td><td><code>origin: { kind: "agent", agent, suggestedAt, acceptedAt }</code></td><td>MarkPDF after a reload. <code>read_comments</code> reports <code>origin: "agent_via_markpdf"</code>.</td></tr>
+          <tr><td><code>/T</code> (author)</td><td><code>MarkPDF</code></td><td><code>&lt;agent&gt; (AI agent)</code>, for example <code>claude-code (AI agent)</code>, as a UTF-16 hex string</td><td>Acrobat, Preview and pdf.js show it as the author.</td></tr>
+          <tr><td><code>/Subj</code></td><td><code>Comment</code> or <code>Highlight</code></td><td><code>AI agent comment</code> or <code>AI agent highlight</code></td><td>Acrobat shows it in its comment list.</td></tr>
+          <tr><td><code>/C</code> (colour)</td><td>Yellow by default</td><td>Violet <code>#8b5cf6</code></td><td>Every reader shows it on the page.</td></tr>
+          <tr><td><code>/Contents</code></td><td>The note</td><td>The note, unchanged in meaning, as a UTF-16 hex string</td><td>The note text stays unchanged (default decision 3).</td></tr>
+          <tr><td><code>/NM</code></td><td><code>markpdf:&lt;id&gt;</code></td><td><code>markpdf:&lt;id&gt;</code></td><td>MarkPDF uses it to recognize its own entries.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <h3>Encoding (finding R1)</h3>
+      <p>The agent annotation writes <code>/T</code> and <code>/Contents</code> with <code>PDFHexString.fromText</code>, which encodes UTF-16 and needs no escaping. Thus parentheses, backslashes, non-Latin names, emoji and text that looks like PDF syntax stay literal text.</p>
+      <p>The person path keeps <code>PDFString.of</code> in this iteration, because a change there is outside the scope. The plan reports that latent escaping risk on the person path to the user.</p>
+      <h3>The agent name</h3>
+      <p>The name comes from the MCP <code>initialize</code> handshake, <code>clientInfo.name</code>, which the SDK exposes with <code>getClientVersion()</code>. The command line takes <code>--agent &lt;name&gt;</code> and defaults to "markpdf command line". The built <code>markpdf reveal</code> also takes <code>--agent</code>, for the label.</p>
+      <p>The name is a label that the client reports about itself. It is not an authenticated identity (finding R1). The desktop removes control and bidirectional-override characters and cuts the name to 64 characters.</p>
+    </div>
+    <div class="aside">
+      <span class="label">Flattened saves · finding R11 · default decision 8</span>
+      <h3>A flattened copy cannot keep the agent name, so MarkPDF asks first</h3>
+      <p>A flattened save or export writes no metadata and no standard annotations, and it paints comments without an author. When the tab has accepted agent annotations, MarkPDF asks: "This copy will not record that an AI agent wrote 2 of its annotations. Save it anyway?"</p>
+      <p>Agent marks keep the violet colour in the flattened copy, as the only remaining visible sign.</p>
+    </div>
+    <div class="col stack">
+      <p>After a reload of the saved file in MarkPDF, the keyword gives back the agent origin. Thus the page and the pane look the same as before the save. <code>parsePersistedOverlays</code> drops an invalid <code>origin</code> but keeps the overlay.</p>
+      <p class="muted small">Unverified: the exact display in Acrobat and Preview. Capability 5 records a manual check with screenshots, and that check is verification, not Red evidence.</p>
+    </div>
+    <p class="src">Source refs: <a href="../src/types.ts">src/types.ts</a>:18-54 · <a href="../src/pdf/overlayMetadata.ts">src/pdf/overlayMetadata.ts</a>:36-64 · <a href="../src/pdf/document.ts">src/pdf/document.ts</a>:823-834 keyword, 919-945 writer, 991-997, 1016, 1033-1036 current values, 626-641 and 667-696 flattened output · flattened save <a href="../src/App.tsx">src/App.tsx</a>:1728-1736 · pdf.js reads <code>/T</code> into <code>titleObj</code></p>
+  </div></div>
+</section>
+
+<section id="ipc">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 6 · IPC contract</span>
+      <h2>Five new channels and one extended payload, each changed in main, preload and global.d.ts together</h2>
+      <p>AGENTS.md requires that these three places change together. The handlers live in the new module <code>electron/agentRequests.ts</code>. <code>electron/main.ts</code> changes in three places only: the <code>second-instance</code> branch, the start branch and the <code>open-url</code> handoff from <code>electron/bootstrap.ts</code>.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Channel</th><th>Direction</th><th>Main process</th><th>Preload bridge</th><th>src/global.d.ts</th></tr></thead>
+        <tbody>
+          <tr><td><code>agent:reveal</code> <span class="tag t-fix">new</span></td><td>Main to window</td><td><code>electron/agentRequests.ts</code> sends <code>(requestId, RevealCommand)</code> to the owning window.</td><td><code>onRevealRequest(callback)</code> parses the command with a core parser, calls the callback and sends the outcome back.</td><td><code>onRevealRequest</code> and both types</td></tr>
+          <tr><td><code>agent:revealed</code> <span class="tag t-fix">new</span></td><td>Window to main</td><td><code>ipcMain.on</code> accepts it only from the window that owns <code>requestId</code>, and parses the outcome.</td><td>Sent inside <code>onRevealRequest</code></td><td>None</td></tr>
+          <tr><td><code>agent:suggest</code> <span class="tag t-fix">new</span></td><td>Main to window</td><td>Sends <code>(requestId, SuggestionCommand)</code>.</td><td><code>onSuggestionRequest(callback)</code>, same pattern</td><td><code>onSuggestionRequest</code> and its types</td></tr>
+          <tr><td><code>agent:suggested</code> <span class="tag t-fix">new</span></td><td>Window to main</td><td>Same ownership check. Parses the outcome.</td><td>Sent inside <code>onSuggestionRequest</code></td><td>None</td></tr>
+          <tr><td><code>agent:notice</code> <span class="tag t-fix">new</span></td><td>Main to window</td><td>Sends a short notice text for an ignored link.</td><td><code>onAgentNotice(callback)</code></td><td><code>onAgentNotice</code></td></tr>
+          <tr><td><code>open-documents:publish</code> <span class="tag t-ok">existing</span></td><td>Window to main</td><td><code>parseOpenDocumentsPayload</code> validates the new optional <code>suggestions</code> field.</td><td>Unchanged</td><td><code>ReportedOpenDocument.suggestions?</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <ul>
+        <li>The preload follows the pattern of <code>onPrepareDocument</code>. It narrows each payload with a core parser, as <code>onSemanticProgress</code> does.</li>
+        <li>Accept, reject and the evidence mark need no IPC. The person's save uses the existing <code>file:write-pdf</code>.</li>
+      </ul>
+    </div>
+    <p class="src">Source refs: <a href="../electron/preload.ts">electron/preload.ts</a>:12-19, 110-119 · <a href="../electron/agentPreparation.ts">electron/agentPreparation.ts</a>:53-57 · <a href="../src/global.d.ts">src/global.d.ts</a>:274-285</p>
+  </div></div>
+</section>
+
+<section id="bounds">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 7 · output bounds</span>
+      <h2>One core reply builder bounds read_comments for the command line and for MCP</h2>
+      <p>The bounds live in core, and both surfaces use them (finding R10). Before this plan, the command line applied no output bound.</p>
+      <ul>
+        <li><code>core/annotations/commentsReply.ts</code> builds the <code>read_comments</code> reply. It cuts each note and quote at 4000 bytes and gathers items with <code>boundItems</code> under <code>DEFAULT_CONTENT_BUDGET</code>.</li>
+        <li>It fits the reply with <code>fitReply</code> under <code>DEFAULT_REPLY_BUDGET</code>. The reply reports <code>truncated</code>, <code>totalComments</code>, <code>nextOffset</code> and <code>omittedBytes</code>.</li>
+        <li><code>markpdf comments</code> prints that reply, as JSON or as text, and never more than the reply bound.</li>
+        <li><code>reveal</code> and <code>suggest_annotation</code> return fixed fields and a link of at most 4096 characters, through <code>fitReply</code>. The server's final check applies to all three tools. <span class="tag t-warn">deviation</span> The built runners do not call <code>fitReply</code>, because their replies are fixed-size by construction.</li>
+        <li>Refusal messages go through <code>boundText</code> after <code>safeForTerminal</code>, as all refusals do.</li>
+        <li>The desktop result file has a 16 KiB limit on the opened descriptor and a field-by-field parser, like <code>parsePreparationReply</code>.</li>
+      </ul>
+      <h3>Pagination (finding R9)</h3>
+      <p>Items come in page order, then top to bottom, then left to right, as the pane lists them. <code>offset</code> is the index of the first item to return. The reply carries <code>documentHash</code>, the SHA-256 of the saved file, and <code>nextOffset</code> or <code>null</code>.</p>
+      <p>When <code>documentHash</code> changes between two calls, the file changed, and the agent starts again at offset 0. Each item is smaller than the content budget, because of the 4000-byte cut. Thus every call returns at least one item, and pagination always moves forward.</p>
+    </div>
+    <p class="src">Source refs: <a href="../core/output/budget.ts">core/output/budget.ts</a>:58, 72, 117-140, 333-350 · <a href="../mcp/server.ts">mcp/server.ts</a>:142-144, 199-210 · <a href="../core/agent/preparation.ts">core/agent/preparation.ts</a>:28-77 · <a href="../src/pdf/commentList.ts">src/pdf/commentList.ts</a>:15-19</p>
+  </div></div>
+</section>
+
+<section id="tests">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 8 · tests under the AGENTS.md TDD policy</span>
+      <h2>Six cross-layer capabilities, each with an outer test that runs Red first</h2>
+      <p>Each capability is a new cross-layer user capability, so each starts with an outer acceptance test at the highest sensible boundary. Capabilities 1, 2, 3, 5 and 6 have visible desktop behavior, so their outer tests are Electron journeys.</p>
+      <p>Capability 4 has no desktop behavior. Its outer test is an MCP stdio journey with the official SDK client, as AGENTS.md requires for MCP work. There is no refactor capability, because the preparation code does not change.</p>
+      <p>The <a href="#implementation">implementation record</a> gives the Red failure and the Green result of each outer test.</p>
+    </div>
+    <div class="work">
+      <article class="wcard">
+        <div class="top"><span class="letter">1</span><h3>An agent shows the person the passage it cites</h3></div>
+        <ul>
+          <li>Outer Electron journey: <code>tests/e2e/agent-reveal.spec.ts</code>, "an agent shows the person the cited passage, and the document stays unchanged". The three-page PDF is in a granted folder.</li>
+          <li>Expected Red: the tool <code>reveal</code> does not exist. After the minimum interface, the page does not move.</li>
+          <li>Inner loops: <code>src/pdf/quoteAnchor.test.ts</code>, <code>core/agent/desktopRequests.test.ts</code>, <code>core/agent/desktopChannel.test.ts</code> with real temporary directories, the CLI parse, help and command tests, <code>mcp/toolSchemas.test.ts</code>, <code>mcp/arguments.test.ts</code> and <code>electron/agentRequests.test.ts</code>.</li>
+          <li>The channel tests cover a symbolic link, a file that grows past 16 KiB, a second delivery, a late acknowledgement, a foreign result id, an oversized result and cleanup.</li>
+          <li>Also measure the warm call-to-reply time.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> the reply is <code>shown</code>, page 3 is in view, the mark is gone after 8 seconds, the comments control stays disabled, Undo stays unavailable and the file SHA-256 is unchanged.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">2</span><h3>Reveal of a document that is not open, and of a closed app</h3></div>
+        <ul>
+          <li>Outer Electron journeys in <code>tests/e2e/agent-reveal.spec.ts</code>: "reveal opens a granted document at the cited page and refuses one outside the grants", and "reveal starts MarkPDF for a granted document".</li>
+          <li>A third journey (finding R8): "the desktop refuses an ungranted request that skipped the client checks". The test writes a valid request file directly and starts the binary.</li>
+          <li>Inner loop: <code>mcp/evidenceOperations.test.ts</code> for the client-side access rules and a stale <code>ref</code> that fails without a process start.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> a granted path opens at the page, an ungranted path returns <code>access_denied</code> with the same tab count, also without the client checks, and a cold start opens a granted document.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">3</span><h3>Citation links</h3></div>
+        <ul>
+          <li>Outer Electron journeys in <code>tests/e2e/agent-evidence-link.spec.ts</code>: "a citation link from an agent opens the cited passage", and "a link that MarkPDF did not make, and a link inside a document, do nothing".</li>
+          <li>The second journey wraps <code>shell.openExternal</code> and asserts that it received no <code>markpdf:</code> address (finding R13).</li>
+          <li>A third journey (finding R5): "a cold start from a link opens only a valid one".</li>
+          <li>The test delivers the link with <code>app.emit("open-url", ...)</code>. This step replaces only the operating system's delivery.</li>
+          <li>Inner loops: <code>core/agent/evidenceLink.test.ts</code>, including <code>quote_too_long</code> and the key-file mode, and <code>electron/externalUrl.test.ts</code>.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> a signed link shows the page, the mark and the label, a changed link changes no view, and a forged link at a cold start opens no window.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">4</span><h3>An agent reads who said what, where</h3></div>
+        <ul>
+          <li>Outer MCP stdio journey: <code>mcp/journeys/comments.test.ts</code>, "an agent reads each comment and highlight with its author, page, quote and note". A second test refuses a call without a read grant and shows no path.</li>
+          <li>The fixture has two Acrobat-style annotations (one without a note) and one comment that <code>exportPdfBytes</code> saved.</li>
+          <li>Inner loops: <code>core/annotations/readAnnotations.test.ts</code>, <code>core/annotations/textUnderMarks.test.ts</code>, <code>core/annotations/rendererParity.test.ts</code> and <code>mcp/commentOperations.test.ts</code>.</li>
+          <li><code>core/annotations/commentsReply.test.ts</code> (finding R9) reads 60 comments on one page through <code>nextOffset</code>.</li>
+          <li><code>cli/journeys/comments.test.ts</code> (findings R10 and R6) checks the reply bound, exit code 5 without a grant, and a grant flag as a usage error.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> all three fixture items come back with exact authors, pages, notes and quotes against the real server process.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">5</span><h3>A person reviews agent suggestions, and only accepted ones are saved as the agent's</h3></div>
+        <ul>
+          <li>Outer Electron journey: <code>tests/e2e/agent-suggestions.spec.ts</code>. An SDK client suggests three times. The person accepts one, rejects one and leaves one pending (finding R8), saves, closes the tab and opens the file again.</li>
+          <li>Second journey (finding R12): "an accepted agent highlight keeps its agent label after save and reload".</li>
+          <li>Third journey (finding R11): "a flattened export of agent annotations asks first". Cancel writes no file.</li>
+          <li>Inner loops: <code>src/pdf/agentSuggestions.test.ts</code>, <code>src/pdf/overlayMetadata.test.ts</code>, <code>src/pdf/document.test.ts</code>, <code>src/pdf/commentList.test.ts</code>, the open-documents record tests and <code>electron/agentRequests.test.ts</code>.</li>
+          <li><code>src/pdf/document.test.ts</code> (finding R1) reads back parentheses, backslashes, non-Latin text, emoji and <code>) /T (x</code> literally, through pdf-lib and pdf.js.</li>
+          <li>Manual check, with screenshots: Preview and Acrobat show the agent name as the author. This check is verification, not Red evidence.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> the saved file has exactly one new annotation with <code>/T</code> <code>&lt;client name&gt; (AI agent)</code> and <code>/Subj</code> <code>AI agent comment</code>, and none for the rejected or the pending suggestion.</p>
+      </article>
+      <article class="wcard">
+        <div class="top"><span class="letter">6</span><h3>Suggestions end safely</h3></div>
+        <ul>
+          <li>Outer Electron journey in <code>tests/e2e/agent-suggestions.spec.ts</code>: "pending suggestions end when their page structure changes or their tab closes, and the file is unchanged".</li>
+          <li>The test suggests two and inserts a page. Both go, the toast names two, and the statuses are <code>discarded</code>.</li>
+          <li>The test suggests one more and closes the tab. The question names one suggestion. Cancel keeps the tab, and confirm closes it.</li>
+          <li>Inner loop: <code>src/pdf/agentSuggestions.test.ts</code> covers the state rules. A window reload and a crash follow from the record lifecycle.</li>
+        </ul>
+        <p class="done"><strong>Done when</strong> the reopened file has no suggestion and its SHA-256 is unchanged.</p>
+      </article>
+    </div>
+    <p class="src">Precedents: <a href="../tests/e2e/agent-pdf-preparation.spec.ts">tests/e2e/agent-pdf-preparation.spec.ts</a>:86-87 single instance, 195-237 cold start · <a href="../tests/e2e/open-documents-mcp.spec.ts">tests/e2e/open-documents-mcp.spec.ts</a>:310 replaced delivery · tests can import across the boundary, <a href="../core/boundaries.test.ts">core/boundaries.test.ts</a>:6</p>
+  </div></div>
+</section>
+
+<section id="mutations">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 8 · mutation proofs</span>
+      <h2>Fifteen mutations prove that the tests guard the high-risk rules</h2>
+      <p>Each proof changes the implementation and confirms that the named test fails. Then it restores the code and runs the test again.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Rule</th><th>Mutation</th><th>Test that must fail</th></tr></thead>
+        <tbody>
+          <tr><td>The desktop checks the read grant</td><td>Remove the <code>requireAccess</code> call in <code>electron/agentRequests.ts</code></td><td>Capability 2 "skipped the client checks" journey</td></tr>
+          <tr><td>A forged link is inert</td><td>Make the verifier return true</td><td><code>core/agent/evidenceLink.test.ts</code>, capability 3 second journey</td></tr>
+          <tr><td>A link in a document never reaches the desktop</td><td>Add <code>markpdf:</code> to the main allow list</td><td><code>electron/externalUrl.test.ts</code></td></tr>
+          <tr><td>A pending suggestion never reaches the file</td><td>Merge pending <code>suggestions</code> into the overlays given to <code>exportPdfBytes</code></td><td>Capability 5 journey, step 4</td></tr>
+          <tr><td>A rejected suggestion never reaches the file</td><td>Make reject keep an overlay</td><td>Capability 5 journey, step 4</td></tr>
+          <tr><td>Agent authorship reaches other readers</td><td>Write <code>/T (MarkPDF)</code> for an agent origin</td><td><code>src/pdf/document.test.ts</code>, capability 5 step 4</td></tr>
+          <tr><td>Agent text cannot inject PDF syntax</td><td>Use <code>PDFString.of</code> for agent text</td><td><code>src/pdf/document.test.ts</code></td></tr>
+          <tr><td>Agent authorship survives a reload in MarkPDF</td><td>Drop <code>origin</code> in <code>parsePersistedOverlays</code></td><td><code>src/pdf/overlayMetadata.test.ts</code>, capability 5 step 5</td></tr>
+          <tr><td>Reveal does not change the document</td><td>Make reveal add an overlay</td><td>Capability 1 journey (comments control and Undo)</td></tr>
+          <tr><td>Quote matching needs a read grant</td><td>Skip the grant check for an open, indexed document</td><td><code>electron/agentRequests.test.ts</code></td></tr>
+          <tr><td>A <code>ref</code> must belong to this desktop process</td><td>Remove the process check</td><td><code>electron/agentRequests.test.ts</code></td></tr>
+          <tr><td>A request is consumed once</td><td>Read the request without the rename</td><td><code>core/agent/desktopChannel.test.ts</code></td></tr>
+          <tr><td>New commands never grant</td><td>Allow grant flags with <code>comments</code></td><td><code>cli/journeys/comments.test.ts</code></td></tr>
+          <tr><td>A page change ends pending suggestions</td><td>Keep suggestions on a new revision</td><td><code>src/pdf/agentSuggestions.test.ts</code>, capability 6 journey</td></tr>
+          <tr><td>The reply bound holds</td><td>Remove <code>fitReply</code> from the comments reply</td><td><code>core/annotations/commentsReply.test.ts</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <h3>Verification commands in the plan</h3>
+      <ol>
+        <li>During the loops, run the narrowest command, for example <code>npm test -- src/pdf/quoteAnchor.test.ts</code> or <code>npx playwright test tests/e2e/agent-reveal.spec.ts</code>.</li>
+        <li>Before the merge, run <code>npm test</code>, <code>npm run build</code> and <code>npm run test:e2e</code> through <code>heavy-run --label markpdf -- &lt;command&gt;</code>.</li>
+        <li>Then run <code>npx tsc -p tsconfig.electron.json --noEmit</code> and the core, CLI, MCP and test typechecks.</li>
+        <li>After the build, run <code>code-map</code>.</li>
+      </ol>
+      <p>The repository has no lint command, and the delivery report must say so.</p>
+    </div>
+  </div></div>
+</section>
+
+<section id="adr">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Question 9 · ADR</span>
+      <h2>Yes. The work needs two ADRs, because it makes two architectural decisions</h2>
+      <ol>
+        <li><code>2026-10-31-Agent-Evidence-Reveal-And-Links.md</code> under <code>docs/adr/</code> records the hardened desktop request channel beside the preparation channel, the <code>markpdf://</code> scheme, signed links, and the read-grant rule for every quote match.</li>
+        <li><code>2026-10-31-Agent-Suggested-Annotations.md</code> under <code>docs/adr/</code> records the separate suggestions field, the rule that agents never write files, authorship in <code>origin</code>, <code>/T</code>, <code>/Subj</code> and the colour, and the core annotation reader with its parity test.</li>
+      </ol>
+      <p>The separate suggestions field is a deliberate exception to the alternative that the 2026-09-19 ADR rejected. Each new ADR has a Verification section that names the tests above.</p>
+      <h3>Other documents</h3>
+      <ul>
+        <li><code>docs/agent-evidence-and-comments.md</code>: a usage reference, in the style of <code>docs/agent-pdf-preparation.md</code>.</li>
+        <li><code>README.md</code>: the MCP section lists ten tools.</li>
+        <li><code>skills/markpdf-retrieval/SKILL.md</code>: agents cite with reveal links, read with <code>read_comments</code>, propose with <code>suggest_annotation</code>, and never say that they changed the document.</li>
+        <li><code>mcp/toolSchemas.ts:229</code>: the <code>read_open_document</code> description points to <code>read_comments</code>.</li>
+        <li><code>CHANGELOG.md</code>: one entry for the completed work.</li>
+      </ul>
+    </div>
+    <p class="src">Related ADRs: <a href="../docs/adr/2026-10-28-Agent-PDF-Preparation.md">2026-10-28-Agent-PDF-Preparation.md</a> · <a href="../docs/adr/2026-09-19-Annotations-Another-Application-Wrote.md">2026-09-19-Annotations-Another-Application-Wrote.md</a>:136-139</p>
+  </div></div>
+</section>
+
+<section id="decisions">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Default decisions</span>
+      <h2>Nine questions are settled by the rule that the user delegated</h2>
+    </div>
+    <div class="decision">
+      <span class="label">User delegation · 31 October 2026</span>
+      <h3>Apply the recommended option, and choose the more restrictive option for a consent, security or data-loss question</h3>
+      <p>The plan applied this rule to its open questions. Questions 7, 8 and 9 are new. They come from Codex findings R2, R11 and R6.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Question</th><th>Decision</th><th>Rule applied</th></tr></thead>
+        <tbody>
+          <tr><td>1. Can <code>reveal</code> start MarkPDF when it is closed?</td><td>Yes, for a document within the read grants.</td><td>Recommended option. A read grant is still required.</td></tr>
+          <tr><td>2. Tab close with pending suggestions</td><td>Ask before the discard, for a tab close and for a window close or quit.</td><td>Data-loss question: the more restrictive option.</td></tr>
+          <tr><td>3. Author text in other readers</td><td><code>/T</code> "&lt;agent&gt; (AI agent)" and <code>/Subj</code>. The note text stays unchanged.</td><td>Recommended option.</td></tr>
+          <tr><td>4. Agent name</td><td>The MCP client name. The command line takes <code>--agent</code>.</td><td>Recommended option.</td></tr>
+          <tr><td>5. New suggestions</td><td>A toast. The pane does not open by itself. The comments control shows the count. The plan's toast button was not built.</td><td>Recommended option.</td></tr>
+          <tr><td>6. Platforms for links</td><td>macOS only in this iteration.</td><td>Recommended option.</td></tr>
+          <tr><td>7. Read rule for reveal and suggestions <span class="tag t-fix">new · R2</span></td><td>A read grant for every reveal and suggestion.</td><td>Consent question: the more restrictive option.</td></tr>
+          <tr><td>8. Flattened save of agent annotations <span class="tag t-fix">new · R11</span></td><td>Ask first, and keep the violet colour.</td><td>Data-loss question: the more restrictive option.</td></tr>
+          <tr><td>9. Grant flags with the new commands <span class="tag t-fix">new · R6</span></td><td>A usage error.</td><td>Consent question: the more restrictive option.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div></div>
+</section>
+
+<section id="review">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Independent review</span>
+      <h2>Codex reported 13 findings, and the plan accepted all of them</h2>
+      <p>Codex (GPT-6-Astra, high effort) reviewed the first version of this plan on 2026-10-31 through an Orca terminal. It checked all 149 citations and found that they resolve. Two findings were blockers, ten were major and one was minor.</p>
+      <p>Where Codex offered several options, the last column names the chosen one.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>ID</th><th>Severity</th><th>Finding</th><th>Change in this plan</th></tr></thead>
+        <tbody>
+          <tr><td class="num">R1</td><td><span class="tag t-bad">Blocker</span></td><td><code>PDFString.of</code> cannot encode arbitrary agent names and notes safely.</td><td>Agent <code>/T</code> and <code>/Contents</code> use <code>PDFHexString.fromText</code>. Round-trip tests through pdf-lib and pdf.js. The name is called self-reported.</td></tr>
+          <tr><td class="num">R2</td><td><span class="tag t-bad">Blocker</span></td><td>"Indexed" does not authorize matching against different live content.</td><td>A read grant for every reveal and suggestion. The plan chose this over snapshot matching, because it is simpler and stricter.</td></tr>
+          <tr><td class="num">R3</td><td><span class="tag t-warn">Major</span></td><td>Suggestion pages and statuses break across undo, redo and asynchronous changes.</td><td>A document revision. A structural change discards pending suggestions. <code>accepted</code> is a decision only. A revision check before a match is used.</td></tr>
+          <tr><td class="num">R4</td><td><span class="tag t-warn">Major</span></td><td>The request-file channel has no secure file and replay lifecycle.</td><td>A separate hardened channel. Preparation unchanged. Full file rules and channel tests.</td></tr>
+          <tr><td class="num">R5</td><td><span class="tag t-warn">Major</span></td><td>Target ownership and "suggest never starts the app" need a race policy.</td><td>Concrete targets, revalidation, <code>ambiguous</code>, "never opens a window", cold-start arbitration for links, new journeys.</td></tr>
+          <tr><td class="num">R6</td><td><span class="tag t-warn">Major</span></td><td>The CLI inherits a grant-writing prompt.</td><td>The new commands fail closed, never prompt, and refuse grant flags.</td></tr>
+          <tr><td class="num">R7</td><td><span class="tag t-warn">Major</span></td><td>A default <code>ref: active</code> breaks the exclusive identity rule.</td><td>No default identity. A generated three-branch <code>oneOf</code>. Full identity tests.</td></tr>
+          <tr><td class="num">R8</td><td><span class="tag t-warn">Major</span></td><td>Two mutation proofs cannot fail.</td><td>A third pending suggestion at save time. A direct request-file journey for the desktop grant check. Reveal checked through the comments control and Undo.</td></tr>
+          <tr><td class="num">R9</td><td><span class="tag t-warn">Major</span></td><td>Page-only pagination cannot return every comment.</td><td><code>offset</code> and <code>nextOffset</code>, <code>documentHash</code>, and a cut of each field at 4000 bytes.</td></tr>
+          <tr><td class="num">R10</td><td><span class="tag t-warn">Major</span></td><td>The CLI output was unbounded.</td><td>One core reply builder for both surfaces, with a CLI journey on an oversized fixture.</td></tr>
+          <tr><td class="num">R11</td><td><span class="tag t-warn">Major</span></td><td>Flattened saves erase agent authorship.</td><td>A question before a flattened save or export. Violet colour kept.</td></tr>
+          <tr><td class="num">R12</td><td><span class="tag t-warn">Major</span></td><td>Accepted agent highlights had no non-colour label.</td><td>Agent highlights get a <code>Bot</code> pin and a pane card. A separate journey.</td></tr>
+          <tr><td class="num">R13</td><td><span class="tag">Minor</span></td><td>Wrong claims about the blocked-link message and the export filter. Link quotes were cut.</td><td>Claims corrected. The test asserts no reveal and no external handoff. A too-long quote refuses the link instead of a cut.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="aside">
+      <span class="label">Deferred, with reasons</span>
+      <h3>Two Electron journeys are not in this plan</h3>
+      <ul>
+        <li>A journey that kills the app during dispatch (from R5). It cannot be made deterministic with the current harness. The channel tests cover the client side with a missing acknowledgement and a missing result.</li>
+        <li>A journey through insert, undo and accept (from R3). With the revision rule, the capability 6 journey covers the observable outcome, and the unit tests cover undo and redo.</li>
+      </ul>
+    </div>
+  </div></div>
+</section>
+
+<section id="implementation">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Implementation record</span>
+      <h2>Each outer test failed first, every gate passes, and the tests found three defects</h2>
+      <p>The plan is implemented in this worktree and not committed. The table gives the outer test of each capability, its Red failure before the implementation, and its Green result.</p>
+      <p>All six capabilities pass their outer tests. On 1 November 2026, <code>npm test</code> passed 131 files and 1521 tests, <code>npm run build</code> passed, and <code>npm run test:e2e</code> passed 48 of 48 journeys. The repository has no lint command.</p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Capability</th><th>Outer test</th><th>Red, before the implementation</th><th>Green</th></tr></thead>
+        <tbody>
+          <tr><td>4. Read comments</td><td><code>mcp/journeys/comments.test.ts</code></td><td>"There is no tool called read_comments."</td><td class="t-ok">2 of 2 pass</td></tr>
+          <tr><td>4. Read comments, command line</td><td><code>cli/journeys/comments.test.ts</code></td><td>Exit code 1, "No implementation for the comments command"</td><td class="t-ok">4 of 4 pass</td></tr>
+          <tr><td>1. Reveal an open document</td><td><code>tests/e2e/agent-reveal.spec.ts</code>, first test</td><td>"There is no tool called reveal."</td><td class="t-ok">Passes. Warm call-to-reply 258 ms.</td></tr>
+          <tr><td>1. Reveal, command line</td><td><code>cli/journeys/reveal.test.ts</code></td><td>Exit code 1 for the refusals</td><td class="t-ok">3 of 3 pass</td></tr>
+          <tr><td>2. Reveal of a closed document and a cold start</td><td><code>tests/e2e/agent-reveal.spec.ts</code>, tests 2 to 4</td><td><code>not_open</code> for a closed document. No answer on a cold start.</td><td class="t-ok">4 of 4 pass</td></tr>
+          <tr><td>3. Links</td><td><code>tests/e2e/agent-evidence-link.spec.ts</code></td><td>No <code>mode</code> argument, no notice, and no exit for a forged cold-start link</td><td class="t-ok">3 of 3 pass, twice in a row</td></tr>
+          <tr><td>5 and 6. Suggestions</td><td><code>tests/e2e/agent-suggestions.spec.ts</code></td><td>"There is no tool called suggest_annotation." (5 of 5)</td><td class="t-ok">5 of 5 pass. The first run passed 1 of 5; the four failures were test timing defects, fixed in the tests.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="col stack">
+      <p>Each inner loop also ran Red first, against a minimal interface or a stub. The loops covered these units:</p>
+      <ul>
+        <li>The core reader, the quoted text and the comments reply</li>
+        <li>The request and IPC parsers, the channel and the target decision</li>
+        <li>The link module and the quote matcher</li>
+        <li>The suggestion state, the authorship writer and the origin metadata</li>
+        <li>The comment list and the decision statuses in the record</li>
+      </ul>
+      <h3>Eighteen mutation proofs</h3>
+      <p>Each mutation made its named test fail, and each test passed again after the restore. The mutated rules were:</p>
+      <ul>
+        <li>The subtype allow list, the duplicate skip (parity test) and the reply bound</li>
+        <li>The grant-flag refusal and the one-time consumption</li>
+        <li>The open-tab grant check, the process check and the desktop's grant check (Electron journey with a direct request file)</li>
+        <li>The link verifier and <code>markpdf:</code> in the main scheme rule</li>
+        <li>A reveal that adds an overlay (Electron journey)</li>
+        <li>Literal strings for agent text, <code>MarkPDF</code> as an agent's author, a dropped origin and an unchecked origin</li>
+        <li>A page change that does not end pending suggestions (unit level)</li>
+        <li>A pending suggestion, and a rejected one, that reach the saved file (Electron journey, step 4)</li>
+      </ul>
+      <h3>Three defects that the tests found, all fixed</h3>
+      <ul>
+        <li>A reveal from a link opened a second tab when the document was already open. The tab had no content hash yet, and the indexed path <code>/private/var/...</code> differed in spelling from the tab's <code>/var/...</code>. The desktop now reuses a tab that shows the same file, compared by real path.</li>
+        <li>A link clicked just after a tab closed went to the closed tab, because the open-documents record is written a moment after a change. The desktop now opens the file when the window answers that the tab is gone.</li>
+        <li>The full E2E gate found that the agent toast, a permanent <code>role="status"</code> region, made the existing CLI-install journey find two status regions. The toast is now a polite live region without the <code>status</code> role.</li>
+      </ul>
+      <h3>Seven deviations from the plan</h3>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>The plan says</th><th>The implementation does</th></tr></thead>
+        <tbody>
+          <tr><td><code>reveal</code> and <code>suggest_annotation</code> replies go through <code>fitReply</code>.</td><td>The replies are fixed-size by construction: a name of at most 1024 characters and a link of at most 4096. The runner does not call <code>fitReply</code>. The server's final reply check applies.</td></tr>
+          <tr><td>A toast with a button that opens the pane (default decision 5).</td><td class="t-warn">The toast has no button. The comments control shows the count of waiting suggestions and names it in its accessible name.</td></tr>
+          <tr><td>The label of a reveal from a link of a changed document says "This document changed after the link was made."</td><td class="t-warn">This label text is not added yet.</td></tr>
+          <tr><td>A polite live region announces the reveal.</td><td>The live region is a visible toast for every agent message, not a hidden one, and it has no <code>status</code> role.</td></tr>
+          <tr><td>The command line takes <code>--agent</code> for suggestions.</td><td><code>markpdf reveal</code> also takes <code>--agent</code>, for the label.</td></tr>
+          <tr><td>A window close asks before it discards suggestions (default decision 2).</td><td class="t-warn">The window close asks, but no Electron journey covers it. The tab close journey covers the same question.</td></tr>
+          <tr><td>The link journey proves that a Markdown link reveals nothing.</td><td>The journey waits a fixed second after the click, because it proves that something does not happen.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div></div>
+</section>
+
+<section id="evidence">
+  <div class="page"><div class="stack">
+    <div class="col stack">
+      <span class="label">Evidence and limits</span>
+      <h2>The plan cites the code, the record gives test results, and some checks stay open</h2>
+      <p>The left side lists what the plan, the review and the implementation record show for this worktree. The right side lists what the Markdown does not establish.</p>
+    </div>
+    <div class="ledger">
+      <div>
+        <span class="tag t-ok">Checked in this worktree</span>
+        <ul>
+          <li>Each claim of the idea brief, with the verdicts in the brief check.</li>
+          <li>Every load-bearing claim about existing behavior, cited as file:line.</li>
+          <li>All 149 citations of the first version, which Codex checked and found to resolve. The author checked each citation that the current version adds.</li>
+          <li>No <code>setAsDefaultProtocolClient</code> or <code>open-url</code> in <code>electron/</code>.</li>
+          <li>electron-builder supports the <code>protocols</code> key (<code>PlatformSpecificBuildOptions.d.ts:134</code>).</li>
+          <li>The MCP SDK exposes the client name with <code>getClientVersion()</code>.</li>
+          <li>The installed pdf-lib provides <code>PDFHexString.fromText</code>.</li>
+          <li>pdf.js reads <code>/T</code> into <code>titleObj</code>, with three matches in its worker.</li>
+          <li>Red and Green evidence for capabilities 1 to 4, and fifteen mutation proofs, in the implementation record.</li>
+          <li>A warm call-to-reply time of 258 ms in the first reveal journey.</li>
+        </ul>
+      </div>
+      <div>
+        <span class="tag t-idle">Not established</span>
+        <ul>
+
+          <li>Agent clients make <code>markpdf://</code> addresses clickable. A manual check in Claude Code and Codex. The citation text stays as the fallback.</li>
+          <li>Acrobat and Preview show <code>/T</code> as the author. Known behavior, not checked in this repository. The plan calls for a manual check with screenshots, and the record does not report it.</li>
+          <li><code>pdf-lib</code> works in core under <code>ELECTRON_RUN_AS_NODE</code>. Likely. The capability 4 stdio journey runs it in the real server process.</li>
+          <li>pdf.js text positions are good enough for quotes. Partly. Ligatures, rotated text and column layouts are hard cases.</li>
+          <li><code>open-url</code> arrives before the main module loads on a cold start. Likely, because <code>open-file</code> works this way. A capability 3 cold-start journey and a manual click test in a packaged build check it.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="col stack">
+      <span class="label">Sources</span>
+    </div>
+    <ul class="sources">
+      <li><a href="agent-evidence-and-comments-plan.md">agent-evidence-and-comments-plan.md</a><span>The full plan, the review, the default decisions and the implementation record</span></li>
+      <li><a href="../AGENTS.md"><code>AGENTS.md</code></a><span>TDD policy, test layers, IPC rule, ADR rule</span></li>
+      <li><a href="../electron/main.ts"><code>electron/main.ts</code></a><span>410-443 single-instance lock and handler · 455-464 start path · 614-621 save</span></li>
+      <li><a href="../electron/agentPreparation.ts"><code>electron/agentPreparation.ts</code></a><span>53-57 sender check · 85-94 result and request files · 100-103 ambiguity · 135-138 process check</span></li>
+      <li><a href="../core/agent/desktopClient.ts"><code>core/agent/desktopClient.ts</code></a><span>11-45 the preparation channel · 22-30 result reading and leftovers</span></li>
+      <li><a href="../cli/run.ts"><code>cli/run.ts</code></a><span>65-75, 99-101 grant flags before dispatch</span></li>
+      <li><a href="../cli/context.ts"><code>cli/context.ts</code></a><span>108-133 grant prompt</span></li>
+      <li><a href="../electron/externalUrl.ts"><code>electron/externalUrl.ts</code></a><span>17, 20, 29-42 scheme rule and link limit</span></li>
+      <li><a href="../src/pdf/links.ts"><code>src/pdf/links.ts</code></a><span>174 window scheme list · 232-235 other schemes not drawn</span></li>
+      <li><a href="../src/pdf/document.ts"><code>src/pdf/document.ts</code></a><span>44, 991-994, 1033-1036 author and strings · 572-588 export · 626-641, 667-696 flattened · 823-834 keyword · 919-945 writer</span></li>
+      <li><a href="../src/App.tsx"><code>src/App.tsx</code></a><span>627-637 dirty rule · 1728-1736 flattened save · 2173-2180, 2352-2375, 2401-2432 undo and page changes · 5037 pins</span></li>
+      <li><a href="../mcp/toolSchemas.ts"><code>mcp/toolSchemas.ts</code></a><span>13-20 argument types · 98-104 propertyFromOption · 146 tool count · 229 description</span></li>
+      <li><a href="../mcp/arguments.ts"><code>mcp/arguments.ts</code></a><span>27-44 limits · 74-99 defaults before oneOf</span></li>
+      <li><a href="../core/output/budget.ts"><code>core/output/budget.ts</code></a><span>58 content budget · 72 reply budget · 117-140 fitReply · 333-350 boundItems</span></li>
+      <li><a href="../docs/adr/2026-10-28-Agent-PDF-Preparation.md"><code>2026-10-28-Agent-PDF-Preparation.md</code></a><span>13-21 file channel chosen over a socket</span></li>
+      <li><a href="../docs/adr/2026-09-19-Annotations-Another-Application-Wrote.md"><code>2026-09-19-Annotations-Another-Application-Wrote.md</code></a><span>120-121 replies · 136-139 rejected separate field</span></li>
+    </ul>
+  </div></div>
+</section>
+
+</main>
+
+<footer class="end">
+  <div>Explainer for agent-evidence-and-comments-plan.md, 31 October 2026, after the Codex review and the implementation. Branch cwik-tech/agent-evidence-comments, base main at 2125a71. Line numbers refer to this worktree. Source links work when this file stays in the repository's <code>docs/</code> folder. The page explains the plan and repeats the test evidence that the Markdown records. It does not run or check the code. The implementation is not committed. Uses IBM Plex from Google Fonts, with system fallbacks. No scripts.</div>
+</footer>
+
+</body>
+</html>

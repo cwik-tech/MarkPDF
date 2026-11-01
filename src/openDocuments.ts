@@ -18,6 +18,8 @@ export interface ProjectableTab {
   markdown?: string | undefined;
   semanticContentHash?: string | undefined;
   dirty: boolean;
+  /** The person's decisions about an agent's suggestions. Only ids and statuses leave the window. */
+  suggestions?: { log: ReadonlyArray<{ id: string; status: "pending" | "accepted" | "rejected" | "discarded" }> } | undefined;
 }
 
 /**
@@ -48,6 +50,9 @@ export function projectOpenDocuments(
     contentHash: tab.semanticContentHash ?? null,
     contentSnapshot: tab.kind === "markdown" ? (tab.markdown ?? "") : null,
     unsavedChanges: tab.dirty,
+    ...(tab.kind === "pdf" && tab.suggestions !== undefined && tab.suggestions.log.length > 0
+      ? { suggestions: tab.suggestions.log.map((entry) => ({ id: entry.id, status: entry.status })) }
+      : {}),
   }));
 
   // A tab can close between a state change and this report. Naming a front tab that is not in the

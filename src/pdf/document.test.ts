@@ -4,6 +4,7 @@ import {
   PDFArray,
   PDFDict,
   PDFDocument,
+  PDFHexString,
   PDFName,
   PDFNumber,
   PDFRawStream,
@@ -529,5 +530,96 @@ describe("annotations another application wrote", () => {
     });
 
     expect(await filledRectangles(Uint8Array.from(flattenedBytes))).toEqual([]);
+  });
+});
+
+describe("annotations an AI agent suggested and the person accepted", () => {
+  const origin = {
+    kind: "agent" as const,
+    agent: "claude-code",
+    quote: "Bookmark target phrase",
+    suggestedAt: "2026-10-31T10:00:00.000Z",
+    acceptedAt: "2026-10-31T10:01:00.000Z",
+  };
+
+  function agentComment(overrides: Partial<OverlayItem> = {}): OverlayItem {
+    return {
+      id: "comment-agent",
+      kind: "comment",
+      page: 1,
+      x: 72,
+      y: 74,
+      width: 200,
+      height: 22,
+      text: "Ask for 60 days.",
+      minimized: true,
+      color: "#8b5cf6",
+      fragments: [{ x: 0, y: 0, width: 200, height: 22 }],
+      origin,
+      ...overrides,
+    };
+  }
+
+  async function savedAnnotationDict(overlay: OverlayItem): Promise<PDFDict> {
+    const saved = await exportPdfBytes(Uint8Array.from(await createSourcePdf()), [overlay], [], false, {
+      bakeOverlays: false,
+      persistEditable: true,
+      writeStandardAnnotations: true,
+    });
+    const pdf = await PDFDocument.load(saved);
+    const annots = pdf.getPage(0).node.lookup(PDFName.of("Annots"), PDFArray);
+    return annots.lookup(0, PDFDict);
+  }
+
+  function text(dict: PDFDict, key: string): string {
+    return dict.lookupMaybe(PDFName.of(key), PDFString, PDFHexString)?.decodeText() ?? "";
+  }
+
+  it("name the agent as the author, and say that an AI agent wrote them, for every other reader", async () => {
+    const dict = await savedAnnotationDict(agentComment());
+    expect(text(dict, "T")).toBe("claude-code (AI agent)");
+    expect(text(dict, "Subj")).toBe("AI agent comment");
+    expect(text(dict, "Contents")).toBe("Ask for 60 days.");
+    const colour = dict.lookup(PDFName.of("C"), PDFArray);
+    expect([0, 1, 2].map((index) => Math.round(colour.lookup(index, PDFNumber).asNumber() * 255))).toEqual([139, 92, 246]);
+    const highlight = await savedAnnotationDict(agentComment({ kind: "highlight", text: undefined, minimized: undefined }));
+    expect(text(highlight, "Subj")).toBe("AI agent highlight");
+  });
+
+  it("keep a name and a note that look like PDF syntax as literal text, in two PDF engines", async () => {
+    const hostileName = "evil) /T (Jane Reviewer";
+    const hostileNote = "Unmatched ( paren, back\\slash, 日本語, 🙂 and ) /Contents (forged";
+    const dict = await savedAnnotationDict(agentComment({ text: hostileNote, origin: { ...origin, agent: hostileName } }));
+    expect(text(dict, "T")).toBe(`${hostileName} (AI agent)`);
+    expect(text(dict, "Contents")).toBe(hostileNote);
+    expect(dict.keys().map((key) => key.asString()).sort()).toEqual(
+      ["/C", "/CA", "/Contents", "/F", "/M", "/NM", "/QuadPoints", "/Rect", "/Subj", "/Subtype", "/T", "/Type"].sort(),
+    );
+
+    const saved = await exportPdfBytes(Uint8Array.from(await createSourcePdf()), [agentComment({ text: hostileNote, origin: { ...origin, agent: hostileName } })], [], false, {
+      bakeOverlays: false,
+      persistEditable: true,
+      writeStandardAnnotations: true,
+    });
+    const document = await loadPdfDocument(Uint8Array.from(saved));
+    const [annotation] = await (await document.getPage(1)).getAnnotations();
+    expect(annotation?.titleObj?.str).toBe(`${hostileName} (AI agent)`);
+    expect(annotation?.contentsObj?.str).toBe(hostileNote);
+  });
+
+  it("leave a person's annotation as MarkPDF has always written it", async () => {
+    const dict = await savedAnnotationDict(agentComment({ origin: undefined, color: "#facc15" }));
+    expect(text(dict, "T")).toBe("MarkPDF");
+    expect(text(dict, "Subj")).toBe("Comment");
+  });
+
+  it("come back as the agent's when MarkPDF opens the saved file", async () => {
+    const saved = await exportPdfBytes(Uint8Array.from(await createSourcePdf()), [agentComment()], [], false, {
+      bakeOverlays: false,
+      persistEditable: true,
+      writeStandardAnnotations: true,
+    });
+    const [reopened] = await extractEditableOverlays(Uint8Array.from(saved));
+    expect(reopened?.origin).toEqual(origin);
   });
 });

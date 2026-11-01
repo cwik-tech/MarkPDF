@@ -979,6 +979,30 @@ function getPageAnnotations(
   return annots;
 }
 
+/**
+ * Who another reader is told wrote an annotation.
+ *
+ * A person's annotation keeps what MarkPDF has always written. An agent's says so in the two places
+ * other readers show — the author and the subject — and carries its text as UTF-16 hex strings.
+ * The agent's name and note are text from outside this program, and a literal string would have to
+ * be escaped to stay text; a hex string cannot be anything else.
+ */
+function authorship(overlay: OverlayItem, fallbackText: string, subject: "Comment" | "Highlight") {
+  const origin = overlay.origin;
+  if (origin?.kind === "agent") {
+    return {
+      Contents: PDFHexString.fromText(overlay.text?.trim() || fallbackText),
+      T: PDFHexString.fromText(`${origin.agent} (AI agent)`),
+      Subj: PDFString.of(`AI agent ${subject.toLowerCase()}`),
+    };
+  }
+  return {
+    Contents: PDFString.of(overlay.text?.trim() || fallbackText),
+    T: PDFString.of(standardAnnotationAuthor),
+    Subj: PDFString.of(subject),
+  };
+}
+
 function createTextNoteAnnotation(pdfDoc: PDFDocument, overlay: OverlayItem, rect: PdfRect) {
   const noteSize = 24;
   const left = rect.left;
@@ -988,13 +1012,13 @@ function createTextNoteAnnotation(pdfDoc: PDFDocument, overlay: OverlayItem, rec
     Type: PDFName.of("Annot"),
     Subtype: PDFName.of("Text"),
     Rect: [left, Math.max(rect.bottom, top - noteSize), left + noteSize, top],
-    Contents: PDFString.of(overlay.text || "Comment"),
-    T: PDFString.of(standardAnnotationAuthor),
-    Subj: PDFString.of("Comment"),
+    ...(overlay.origin?.kind === "agent"
+      ? authorship(overlay, "Comment", "Comment")
+      : { Contents: PDFString.of(overlay.text || "Comment"), T: PDFString.of(standardAnnotationAuthor), Subj: PDFString.of("Comment") }),
     NM: PDFString.of(`${standardAnnotationNamePrefix}${overlay.id}`),
     M: PDFString.fromDate(new Date()),
     Name: PDFName.of("Comment"),
-    C: [1, 0.88, 0.1],
+    C: overlay.origin?.kind === "agent" ? agentColorComponents(overlay) : [1, 0.88, 0.1],
     F: 4,
     Open: false
   });
@@ -1014,7 +1038,7 @@ function createHighlightAnnotation(
   quads: readonly PdfRect[]
 ) {
   const color = hexToRgb(overlay.color ?? "#facc15");
-  const contents = overlay.text?.trim() || (overlay.kind === "comment" ? "Comment" : "Highlight");
+  const subject = overlay.kind === "comment" ? "Comment" : "Highlight";
 
   return pdfDoc.context.obj({
     Type: PDFName.of("Annot"),
@@ -1030,15 +1054,19 @@ function createHighlightAnnotation(
       quad.right,
       quad.bottom
     ]),
-    Contents: PDFString.of(contents),
-    T: PDFString.of(standardAnnotationAuthor),
-    Subj: PDFString.of(overlay.kind === "comment" ? "Comment" : "Highlight"),
+    ...authorship(overlay, subject, subject),
     NM: PDFString.of(`${standardAnnotationNamePrefix}${overlay.id}`),
     M: PDFString.fromDate(new Date()),
     C: [color.r, color.g, color.b],
     CA: 0.35,
     F: 4
   });
+}
+
+/** An agent's colour as PDF components. Violet unless the overlay carries its own. */
+function agentColorComponents(overlay: OverlayItem): number[] {
+  const color = hexToRgb(overlay.color ?? "#8b5cf6");
+  return [color.r, color.g, color.b];
 }
 
 interface PdfRect {

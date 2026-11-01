@@ -1,4 +1,5 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { SuggestionState } from "./pdf/agentSuggestions";
 
 export type ThemeMode = "light" | "dark";
 export type ViewMode = "single" | "two";
@@ -13,6 +14,24 @@ export interface OverlayRect {
   y: number;
   width: number;
   height: number;
+}
+
+/**
+ * Who wrote an annotation the person accepted from an agent.
+ *
+ * Present only on an overlay that began as an agent's suggestion. Its absence — on every overlay a
+ * reader made here — means a person made it in MarkPDF, which is what every overlay written before
+ * this field existed means too. The name is the agent's own claim about itself, kept as a label.
+ */
+export interface OverlayOrigin {
+  kind: "agent";
+  agent: string;
+  /** The words the agent anchored its suggestion to, when it quoted any. */
+  quote?: string;
+  suggestedAt: string;
+  acceptedAt: string;
+  /** Set when the person changed the note after accepting it. */
+  editedByPerson?: boolean;
 }
 
 export interface OverlayItem {
@@ -41,6 +60,8 @@ export interface OverlayItem {
   source?: "document";
   /** The name the annotation's own application recorded as its author, when it recorded one. */
   author?: string;
+  /** Set when an AI agent suggested this annotation and the person accepted it. */
+  origin?: OverlayOrigin;
   /**
    * The rectangles of the text this overlay is anchored to, as offsets from `x`/`y`.
    *
@@ -51,6 +72,22 @@ export interface OverlayItem {
    * one place that reads this distinction.
    */
   fragments?: OverlayRect[];
+}
+
+/**
+ * A passage an agent asked the window to show, marked for a few seconds.
+ *
+ * Not an overlay: it is never saved, never selectable and never part of the undo history. It
+ * lives on the tab only so the page it belongs to can draw it.
+ */
+export interface EvidenceReveal {
+  /** The request that asked for it, so a later request's mark is not cleared by an earlier timer. */
+  id: string;
+  page: number;
+  /** One per line the quote crosses, in page space at zoom 1. Empty when only the page is shown. */
+  rects: OverlayRect[];
+  /** "Shown by AI agent · <name>", or without a name for a link. */
+  label: string;
 }
 
 export type FormFieldKind = "text" | "checkbox" | "dropdown" | "radio" | "unknown";
@@ -185,6 +222,14 @@ export interface PdfTab {
   /** Hash main actually indexed. Searches key off this rather than re-hashing per keystroke. */
   semanticContentHash?: string;
   semanticHighlight?: SemanticHighlightTarget | null;
+  evidenceReveal?: EvidenceReveal | null;
+  /** What agents suggested for this tab and what the person decided. Never part of the file. */
+  suggestions?: SuggestionState;
+  /**
+   * Increases when the pages themselves change: an insert, a delete, a move, or an undo or redo of
+   * one. A suggestion anchored to an older revision would sit on the wrong page, so it ends.
+   */
+  documentRevision?: number;
   semanticIndexStatus?: SemanticIndexStatus;
   semanticIndexProgress?: SemanticIndexProgress;
   semanticIndexError?: string;

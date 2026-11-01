@@ -147,3 +147,25 @@ describe("text that would act on a terminal", () => {
     expect(refuse("outline", { path: "/a\nmarkpdf: granted.pdf" })).toMatch(/control character/i);
   });
 });
+
+describe("a tool that names its document in exactly one of three ways", () => {
+  const hash = "a".repeat(64);
+
+  it("accepts each identity on its own, and supplies no identity of its own", () => {
+    expect(accept("read_comments", { path: "/a.pdf" })).toEqual({ path: "/a.pdf", offset: 0 });
+    expect(accept("read_comments", { id: hash })).toEqual({ id: hash, offset: 0 });
+    expect(accept("read_comments", { ref: "active" })).toEqual({ ref: "active", offset: 0 });
+  });
+
+  it("refuses no identity, every pair, and all three", () => {
+    expect(refuse("read_comments", {})).toContain("exactly one of");
+    for (const raw of [
+      { path: "/a.pdf", id: hash },
+      { path: "/a.pdf", ref: "active" },
+      { id: hash, ref: "active" },
+      { path: "/a.pdf", id: hash, ref: "active" },
+    ]) {
+      expect(refuse("read_comments", raw)).toContain("exactly one of");
+    }
+  });
+});

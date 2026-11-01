@@ -13,7 +13,13 @@
  * holds the two to the same answers.
  */
 
-/** A page to read, or a message to send. Mirrored by `OPENABLE_LINK_SCHEMES` in the window. */
+/**
+ * A page to read, or a message to send. Mirrored by `OPENABLE_LINK_SCHEMES` in the window.
+ *
+ * `markpdf:` must never join this list. The operating system would route such an address back to
+ * MarkPDF as an agent's evidence link, so a link inside a document could make the window reveal
+ * whatever it named.
+ */
 const OPENABLE_SCHEMES = ["http:", "https:", "mailto:"] as const;
 
 /** Mirrored by `MAX_LINK_URL_LENGTH` in the window. */

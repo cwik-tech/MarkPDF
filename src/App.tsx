@@ -1,5 +1,5 @@
 import { prepareOutline } from "./pdf/prepareOutline";
-import type { PreparationReply } from "./global";
+import type { PreparationReply, RevealOutcome, SuggestOutcome } from "./global";
 import {
   Check,
   BookOpen,
@@ -16,6 +16,7 @@ import {
   GripVertical,
   Highlighter,
   Image as ImageIcon,
+  Bot,
   MessageSquare,
   MessageSquarePlus,
   Maximize2,
@@ -70,6 +71,19 @@ import {
 } from "./pdf/document";
 import { documentPreparationBadge, preparationIndexProgress } from "./documentPreparation";
 import { listComments } from "./pdf/commentList";
+import { anchorQuote, textRunsFromPage, type TextRun } from "./pdf/quoteAnchor";
+import { EvidenceMark } from "./components/EvidenceMark";
+import { AgentBadge, SuggestionGroup, SuggestionMarks } from "./components/AgentSuggestions";
+import {
+  acceptSuggestion,
+  addSuggestion,
+  discardPending,
+  emptySuggestions,
+  pageNotePosition,
+  rejectSuggestion,
+  type AgentSuggestion,
+  type SuggestionState,
+} from "./pdf/agentSuggestions";
 import { ownsOverlay } from "./pdf/overlayOwnership";
 import { detectOcrNeed, runDocumentOcr } from "./pdf/ocr";
 import { openPdfInStages, yieldToUi } from "./pdf/openPdfInStages";
@@ -87,6 +101,7 @@ import {
   rectsForMatch,
 } from "./pdf/textLayerSearch";
 import {
+  enclosingRect,
   normalizeRotation,
   overlayGeometry,
   textSelectionGeometry,
@@ -97,6 +112,7 @@ import { convertDocumentToMarkdown } from "./documentConversion/markdown";
 import type { MarkdownConversionProgress } from "./documentConversion/types";
 import { selectMarkdownEngine } from "./documentConversion/engineSelection";
 import type {
+  EvidenceReveal,
   FitMode,
   FormFieldState,
   ImagePdfSource,
@@ -470,6 +486,10 @@ export default function App() {
     useState<PdfTab["semanticIndexProgress"] | null>(null);
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [commentReveals, setCommentReveals] = useState(0);
+  /** What an agent last asked the window to show, read out by the live region. */
+  const [agentAnnouncement, setAgentAnnouncement] = useState("");
+  /** The agent suggestion whose card the pane brings forward. */
+  const [selectedSuggestionId, setSelectedSuggestionId] = useState<string | null>(null);
   const [selectionAction, setSelectionAction] = useState<{
     page: number;
     /** The lines the reader selected, not the box around them. */
@@ -1635,6 +1655,10 @@ export default function App() {
   const closeTab = async (tabId: string) => {
     const tab = tabs.find((item) => item.id === tabId);
     if (!tab) return;
+    // Suggestions an agent made are not the person's edits, so the unsaved-changes question does
+    // not cover them. Closing ends them, and the person is asked first.
+    const pendingSuggestions = isPdfTab(tab) ? (tab.suggestions?.pending.length ?? 0) : 0;
+    if (pendingSuggestions > 0 && !window.confirm(discardQuestion(`Close ${tab.name}`, pendingSuggestions))) return;
 
     const action = await requestUnsavedAction(tab);
     if (action === "cancel") return;
@@ -1704,6 +1728,18 @@ export default function App() {
     options: { targetPath?: string; defaultPath?: string } = {},
   ) => {
     if (agentPreparingRef.current.has(tabToSave.id)) return false;
+    // A flattened copy carries no annotations and no metadata, so it cannot say which ones an AI
+    // agent wrote. The person decides whether that is acceptable.
+    const agentAnnotations = tabToSave.overlays.filter((overlay) => overlay.origin?.kind === "agent").length;
+    if (
+      flattenForms &&
+      agentAnnotations > 0 &&
+      !window.confirm(
+        `This copy will not record that an AI agent wrote ${String(agentAnnotations)} of its annotations. Save it anyway?`,
+      )
+    ) {
+      return false;
+    }
     let targetPath = options.targetPath ?? tabToSave.path;
 
     if (window.pdfReader && (!targetPath || saveAs)) {
@@ -1904,6 +1940,115 @@ export default function App() {
     return () => { unsubscribe(); cancel(); };
   }, [activePdfTab, semanticSettings, cancelSemanticJob, updatePdfTab]);
 
+  // What MarkPDF says about an agent's request stays on screen for a few seconds, and is read out.
+  useEffect(() => {
+    if (agentAnnouncement === "") return undefined;
+    const timer = window.setTimeout(() => setAgentAnnouncement(""), AGENT_TOAST_MS);
+    return () => window.clearTimeout(timer);
+  }, [agentAnnouncement]);
+
+  useEffect(() => window.pdfReader?.onAgentNotice?.((text) => setAgentAnnouncement(text)), []);
+
+  // An agent asks this window to show a passage. The mark is not an overlay and nothing about the
+  // document changes: no history entry, no unsaved edit, no byte of the file.
+  useEffect(() => {
+    const bridge = window.pdfReader;
+    if (!bridge?.onRevealRequest) return undefined;
+    return bridge.onRevealRequest(async (command): Promise<RevealOutcome> => {
+      const target = command.target;
+      // A document the desktop just opened for this request is still loading: wait for its tab.
+      const candidate =
+        "tabId" in target
+          ? tabsRef.current.find((item) => item.id === target.tabId)
+          : await waitForTab(() => tabsRef.current.find((item) => item.path === target.path));
+      const tab = isPdfTab(candidate) ? candidate : undefined;
+      if (tab === undefined) return { status: "failed", reason: "stale_ref", message: "The tab is no longer open." };
+      if (command.page > tab.pageCount) {
+        return { status: "refused", reason: "invalid_page", message: `${tab.name} has ${String(tab.pageCount)} pages.` };
+      }
+
+      const runs = await evidenceTextRuns(tab, command.page);
+      const anchor = command.quote === null ? null : anchorQuote(runs, command.quote);
+      // The document must still be the one the quote was matched against.
+      const current = tabsRef.current.find((item) => item.id === tab.id);
+      if (!isPdfTab(current) || current.pdfDoc !== tab.pdfDoc) {
+        return { status: "failed", reason: "document_changed", message: "The document changed while the passage was found." };
+      }
+
+      const label = command.agent.length > 0 ? `Shown by AI agent · ${command.agent}` : "Shown by AI agent";
+      const reveal: EvidenceReveal = { id: command.requestId, page: command.page, rects: anchor?.rects ?? [], label };
+      setActiveTabId(tab.id);
+      updatePdfTab(tab.id, { currentPage: command.page, evidenceReveal: reveal }, true);
+      setAgentAnnouncement(`${label}, page ${String(command.page)}`);
+      window.setTimeout(() => {
+        updatePdfTab(tab.id, (latest) => (latest.evidenceReveal?.id === reveal.id ? { evidenceReveal: null } : {}), true);
+      }, EVIDENCE_MARK_MS);
+
+      return anchor === null ? { status: "page_only", occurrences: 0 } : { status: "shown", occurrences: anchor.occurrences };
+    });
+  }, [updatePdfTab]);
+
+  // An agent proposes a highlight or a comment. It is held beside the tab's overlays, never among
+  // them, until the person accepts it: nothing about the document changes here.
+  useEffect(() => {
+    const bridge = window.pdfReader;
+    if (!bridge?.onSuggestionRequest) return undefined;
+    return bridge.onSuggestionRequest(async (command): Promise<SuggestOutcome> => {
+      const found = tabsRef.current.find((item) => item.id === command.tabId);
+      const tab = isPdfTab(found) ? found : undefined;
+      if (tab === undefined) return { status: "failed", reason: "stale_ref", message: "The tab is no longer open." };
+      if (command.page > tab.pageCount) {
+        return { status: "refused", reason: "invalid_page", message: `${tab.name} has ${String(tab.pageCount)} pages.` };
+      }
+      const revision = tab.documentRevision ?? 0;
+
+      let geometry: Pick<AgentSuggestion, "x" | "y" | "width" | "height" | "fragments">;
+      let occurrences = 0;
+      if (command.quote !== null) {
+        const anchor = anchorQuote(await evidenceTextRuns(tab, command.page), command.quote);
+        if (anchor === null) {
+          return { status: "refused", reason: "quote_not_found", message: `The quote is not on page ${String(command.page)}. Send the note without a quote to pin it to the page.` };
+        }
+        const bounds = enclosingRect(anchor.rects);
+        geometry = {
+          ...bounds,
+          fragments: anchor.rects.map((rect) => ({ x: rect.x - bounds.x, y: rect.y - bounds.y, width: rect.width, height: rect.height })),
+        };
+        occurrences = anchor.occurrences;
+      } else {
+        geometry = pageNotePosition();
+      }
+
+      const current = tabsRef.current.find((item) => item.id === tab.id);
+      if (!isPdfTab(current) || current.pdfDoc !== tab.pdfDoc || (current.documentRevision ?? 0) !== revision) {
+        return { status: "failed", reason: "document_changed", message: "The document changed while the quote was found." };
+      }
+      const suggestion: AgentSuggestion = {
+        id: `suggestion-${crypto.randomUUID()}`,
+        page: command.page,
+        quote: command.quote,
+        note: command.note,
+        agent: command.agent,
+        ...geometry,
+        revision,
+        suggestedAt: new Date().toISOString(),
+      };
+      const added = addSuggestion(current.suggestions ?? emptySuggestions(), suggestion);
+      if (!added.ok) {
+        return { status: "refused", reason: "limit_reached", message: "This tab already holds 50 agent suggestions. Ask the person to review them first." };
+      }
+      // Automatic: a suggestion is not the person's edit, so it neither dirties the tab nor stops a
+      // preparation that is running.
+      updatePdfTab(tab.id, (latest) => {
+        const again = addSuggestion(latest.suggestions ?? emptySuggestions(), suggestion);
+        return again.ok ? { suggestions: again.state } : {};
+      }, true);
+      const what = command.note === null ? "a highlight" : command.quote === null ? "a note" : "a comment";
+      setAgentAnnouncement(`${command.agent} suggested ${what} on page ${String(command.page)}`);
+      return { status: "added", suggestionId: suggestion.id, occurrences };
+    });
+  }, [updatePdfTab]);
+
   const saveActiveTabAsMarkdown = async () => {
     if (!activePdfTab) return false;
     const defaultPath = activePdfTab.name.replace(/\.[^.]+$/, "") + ".md";
@@ -2089,6 +2234,11 @@ export default function App() {
     if (!window.pdfReader) return undefined;
 
     return window.pdfReader.onWindowRequestClose(async () => {
+      const pendingSuggestions = tabs.reduce((total, item) => total + (isPdfTab(item) ? (item.suggestions?.pending.length ?? 0) : 0), 0);
+      if (pendingSuggestions > 0 && !window.confirm(discardQuestion("Close this window", pendingSuggestions))) {
+        await window.pdfReader?.cancelWindowClose();
+        return;
+      }
       for (const tab of tabs.filter((item) => item.dirty)) {
         const action = await requestUnsavedAction(tab);
         if (action === "cancel") {
@@ -2284,10 +2434,49 @@ export default function App() {
     updatePdfTab(activePdfTab.id, (tab) => ({
       ...(recordHistory ? pushHistory(tab) : {}),
       overlays: tab.overlays.map((overlay) =>
-        overlay.id === overlayId ? { ...overlay, ...patch } : overlay,
+        overlay.id === overlayId
+          ? {
+              ...overlay,
+              ...patch,
+              // The note is still the agent's suggestion, now with the person's words in it.
+              ...(patch.text !== undefined && overlay.origin !== undefined && patch.text !== overlay.text
+                ? { origin: { ...overlay.origin, editedByPerson: true } }
+                : {}),
+            }
+          : overlay,
       ),
       dirty: true,
     }));
+  };
+
+  /** The person accepts an agent's suggestion: it becomes their annotation, recorded as the agent's. */
+  const acceptAgentSuggestion = (suggestionId: string) => {
+    if (!activePdfTab) return;
+    const accepted = acceptSuggestion(activePdfTab.suggestions ?? emptySuggestions(), suggestionId, new Date().toISOString());
+    if (accepted === null) return;
+    updatePdfTab(activePdfTab.id, (tab) => ({
+      ...pushHistory(tab),
+      overlays: [...tab.overlays, accepted.overlay],
+      suggestions: accepted.state,
+      dirty: true,
+    }));
+    setSelectedOverlayId(accepted.overlay.id);
+    setSelectedSuggestionId(null);
+  };
+
+  /** The person rejects one: it goes, and nothing about the document changes. */
+  const rejectAgentSuggestion = (suggestionId: string) => {
+    if (!activePdfTab) return;
+    updatePdfTab(activePdfTab.id, (tab) => ({ suggestions: rejectSuggestion(tab.suggestions ?? emptySuggestions(), suggestionId) }), true);
+    if (selectedSuggestionId === suggestionId) setSelectedSuggestionId(null);
+  };
+
+  /** A suggestion's pin on the page opens the pane at its card. */
+  const openSuggestion = (suggestionId: string) => {
+    setSelectedSuggestionId(suggestionId);
+    setSelectedOverlayId(null);
+    setSidebar("comments");
+    setCommentReveals((count) => count + 1);
   };
 
   const addSelectionOverlay = (kind: "highlight" | "comment" | "bookmark") => {
@@ -2349,9 +2538,23 @@ export default function App() {
     }));
   };
 
+  /** Say how many pending suggestions a page change is about to end, when there are any. */
+  const announceDiscardedSuggestions = (tab: PdfTab) => {
+    const count = tab.suggestions?.pending.length ?? 0;
+    if (count === 0) return;
+    setAgentAnnouncement(
+      `${String(count)} agent ${count === 1 ? "suggestion was" : "suggestions were"} discarded because the pages changed.`,
+    );
+  };
+
   const restoreHistoryState = async (tabId: string, state: TabHistoryState) => {
     const pdfDoc = await loadPdfDocument(state.bytes);
-    updatePdfTab(tabId, {
+    // An undo or redo that brings back other pages ends the suggestions anchored to these ones.
+    const before = tabsRef.current.find((item) => item.id === tabId);
+    const pagesChanged = isPdfTab(before) && !sameBytes(before.bytes, state.bytes);
+    if (pagesChanged && isPdfTab(before)) announceDiscardedSuggestions(before);
+    updatePdfTab(tabId, (tab) => ({
+      ...(pagesChanged ? endPendingSuggestions(tab) : {}),
       bytes: state.bytes,
       pdfDoc,
       pageCount: pdfDoc.numPages,
@@ -2370,7 +2573,7 @@ export default function App() {
       ocrStatus: "checking",
       ocrProgress: { status: "checking", message: "Checking text layer" },
       dirty: true,
-    });
+    }));
     void startAutoOcr(tabId, pdfDoc);
   };
 
@@ -2409,8 +2612,10 @@ export default function App() {
     const outlineResult = await extractDocumentOutline(pdfDoc, bytes, {
       preferPersistedSynthetic: false,
     });
+    announceDiscardedSuggestions(activePdfTab);
     updatePdfTab(activePdfTab.id, (tab) => ({
       ...pushHistory(tab),
+      ...endPendingSuggestions(tab),
       bytes,
       pdfDoc,
       pageCount: pdfDoc.numPages,
@@ -2707,6 +2912,7 @@ export default function App() {
   const rightPaneMode =
     sidebar === "semantic" || sidebar === "comments" ? sidebar : null;
   const comments = listComments(activePdfTab?.overlays ?? []);
+  const pendingSuggestions = activePdfTab?.suggestions?.pending ?? [];
 
   /**
    * Selecting a comment opens the pane it is read in.
@@ -2719,7 +2925,9 @@ export default function App() {
     setSelectedOverlayId(overlayId);
     if (overlayId === null) return;
     const overlay = activePdfTab?.overlays.find((item) => item.id === overlayId);
-    if (overlay?.kind !== "comment") return;
+    const listed = overlay?.kind === "comment" || (overlay?.kind === "highlight" && overlay.origin?.kind === "agent");
+    if (!listed) return;
+    setSelectedSuggestionId(null);
 
     setSidebar("comments");
     // Counted rather than derived from which comment is selected, because picking the same pin a
@@ -2743,8 +2951,8 @@ export default function App() {
   // Deleting the last comment leaves the pane with nothing to say, so it closes with it. The
   // toolbar's own control is disabled for the same reason, and both read the same count.
   useEffect(() => {
-    if (sidebar === "comments" && comments.length === 0) setSidebar(null);
-  }, [sidebar, comments.length]);
+    if (sidebar === "comments" && comments.length === 0 && pendingSuggestions.length === 0) setSidebar(null);
+  }, [sidebar, comments.length, pendingSuggestions.length]);
 
 
   useEffect(() => {
@@ -2882,6 +3090,7 @@ export default function App() {
           onUpdateOverlay={updateOverlay}
           onDeleteOverlay={deleteOverlay}
           onTextSelection={setSelectionAction}
+          onOpenSuggestion={openSuggestion}
           onPdfPageRendered={notePdfPageRendered}
           onClearSemanticHighlight={() =>
             activePdfTab &&
@@ -2916,6 +3125,16 @@ export default function App() {
       onDragOver={(event) => event.preventDefault()}
       onDrop={handleDrop}
     >
+      {/* A polite live region, read out without moving focus. Not given the `status` role: the
+          Settings dialog already has a status region, and one page holds one of those. */}
+      <div
+        className={`agent-toast ${agentAnnouncement ? "visible" : ""}`}
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="agent-toast"
+      >
+        {agentAnnouncement}
+      </div>
       <TopBar
         tabs={tabHeaders}
         activeTabId={activeTabId}
@@ -3170,19 +3389,30 @@ export default function App() {
           </>
         )}
         <button
-          className={`icon-button ${sidebar === "comments" ? "active" : ""}`}
+          className={`icon-button ${sidebar === "comments" ? "active" : ""} ${pendingSuggestions.length > 0 ? "has-agent-suggestions" : ""}`}
           title={
-            comments.length
-              ? "Comments"
-              : "Comments — this document has none"
+            pendingSuggestions.length
+              ? `Comments — ${String(pendingSuggestions.length)} agent ${pendingSuggestions.length === 1 ? "suggestion" : "suggestions"} to review`
+              : comments.length
+                ? "Comments"
+                : "Comments — this document has none"
           }
-          aria-label="Comments"
-          disabled={!comments.length}
+          aria-label={
+            pendingSuggestions.length
+              ? `Comments, ${String(pendingSuggestions.length)} agent ${pendingSuggestions.length === 1 ? "suggestion" : "suggestions"} to review`
+              : "Comments"
+          }
+          disabled={!comments.length && !pendingSuggestions.length}
           onClick={() =>
             setSidebar(sidebar === "comments" ? null : "comments")
           }
         >
           <PanelRight size={18} />
+          {pendingSuggestions.length > 0 && (
+            <span className="agent-count" aria-hidden="true">
+              {pendingSuggestions.length}
+            </span>
+          )}
         </button>
         {preparationBadge && (
           <span
@@ -3306,6 +3536,9 @@ export default function App() {
                 onSelectOverlay={selectOverlay}
                 onModeChange={setSidebar}
                 commentReveals={commentReveals}
+                selectedSuggestionId={selectedSuggestionId}
+                onAcceptSuggestion={acceptAgentSuggestion}
+                onRejectSuggestion={rejectAgentSuggestion}
               />
             </ResizablePanel>
           </ResizablePanelGroup>
@@ -3367,6 +3600,9 @@ export default function App() {
                 onSelectOverlay={selectOverlay}
                 onModeChange={setSidebar}
                 commentReveals={commentReveals}
+                selectedSuggestionId={selectedSuggestionId}
+                onAcceptSuggestion={acceptAgentSuggestion}
+                onRejectSuggestion={rejectAgentSuggestion}
               />
             )}
             {documentStage}
@@ -4042,6 +4278,7 @@ function DocumentView({
   onUpdateOverlay,
   onDeleteOverlay,
   onTextSelection,
+  onOpenSuggestion,
   onPdfPageRendered,
   onClearSemanticHighlight,
   onWheelPage,
@@ -4069,6 +4306,7 @@ function DocumentView({
     } | null,
   ) => void;
   onPdfPageRendered: (tabId: string, page: number) => void;
+  onOpenSuggestion: (id: string) => void;
   onClearSemanticHighlight: () => void;
   onWheelPage: (direction: -1 | 1) => void;
   onFollowInternalLink: (page: number) => void;
@@ -4087,6 +4325,7 @@ function DocumentView({
       onUpdateOverlay={onUpdateOverlay}
       onDeleteOverlay={onDeleteOverlay}
       onTextSelection={onTextSelection}
+      onOpenSuggestion={onOpenSuggestion}
       onPdfPageRendered={onPdfPageRendered}
       onClearSemanticHighlight={onClearSemanticHighlight}
       onWheelPage={onWheelPage}
@@ -4104,6 +4343,7 @@ function PdfDocumentView({
   onUpdateOverlay,
   onDeleteOverlay,
   onTextSelection,
+  onOpenSuggestion,
   onPdfPageRendered,
   onClearSemanticHighlight,
   onWheelPage,
@@ -4130,6 +4370,7 @@ function PdfDocumentView({
     } | null,
   ) => void;
   onPdfPageRendered: (tabId: string, page: number) => void;
+  onOpenSuggestion: (id: string) => void;
   onClearSemanticHighlight: () => void;
   onWheelPage: (direction: -1 | 1) => void;
   onFollowInternalLink: (page: number) => void;
@@ -4226,6 +4467,11 @@ function PdfDocumentView({
               ? tab.semanticHighlight
               : null
           }
+          evidenceReveal={
+            tab.evidenceReveal?.page === pageNumber ? tab.evidenceReveal : null
+          }
+          suggestions={(tab.suggestions?.pending ?? []).filter((suggestion) => suggestion.page === pageNumber)}
+          onOpenSuggestion={onOpenSuggestion}
           selectedOverlayId={selectedOverlayId}
           onPageClick={(x, y) => onPageClick(pageNumber, x, y)}
           onSelectOverlay={onSelectOverlay}
@@ -4314,6 +4560,56 @@ function viewVectorToUnrotated(dx: number, dy: number, rotation: number) {
   }
 }
 
+/** Whether two versions of a document are byte for byte the same. */
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a === b) return true;
+  if (a.byteLength !== b.byteLength) return false;
+  for (let index = 0; index < a.byteLength; index += 1) if (a[index] !== b[index]) return false;
+  return true;
+}
+
+/** End a tab's pending suggestions because its pages changed, and move to a new revision. */
+function endPendingSuggestions(tab: PdfTab): { suggestions: SuggestionState; documentRevision: number } {
+  return {
+    suggestions: discardPending(tab.suggestions ?? emptySuggestions()).state,
+    documentRevision: (tab.documentRevision ?? 0) + 1,
+  };
+}
+
+/** The question asked before pending suggestions are discarded with their tab or window. */
+function discardQuestion(action: string, count: number): string {
+  return `${action} and discard ${String(count)} agent ${count === 1 ? "suggestion" : "suggestions"} that you have not reviewed?`;
+}
+
+/** How long an agent's evidence mark stays on the page, fade included. */
+const EVIDENCE_MARK_MS = 7_000;
+/** How long a sentence about an agent's request stays on screen. */
+const AGENT_TOAST_MS = 6_000;
+/** How long a reveal waits for a document the desktop opened for it to finish loading. */
+const OPENED_TAB_WAIT_MS = 20_000;
+
+async function waitForTab(find: () => DocumentTab | undefined): Promise<DocumentTab | undefined> {
+  const until = Date.now() + OPENED_TAB_WAIT_MS;
+  for (let found = find(); Date.now() < until; found = find()) {
+    if (found !== undefined) return found;
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+  }
+  return find();
+}
+
+/**
+ * The text runs of one page, for finding a quote on it.
+ *
+ * The page's own text first. A scan has none, so the lines OCR recognised stand in for it; they are
+ * already in the same space, measured from the top-left of the page at zoom 1.
+ */
+async function evidenceTextRuns(tab: PdfTab, pageNumber: number): Promise<TextRun[]> {
+  const runs = await textRunsFromPage(await tab.pdfDoc.getPage(pageNumber));
+  if (runs.length > 0) return runs;
+  const recognised = tab.ocrPages.find((page) => page.page === pageNumber);
+  return recognised === undefined ? [] : recognised.lines.map((line) => ({ ...line }));
+}
+
 /**
  * Hand an address a document named to the reader's own applications, and say so if it did not open.
  *
@@ -4360,6 +4656,9 @@ function PdfPage({
   activeSearchMatch,
   activeSearchMatchOrdinal,
   semanticHighlight,
+  evidenceReveal,
+  suggestions,
+  onOpenSuggestion,
   selectedOverlayId,
   onPageClick,
   onSelectOverlay,
@@ -4382,6 +4681,9 @@ function PdfPage({
   activeSearchMatch: SearchMatch | null;
   activeSearchMatchOrdinal: number;
   semanticHighlight: PdfTab["semanticHighlight"] | null;
+  evidenceReveal: EvidenceReveal | null;
+  suggestions: AgentSuggestion[];
+  onOpenSuggestion: (id: string) => void;
   selectedOverlayId: string | null;
   onPageClick: (x: number, y: number) => void;
   onSelectOverlay: (id: string | null) => void;
@@ -4748,6 +5050,8 @@ function PdfPage({
             transform: overlayLayerTransform(rotation, size.width, size.height),
           }}
         >
+          {evidenceReveal && <EvidenceMark reveal={evidenceReveal} zoom={zoom} />}
+          {suggestions.length > 0 && <SuggestionMarks suggestions={suggestions} zoom={zoom} onOpen={onOpenSuggestion} />}
           {overlays.map((overlay) => (
             <OverlayBox
               key={overlay.id}
@@ -4934,13 +5238,16 @@ function OverlayBox({
   // owns it, the page already shows its own appearance, and MarkPDF never writes it back — so
   // moving, resizing, retyping or deleting it here would change nothing in the saved file.
   const fromDocument = !ownsOverlay(overlay);
-  const commentPinLabel = fromDocument
-    ? `Comment by ${overlay.author ?? "another application"}`
-    : "Open comment";
+  const fromAgent = overlay.origin?.kind === "agent";
+  const commentPinLabel = fromAgent
+    ? `Comment by AI agent ${overlay.origin?.agent ?? ""}`
+    : fromDocument
+      ? `Comment by ${overlay.author ?? "another application"}`
+      : "Open comment";
 
   return (
     <div
-      className={`overlay-box ${overlay.kind} ${geometry.shape === "textSelection" ? "text-anchored" : ""} ${overlay.minimized ? "minimized" : ""} ${fromDocument ? "from-document" : ""} ${selected ? "selected" : ""}`}
+      className={`overlay-box ${overlay.kind} ${geometry.shape === "textSelection" ? "text-anchored" : ""} ${overlay.minimized ? "minimized" : ""} ${fromDocument ? "from-document" : ""} ${fromAgent ? "from-agent" : ""} ${selected ? "selected" : ""}`}
       style={{
         left: overlay.x * zoom,
         top: overlay.y * zoom,
@@ -5049,11 +5356,31 @@ function OverlayBox({
             onSelect();
           }}
         >
-          {fromDocument ? (
+          {fromAgent ? (
+            <Bot size={15} />
+          ) : fromDocument ? (
             <MessageSquare size={15} />
           ) : (
             <MessageSquarePlus size={15} />
           )}
+        </button>
+      ) : overlay.kind === "highlight" && fromAgent ? (
+        // An agent's highlight has no note, so nothing else would say who made it.
+        <button
+          className="comment-pin agent-pin"
+          title={`Highlight by AI agent ${overlay.origin?.agent ?? ""}`}
+          aria-label={`Highlight by AI agent ${overlay.origin?.agent ?? ""}`}
+          style={{ left: -(overlay.x * zoom + 34) }}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onSelect();
+          }}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect();
+          }}
+        >
+          <Bot size={15} />
         </button>
       ) : overlay.kind === "signature" && overlay.dataUrl ? (
         <img src={overlay.dataUrl} alt="Signature" />
@@ -5214,6 +5541,9 @@ function Sidebar({
   onSelectOverlay,
   onModeChange,
   commentReveals,
+  selectedSuggestionId,
+  onAcceptSuggestion,
+  onRejectSuggestion,
 }: {
   mode: SidebarMode;
   tab: PdfViewTab | null;
@@ -5242,6 +5572,9 @@ function Sidebar({
   onModeChange: (mode: SidebarMode | null) => void;
   /** Bumped every time a comment is picked, whether or not it is a different one. */
   commentReveals: number;
+  selectedSuggestionId: string | null;
+  onAcceptSuggestion: (id: string) => void;
+  onRejectSuggestion: (id: string) => void;
 }) {
   const typedInitials = initialsFromName(signatureText) || "AB";
   const bookmarkOverlays =
@@ -5465,6 +5798,13 @@ function Sidebar({
             <MessageSquare size={15} />
             <h2>Comments</h2>
           </div>
+          <SuggestionGroup
+            suggestions={tab?.suggestions?.pending ?? []}
+            selectedId={selectedSuggestionId}
+            onSelectPage={onSelectPage}
+            onAccept={onAcceptSuggestion}
+            onReject={onRejectSuggestion}
+          />
           {comments.length ? (
             <div className="stack">
               {comments.map((overlay) => {
@@ -5472,7 +5812,11 @@ function Sidebar({
                 // Delete. Saving leaves it exactly as its author wrote it, so an editor would
                 // offer a change MarkPDF would then throw away.
                 const fromDocument = overlay.source === "document";
+                const origin = overlay.origin?.kind === "agent" ? overlay.origin : null;
+                const isHighlight = overlay.kind === "highlight";
                 const open = selectedOverlay?.id === overlay.id;
+                const who = origin !== null ? ` by AI agent ${origin.agent}` : overlay.author ? ` by ${overlay.author}` : "";
+                const shown = isHighlight ? (origin?.quote ?? "") : (overlay.text ?? "");
 
                 return (
                   <div
@@ -5482,9 +5826,7 @@ function Sidebar({
                   >
                     <button
                       className="comment-row"
-                      aria-label={`Comment on page ${String(overlay.page)}${
-                        overlay.author ? ` by ${overlay.author}` : ""
-                      }: ${overlay.text ?? ""}`}
+                      aria-label={`${isHighlight ? "Highlight" : "Comment"} on page ${String(overlay.page)}${who}: ${shown}`}
                       onClick={() => {
                         onSelectPage(overlay.page);
                         onSelectOverlay(overlay.id);
@@ -5492,13 +5834,16 @@ function Sidebar({
                     >
                       <strong>
                         Page {overlay.page}
+                        {isHighlight ? " · Highlight" : ""}
                         {overlay.author ? ` · ${overlay.author}` : ""}
                       </strong>
-                      {(fromDocument || !open) && (
+                      {origin !== null && <AgentBadge origin={origin} />}
+                      {isHighlight && origin?.quote !== undefined && <q>{origin.quote}</q>}
+                      {!isHighlight && (fromDocument || !open) && (
                         <span>{overlay.text?.trim() || "Empty comment"}</span>
                       )}
                     </button>
-                    {!fromDocument && open && (
+                    {!fromDocument && !isHighlight && open && (
                       <>
                         <textarea
                           autoFocus

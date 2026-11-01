@@ -68,6 +68,16 @@ export function openDocumentsDir(dataDir: string): string {
   return join(dataDir, "session", "open-documents");
 }
 
+/** Private request, acknowledgement and answer files between an agent and the running window. */
+export function desktopRequestsDir(dataDir: string): string {
+  return join(dataDir, "session", "desktop-requests");
+}
+
+/** The key that signs `markpdf://` evidence links. Durable, unlike everything under `session`. */
+export function evidenceLinkKeyPath(dataDir: string): string {
+  return join(dataDir, "agent-link.key");
+}
+
 /** Private, bounded Markdown buffers kept separately from open-tab metadata. */
 export function openDocumentContentDir(dataDir: string): string {
   return join(openDocumentsDir(dataDir), "content");

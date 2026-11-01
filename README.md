@@ -150,7 +150,7 @@ For a client that reads a JSON configuration file, the same thing as entries in 
 
 Add `MARKPDF_DATA_DIR` in `env` if you keep your index somewhere other than the default.
 
-Seven tools:
+Ten tools:
 
 | Tool | What it does | What it needs |
 | --- | --- | --- |
@@ -161,6 +161,9 @@ Seven tools:
 | `to_markdown` | The document as Markdown, or written to a file | Permission to read it, and separately to write, if you give `output_path` |
 | `list_open_documents` | The names, opaque references, and state of documents currently open in MarkPDF, without their paths | Nothing |
 | `read_open_document` | Specific pages from an open PDF, or a bounded slice of an open Markdown buffer | Nothing for indexed PDFs or captured Markdown; otherwise an existing read grant |
+| `reveal` | Bring a document forward at a page and mark a quoted passage for a few seconds, or return a signed `markpdf://` link that does that when clicked | A read grant on the file; a link needs only the index |
+| `read_comments` | Every comment and highlight of a saved PDF: author, whether a person, an AI agent or another application wrote it, page, marked words and note | A read grant on the file, also when it is indexed |
+| `suggest_annotation` | Propose a highlight or a comment on an open PDF; the person accepts or rejects it, and nothing reaches the file before that | A read grant on the file, and the document open in one tab |
 
 `outline`, `read_pages`, and `to_markdown` name one document by `path` or by `id` — the content
 hash another tool returned — never both. `search` also accepts an opaque `ref` returned by
@@ -170,7 +173,7 @@ the tab closes.
 
 **No tool grants or forgets anything.** `prepare_document` can index and save only within existing grants. Give permission out of band with `markpdf --allow-read` and, when saving is needed, `markpdf --allow-write`. An assistant cannot widen its own access. Existing `search` and `read_pages` still use the index without reopening the PDF.
 
-For setup, separate save/index outcomes, incomplete-page fallback and recovery, see [agent PDF preparation](docs/agent-pdf-preparation.md).
+For setup, separate save/index outcomes, incomplete-page fallback and recovery, see [agent PDF preparation](docs/agent-pdf-preparation.md). For showing evidence, reading comments and suggesting annotations, see [agent evidence and comments](docs/agent-evidence-and-comments.md). An agent's annotations are marked as an AI agent's on the page, in the comments pane, and — once the person accepts and saves one — in the file's own author field, which every PDF reader shows.
 
 Every reply is bounded, and says so: if a document is longer than one answer can carry you are
 told how much was left out rather than handed a shortened one that reads as complete.

@@ -2716,3 +2716,238 @@ select {
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 }
+
+/* Text read by assistive technology and hidden from sight. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Work an AI agent did, in one colour across the page and the pane: the evidence mark, a suggested
+ * annotation, and an accepted one. Violet, so it reads as neither a reader's yellow highlight nor a
+ * search hit. Colour is never the only sign: every agent mark also carries a label or a pin.
+ */
+:root {
+  --agent-violet: #8b5cf6;
+  --agent-violet-fill: rgba(139, 92, 246, 0.22);
+  --agent-violet-strong: rgba(139, 92, 246, 0.85);
+}
+
+.evidence-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.evidence-mark {
+  position: absolute;
+  border-radius: 3px;
+  background: var(--agent-violet-fill);
+  box-shadow: 0 0 0 2px var(--agent-violet-strong), 0 0 14px 2px var(--agent-violet-fill);
+  pointer-events: none;
+  animation: evidence-mark-fade 7s ease-in forwards;
+}
+
+.evidence-label {
+  position: absolute;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--agent-violet);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: evidence-mark-fade 7s ease-in forwards;
+}
+
+@keyframes evidence-mark-fade {
+  0%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .evidence-mark,
+  .evidence-label {
+    animation: none;
+  }
+}
+
+/* One short sentence about an agent's request, at the bottom of the window. Empty most of the time. */
+.agent-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 60;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--agent-violet);
+  color: #fff;
+  font-size: 13px;
+  line-height: 18px;
+  transform: translate(-50%, 8px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.agent-toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-toast {
+    transition: none;
+  }
+}
+
+/* An annotation an agent suggested and the person accepted: solid violet, with a robot pin. */
+.overlay-box.from-agent .selection-fragment {
+  background: var(--agent-violet-fill);
+  box-shadow: inset 0 -2px 0 var(--agent-violet-strong);
+}
+
+.overlay-box.highlight.from-agent:not(.text-anchored) {
+  background: var(--agent-violet-fill);
+}
+
+.agent-pin,
+.overlay-box.from-agent .comment-pin {
+  position: absolute;
+  top: -2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--agent-violet);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--agent-violet);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+
+/* A suggestion still waiting for the person: dashed, lighter, and asking. */
+.suggestion-mark {
+  position: absolute;
+  pointer-events: none;
+}
+
+.suggestion-fragment {
+  position: absolute;
+  border-radius: 3px;
+  background: rgba(139, 92, 246, 0.1);
+  outline: 1.5px dashed var(--agent-violet-strong);
+  outline-offset: 1px;
+}
+
+.suggestion-pin {
+  pointer-events: auto;
+  border-style: dashed;
+}
+
+.suggestion-pin-question {
+  position: absolute;
+  right: -5px;
+  top: -6px;
+  min-width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: var(--agent-violet);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+}
+
+.agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--agent-violet-fill);
+  color: var(--agent-violet);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+:root[data-theme="dark"] .agent-badge {
+  color: #c4b5fd;
+}
+
+.suggestion-group {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--agent-violet-strong);
+}
+
+.suggestion-group .sidebar-section-heading h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.suggestion-reject-all {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.suggestion-card {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px dashed var(--agent-violet-strong);
+  border-radius: 8px;
+}
+
+.suggestion-card.active {
+  border-style: solid;
+  box-shadow: 0 0 0 2px var(--agent-violet-fill);
+}
+
+.suggestion-card q,
+.comment-card q {
+  color: var(--muted, inherit);
+  font-style: italic;
+}
+
+.icon-button.has-agent-suggestions {
+  position: relative;
+}
+
+.agent-count {
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--agent-violet);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+}

@@ -28,6 +28,11 @@ export interface Reporter {
   problem(failure: CliFailure): void;
   /** The result. JSON when asked for, otherwise the human rendering. */
   emit(payload: unknown, human: () => string): void;
+  /**
+   * A result that was already serialized and measured against a bound. JSON mode writes it as
+   * given, because pretty printing would make it larger than the bound it was fitted to.
+   */
+  emitRendered(json: string, human: () => string): void;
 }
 
 /**
@@ -58,6 +63,9 @@ export function createReporter(streams: CliStreams, json: boolean): Reporter {
     },
     emit(payload, human) {
       streams.stdout(json ? `${JSON.stringify(payload, null, 2)}\n` : human());
+    },
+    emitRendered(rendered, human) {
+      streams.stdout(json ? rendered : human());
     },
   };
 }

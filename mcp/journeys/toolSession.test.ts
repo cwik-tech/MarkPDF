@@ -66,7 +66,7 @@ afterEach(() => {
 });
 
 describe("an agent session over stdio", () => {
-  it("lists exactly the seven tools, with schemas a client can validate against", async () => {
+  it("lists exactly the ten tools, with schemas a client can validate against", async () => {
     const client = await connect();
     try {
       const listed = await client.listTools();
@@ -75,9 +75,12 @@ describe("an agent session over stdio", () => {
         "list_open_documents",
         "outline",
         "prepare_document",
+        "read_comments",
         "read_open_document",
         "read_pages",
+        "reveal",
         "search",
+        "suggest_annotation",
         "to_markdown",
       ]);
       for (const tool of listed.tools) {

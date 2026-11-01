@@ -27,6 +27,14 @@ describe("the addresses the desktop may be asked to open", () => {
     }
   });
 
+  it("never hands MarkPDF's own evidence links back to the desktop, from either side", () => {
+    // A `markpdf:` address opened through the operating system would come straight back to this
+    // application as an agent's reveal. A link inside a document must not be able to do that.
+    const link = `markpdf://reveal?v=1&doc=${"a".repeat(64)}&page=1&q=x&sig=abc`;
+    expect(openableExternalUrl(link)).toBeNull();
+    expect(safeLinkUrl(link)).toBeNull();
+  });
+
   it("refuses a scheme that launches something other than a browser or mail client", () => {
     for (const url of [
       "javascript:alert(1)",
