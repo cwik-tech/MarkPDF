@@ -1,3 +1,5 @@
+import type { IpcMainInvokeEvent } from "electron";
+import { registerFolderAccess } from "./folderAccess.js";
 import { preparationAbortSignal, preparationSettings, queueExternalPreparation, registerAgentPreparation, withDocumentSave } from "./agentPreparation.js";
 import {
   clearExpiredAgentRequests,
@@ -122,12 +124,25 @@ const confirmedCloseWindows = new WeakSet<BrowserWindow>();
 let quitState = createQuitState();
 const testUserDataPath = process.env.MARKPDF_TEST_USER_DATA;
 const isTestRun = Boolean(testUserDataPath);
+// Opt-in test profile only: keep automated journeys off the user's desktop.
+const hideTestWindows = isTestRun && process.env.MARKPDF_TEST_HIDE_WINDOWS === "1";
+if (hideTestWindows && process.platform === "darwin") app.setActivationPolicy("accessory");
 
 const dataDirectoryOverride = testUserDataPath ?? process.env.MARKPDF_DATA_DIR;
 if (dataDirectoryOverride !== undefined) {
   if (!isAbsolute(dataDirectoryOverride)) throw new Error("MarkPDF data directory must be absolute");
   app.setPath("userData", dataDirectoryOverride);
 }
+
+function applicationEntryUrl(): string {
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  return devUrl ? new URL(devUrl).href : new URL("../dist/index.html", import.meta.url).href;
+}
+
+registerFolderAccess({
+  dataDir: () => app.getPath("userData"), ipc: ipcMain, dialog, entryUrl: applicationEntryUrl(),
+  windowFor: (event: IpcMainInvokeEvent) => BrowserWindow.fromWebContents(event.sender),
+});
 
 registerAgentPreparation(() => app.getPath("userData"), () => currentSemanticSettings());
 registerAgentRequests({
@@ -280,8 +295,10 @@ function sendOpenPathsToWindow(window: BrowserWindow, filePaths: string[]) {
   if (window.isMinimized()) {
     window.restore();
   }
-  window.show();
-  window.focus();
+  if (!hideTestWindows) {
+    window.show();
+    window.focus();
+  }
 
   const sendPaths = () => {
     if (rendererReadyWindows.has(window)) {
@@ -348,6 +365,8 @@ async function openAddressExternally(url: unknown): Promise<boolean> {
 
 const createWindow = async (filePaths: string[] = [], created?: (sender: Electron.WebContents) => void) => {
   const window = new BrowserWindow({
+    show: !hideTestWindows,
+    focusable: !hideTestWindows,
     width: 1360,
     height: 900,
     minWidth: 980,
@@ -405,13 +424,7 @@ const createWindow = async (filePaths: string[] = [], created?: (sender: Electro
     rendererReadyWindows.delete(window);
   });
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    await window.loadURL(process.env.VITE_DEV_SERVER_URL);
-  } else {
-    await window.loadFile(
-      fileURLToPath(new URL("../dist/index.html", import.meta.url)),
-    );
-  }
+  await window.loadURL(applicationEntryUrl());
 
   window.on("enter-full-screen", () => {
     window.webContents.send("window:full-screen-change", true);
@@ -476,8 +489,10 @@ if (!isTestRun || process.env.MARKPDF_TEST_SINGLE_INSTANCE === "1") {
     if (targetWindow.isMinimized()) {
       targetWindow.restore();
     }
-    targetWindow.show();
-    targetWindow.focus();
+    if (!hideTestWindows) {
+      targetWindow.show();
+      targetWindow.focus();
+    }
   });
 }
 

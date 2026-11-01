@@ -3045,3 +3045,28 @@ select {
   font-weight: 700;
   line-height: 15px;
 }
+
+/* The explicit access choices share one keyboard-accessible button group. */
+.folder-access-buttons {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.folder-access-buttons .secondary-button {
+  border-radius: 0;
+}
+.folder-access-buttons .secondary-button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.folder-access-buttons .secondary-button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.folder-access-buttons .secondary-button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-2);
+  border-color: var(--accent);
+}
+
+.folder-access-buttons .secondary-button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}

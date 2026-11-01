@@ -183,7 +183,7 @@ hash another tool returned — never both. `search` also accepts an opaque `ref`
 without learning its path. Open-document references are session-scoped and must not be reused after
 the tab closes.
 
-**No tool grants or forgets anything.** `prepare_document` can index and save only within existing grants. Give permission out of band with `markpdf --allow-read` and, when saving is needed, `markpdf --allow-write`. An assistant cannot widen its own access. Existing `search` and `read_pages` still use the index without reopening the PDF.
+**No tool grants or forgets anything.** `prepare_document` can index and save only within existing grants. Give permission out of band in Settings > General > Folder access (R for read, RW for read and write), or with `markpdf --allow-read` and, when saving is needed, `markpdf --allow-write`. An assistant cannot widen its own access. Existing `search` and `read_pages` still use the index without reopening the PDF.
 
 For setup, separate save/index outcomes, incomplete-page fallback and recovery, see [agent PDF preparation](docs/agent-pdf-preparation.md). For showing evidence, reading comments and suggesting annotations, see [agent evidence and comments](docs/agent-evidence-and-comments.md). An agent's annotations are marked as an AI agent's on the page, in the comments pane, and — once the person accepts and saves one — in the file's own author field, which every PDF reader shows.
 

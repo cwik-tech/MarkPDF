@@ -1,3 +1,4 @@
+import type { FolderAccessReply } from "./folderAccess.js";
 import { parsePreparationReply, type PreparationReply } from "../dist-core/agent/preparation.js";
 import {
   parseRevealCommand,
@@ -128,6 +129,12 @@ contextBridge.exposeInMainWorld("pdfReader", {
     // so main can maintain a private bounded snapshot; no PDF bytes cross here.
     publish: (report: unknown) =>
       ipcRenderer.invoke("open-documents:publish", report),
+  },
+  folderAccess: {
+    list: (): Promise<FolderAccessReply> => ipcRenderer.invoke("folder-access:list"),
+    setLevel: (path: string, level: "read" | "read-write"): Promise<FolderAccessReply> => ipcRenderer.invoke("folder-access:set-level", { path, level }),
+    add: (): Promise<FolderAccessReply> => ipcRenderer.invoke("folder-access:add"),
+    remove: (path: string): Promise<FolderAccessReply> => ipcRenderer.invoke("folder-access:remove", { path }),
   },
   cliInstall: {
     getStatus: () => ipcRenderer.invoke("cli-install:status"),

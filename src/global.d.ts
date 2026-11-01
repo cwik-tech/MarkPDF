@@ -308,6 +308,21 @@ export interface CliInstallStatus {
   onDefaultPath: boolean;
 }
 
+export type FolderAccessLevel = "read" | "write" | "read-write";
+export interface FolderAccessRow {
+  path: string;
+  kind: "folder" | "file" | "unknown";
+  level: FolderAccessLevel;
+  status: "present" | "missing" | "moved" | "unreadable";
+  readThrough?: string;
+  writeThrough?: string;
+}
+export type FolderAccessReason = "damaged" | "busy" | "lock-abandoned" | "changed" | "missing" | "moved" | "unreadable" | "invalid" | "untrusted";
+export type FolderAccessReply =
+  | { ok: true; folders: FolderAccessRow[]; changed: boolean; cancelled?: true; withdrawn?: string[];
+      stillReachable?: { read?: string; write?: string; unknown?: true } }
+  | { ok: false; reason: FolderAccessReason; message: string; folders?: FolderAccessRow[]; recoverCommand?: string };
+
 export interface CliInstallResult {
   ok: boolean;
   reason?: string;
@@ -401,6 +416,12 @@ declare global {
       readyForOpenFiles: () => Promise<void>;
       openDocuments: {
         publish: (report: OpenDocumentsReport) => Promise<void>;
+      };
+      folderAccess: {
+        list: () => Promise<FolderAccessReply>;
+        setLevel: (path: string, level: "read" | "read-write") => Promise<FolderAccessReply>;
+        add: () => Promise<FolderAccessReply>;
+        remove: (path: string) => Promise<FolderAccessReply>;
       };
       cliInstall: {
         getStatus: () => Promise<CliInstallStatus>;

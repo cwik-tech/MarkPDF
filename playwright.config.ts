@@ -1,5 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
+// Electron has no Playwright headless launch option; main hides opted-in test windows.
+process.env.MARKPDF_TEST_HIDE_WINDOWS = "1";
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,

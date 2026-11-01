@@ -81,7 +81,7 @@ MCP: `suggest_annotation` with `path`, `id` or `ref`, plus `page`, `quote` and `
 
 | Reason | What to do |
 | --- | --- |
-| `access_denied` | Ask the person to grant the folder with `markpdf --allow-read`. |
+| `access_denied` | Ask the person to grant its folder in MarkPDF Settings > General, or with `markpdf --allow-read`. |
 | `stale_ref` | Call `list_open_documents` again. |
 | `ambiguous` | Name the tab with a `ref`. |
 | `not_open` | Ask the person to open the document. |

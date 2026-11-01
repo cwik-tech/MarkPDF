@@ -2,7 +2,7 @@
 
 ## Status
 
-Superseded for explicit preparation by [Agent PDF preparation](2026-10-28-Agent-PDF-Preparation.md). Other decisions remain accepted.
+Superseded for explicit preparation by [Agent PDF preparation](2026-10-28-Agent-PDF-Preparation.md). Superseded for the consent channel by [Folder access in Settings](2026-11-01-Folder-Access-In-Settings.md). Other decisions remain accepted.
 
 
 

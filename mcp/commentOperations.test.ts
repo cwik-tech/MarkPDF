@@ -104,6 +104,16 @@ afterEach(() => {
 });
 
 describe("read_comments", () => {
+  it("asks the person to grant an open document's folder in Settings or on the command line", async () => {
+    const entry = openEntry(fixture);
+    const context = contextWith({
+      openDocuments: () => ({ windows: 1, activeRef: entry.ref, documents: [entry], unreadableWindows: 0 }),
+    });
+    const message = refusalOf(await runReadComments(context, validated({ ref: "active" })));
+    expect(message).toContain("Ask the person to grant its folder in MarkPDF Settings > General, or with markpdf --allow-read.");
+    expect(context.reads).toEqual([]);
+  });
+
   it("needs a read grant also for an indexed document, and reads nothing without one", async () => {
     const bytes = new Uint8Array(readFileSync(fixture));
     const indexed = await indexDocument(store, embedder, {

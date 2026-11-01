@@ -1,3 +1,4 @@
+import { FolderAccessSection } from "./FolderAccessSection";
 import {
   Bot,
   CheckCircle2,
@@ -673,73 +674,76 @@ function GeneralSettingsPage({
   const busy = busyFileTypeId !== null;
 
   return (
-    <section className="settings-section">
-      <div className="settings-section-heading">
-        <div>
-          <h3>Default Application</h3>
-          <p>Pick the file types that open in MarkPDF when you double-click them in Finder.</p>
-        </div>
-        <button className="secondary-button" disabled={busy} onClick={onRefresh}>
-          <RefreshCw size={15} />
-          Refresh
-        </button>
-      </div>
-
-      {!status.supported && status.reason && <p className="settings-note">{status.reason}</p>}
-
-      <div className="agent-list">
-        {status.fileTypes.length === 0 ? (
-          <div className="empty-row">No file types available.</div>
-        ) : (
-          status.fileTypes.map((fileType) => (
-            <div className="agent-row" key={fileType.id}>
-              <div className="agent-main">
-                <span className={`status-dot ${fileType.isDefault ? "connected" : ""}`} />
-                <div>
-                  <strong>{fileType.label}</strong>
-                  <span>
-                    {!status.supported
-                      ? fileType.description
-                      : fileType.isDefault
-                        ? `${fileType.description} — opens in MarkPDF`
-                        : fileType.currentAppName
-                          ? `${fileType.description} — opens in ${fileType.currentAppName}`
-                          : `${fileType.description} — no default app set`}
-                  </span>
-                </div>
-              </div>
-              {fileType.isDefault ? (
-                <span className="default-app-badge">
-                  <CheckCircle2 size={14} />
-                  Default
-                </span>
-              ) : (
-                <button
-                  className="secondary-button"
-                  disabled={!status.supported || busy}
-                  onClick={() => onSetDefault([fileType.id], fileType.id)}
-                >
-                  {busyFileTypeId === fileType.id ? "Setting..." : "Set as default"}
-                </button>
-              )}
-            </div>
-          ))
-        )}
-      </div>
-
-      {status.supported && missing.length > 1 && (
-        <div className="default-app-actions">
-          <p className="settings-note">MarkPDF is not the default app for {missing.length} of these file types.</p>
-          <button
-            className="primary-button"
-            disabled={busy}
-            onClick={() => onSetDefault(missing.map((fileType) => fileType.id), "all")}
-          >
-            {busyFileTypeId === "all" ? "Setting..." : "Set as default for all"}
+    <>
+      <section className="settings-section">
+        <div className="settings-section-heading">
+          <div>
+            <h3>Default Application</h3>
+            <p>Pick the file types that open in MarkPDF when you double-click them in Finder.</p>
+          </div>
+          <button className="secondary-button" disabled={busy} onClick={onRefresh}>
+            <RefreshCw size={15} />
+            Refresh
           </button>
         </div>
-      )}
-    </section>
+
+        {!status.supported && status.reason && <p className="settings-note">{status.reason}</p>}
+
+        <div className="agent-list">
+          {status.fileTypes.length === 0 ? (
+            <div className="empty-row">No file types available.</div>
+          ) : (
+            status.fileTypes.map((fileType) => (
+              <div className="agent-row" key={fileType.id}>
+                <div className="agent-main">
+                  <span className={`status-dot ${fileType.isDefault ? "connected" : ""}`} />
+                  <div>
+                    <strong>{fileType.label}</strong>
+                    <span>
+                      {!status.supported
+                        ? fileType.description
+                        : fileType.isDefault
+                          ? `${fileType.description} — opens in MarkPDF`
+                          : fileType.currentAppName
+                            ? `${fileType.description} — opens in ${fileType.currentAppName}`
+                            : `${fileType.description} — no default app set`}
+                    </span>
+                  </div>
+                </div>
+                {fileType.isDefault ? (
+                  <span className="default-app-badge">
+                    <CheckCircle2 size={14} />
+                    Default
+                  </span>
+                ) : (
+                  <button
+                    className="secondary-button"
+                    disabled={!status.supported || busy}
+                    onClick={() => onSetDefault([fileType.id], fileType.id)}
+                  >
+                    {busyFileTypeId === fileType.id ? "Setting..." : "Set as default"}
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+        {status.supported && missing.length > 1 && (
+          <div className="default-app-actions">
+            <p className="settings-note">MarkPDF is not the default app for {missing.length} of these file types.</p>
+            <button
+              className="primary-button"
+              disabled={busy}
+              onClick={() => onSetDefault(missing.map((fileType) => fileType.id), "all")}
+            >
+              {busyFileTypeId === "all" ? "Setting..." : "Set as default for all"}
+            </button>
+          </div>
+        )}
+      </section>
+      <FolderAccessSection />
+    </>
   );
 }
 

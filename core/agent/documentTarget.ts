@@ -41,7 +41,7 @@ export type ResolvedTarget =
     }
   | { ok: false; reason: "access_denied" | "not_found" | "stale_ref"; message: string };
 
-const READ_REMEDY_FOR_OPEN = "Grant its folder with markpdf --allow-read, as a separate command.";
+const READ_REMEDY_FOR_OPEN = "Ask the person to grant its folder in MarkPDF Settings > General, or with markpdf --allow-read.";
 
 export function selectOpenEntry(view: OpenDocumentsView, ref: string): OpenDocumentEntry | null {
   const wanted = ref === ACTIVE_REFERENCE ? view.activeRef : ref;

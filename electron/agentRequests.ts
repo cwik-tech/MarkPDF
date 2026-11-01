@@ -155,6 +155,7 @@ function remember(id: string): boolean {
 
 function bringToFront(window: BrowserWindow): void {
   if (window.isMinimized()) window.restore();
+  if (process.env.MARKPDF_TEST_USER_DATA && process.env.MARKPDF_TEST_HIDE_WINDOWS === "1") return;
   window.show();
   window.focus();
   // The person asked an agent to show them something, so MarkPDF comes forward over the terminal.
