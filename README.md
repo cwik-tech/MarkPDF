@@ -161,6 +161,8 @@ For a client that reads a JSON configuration file, the same thing as entries in 
 
 Add `MARKPDF_DATA_DIR` in `env` if you keep your index somewhere other than the default. After replacing or updating MarkPDF, reconnect its MCP server in your client so requests use the current application; an already-running server keeps its previously loaded code.
 
+If MCP lists documents but cannot show passages or add suggestions, check the [desktop request troubleshooting](docs/agent-evidence-and-comments.md#mcp-connects-but-desktop-requests-time-out).
+
 Eleven tools:
 
 | Tool | What it does | What it needs |

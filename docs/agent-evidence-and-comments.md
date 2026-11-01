@@ -88,7 +88,19 @@ MCP: `suggest_annotation` with `path`, `id` or `ref`, plus `page`, `quote` and `
 | `not_indexed` | Prepare the document for a link. |
 | `quote_not_found` | Check the page, or send the note without a quote. |
 | `limit_reached` | Ask the person to review the waiting suggestions. |
-| `no_answer` | Restart MarkPDF. An older MarkPDF does not know these requests. |
+| `no_answer` | Check the [MCP launch configuration](#mcp-connects-but-desktop-requests-time-out). An older MarkPDF can also fail to acknowledge these requests. |
+
+## MCP connects but desktop requests time out
+
+Configure the MCP client to launch the installed `markpdf` command with `["mcp"]` as its
+arguments. Use the command's full path from Settings > CLI & MCP if the client cannot find it.
+Do not launch `node dist-mcp/main.js` directly. That setup can list open documents and read the
+index, but desktop requests start the server's runtime to deliver a request to the app. Plain
+Node.js cannot deliver that Electron request; the installed command selects the bundled runtime.
+
+After changing the configuration, reconnect the MCP server in the client. Restarting only the
+MarkPDF window does not replace the client's running server. If requests still time out, check
+that the application is current and that the client and app use the same `MARKPDF_DATA_DIR`.
 
 Design and verification: `docs/agent-evidence-and-comments-plan.md`,
 `docs/adr/2026-10-31-Agent-Evidence-Reveal-And-Links.md` and
