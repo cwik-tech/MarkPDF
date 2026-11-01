@@ -312,6 +312,8 @@ declare global {
       openPdfDialog: () => Promise<string[]>;
       savePdfDialog: (defaultPath?: string) => Promise<string | null>;
       saveMarkdownDialog: (defaultPath?: string) => Promise<string | null>;
+      /** Asks where to save a rendered diagram, then saves it. Null when the reader cancels. */
+      saveDiagramSvg: (fileName: string, svg: string) => Promise<string | null>;
       confirmUnsaved: (
         documentName?: string,
       ) => Promise<"save" | "discard" | "cancel">;
