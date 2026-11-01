@@ -104,6 +104,35 @@ export interface SemanticSearchResult {
   headingPath?: string[];
 }
 
+/** How a search ranks passages: by meaning, by exact words, or by both. */
+export type SearchMode = "hybrid" | "semantic" | "exact";
+
+/** One passage of a library search, with the document it belongs to. */
+export interface LibrarySearchHit {
+  id: string;
+  page: number;
+  snippet: string;
+  score: number;
+  headingPath: string[];
+  /** The cosine, when the ranking by meaning found this passage. */
+  semanticScore: number | null;
+  matchedBy: Array<"semantic" | "exact">;
+  contentHash: string;
+  name: string;
+  path: string | null;
+}
+
+export interface LibrarySearchReply {
+  mode: SearchMode;
+  documentsSearched: number;
+  documentsNotDiscoverable: number;
+  documentsOutsideActiveScope: number;
+  candidatesTruncated: boolean;
+  truncated: boolean;
+  omittedResults: number;
+  results: LibrarySearchHit[];
+}
+
 export interface SemanticHighlightTarget {
   page: number;
   text: string;

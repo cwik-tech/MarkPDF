@@ -130,8 +130,12 @@ function documentIdentity(): Record<string, SchemaProperty> {
  */
 export const ACTIVE_DOCUMENT = "active";
 
+/** The query, as both search tools describe it. A positional on the command line, so it has no table entry. */
+const SEARCH_QUERY: SchemaProperty = { type: "string", description: "What to search for, in plain language." };
+
 /**
- * Seven tools: explicit preparation and the six existing retrieval operations.
+ * Eight tools: explicit preparation, the six original retrieval operations, and a search of the
+ * whole granted library — the one question none of the others can answer in a single call.
  *
  * Every tool costs context in every client's session, forever, so the surface stays the smallest
  * one that is useful: orient, search, read what a hit points at, convert — and then the pair that
@@ -169,12 +173,29 @@ export const TOOLS: readonly ToolDefinition[] = [
           type: "string",
           description: `A reference from list_open_documents, or "${ACTIVE_DOCUMENT}" for whichever document is at the front. Give this, path, or id.`,
         },
-        query: { type: "string", description: "What to search for, in plain language." },
+        query: SEARCH_QUERY,
         top_k: propertyFromOption("search", "top-k"),
         min_score: propertyFromOption("search", "min-score"),
+        mode: propertyFromOption("search", "mode"),
       },
       required: ["query"],
       oneOf: SEARCH_IDENTITY_BRANCHES,
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "search_library",
+    description:
+      "Find the passages that answer a question across the indexed PDFs that MarkPDF read from a folder under a current read grant. Each hit names its document by content hash and name, with its page and headings; continue with read_pages by id. Reads the index only and never opens a file. Documents outside your read grants, or indexed only by the app, are counted but not searched. Mode hybrid ranks by meaning and exact words together; exact matches whole words and phrases, ignoring case and accents.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: SEARCH_QUERY,
+        top_k: propertyFromOption("search", "top-k"),
+        min_score: propertyFromOption("search", "min-score"),
+        mode: propertyFromOption("search", "mode"),
+      },
+      required: ["query"],
       additionalProperties: false,
     },
   },

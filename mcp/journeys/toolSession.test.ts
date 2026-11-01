@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { buildReportPdf, PAGE_TWO_HEADING } from "../../cli/journeys/fixtures.test-support.js";
+import { buildClausePdf, buildReportPdf, buildTextPdf, PAGE_TWO_HEADING } from "../../cli/journeys/fixtures.test-support.js";
 import { DETERMINISTIC_EMBEDDER_TOKEN } from "../../dist-core/index/embedderSelection.js";
 import { writeOpenDocuments } from "../../dist-core/session/openDocuments.js";
 
@@ -66,7 +66,7 @@ afterEach(() => {
 });
 
 describe("an agent session over stdio", () => {
-  it("lists exactly the seven tools, with schemas a client can validate against", async () => {
+  it("lists exactly the eight tools, with schemas a client can validate against", async () => {
     const client = await connect();
     try {
       const listed = await client.listTools();
@@ -78,6 +78,7 @@ describe("an agent session over stdio", () => {
         "read_open_document",
         "read_pages",
         "search",
+        "search_library",
         "to_markdown",
       ]);
       for (const tool of listed.tools) {
@@ -123,6 +124,67 @@ describe("an agent session over stdio", () => {
       await client.close();
     }
   }, 180_000);
+
+  it("ranks the page with the exact phrase first when meaning alone would choose another page", async () => {
+    const lease = join(libraryDir, "lease.pdf");
+    writeFileSync(lease, await buildClausePdf());
+    const client = await connect();
+    try {
+      const { runCli } = await import("../../cli/journeys/runCli.test-support.js");
+      expect((await runCli(["--allow-read", libraryDir], { dataDir })).code).toBe(0);
+      expect((await runCli(["index", lease], { dataDir })).code).toBe(0);
+
+      const byMeaning = payloadOf(
+        await client.callTool({ name: "search", arguments: { path: lease, query: "clause 4.2(b)", mode: "semantic", top_k: 1, min_score: 0.1 } }),
+      );
+      expect((byMeaning.results as Array<{ page: number }>).map((hit) => hit.page)).toEqual([2]);
+
+      const fused = payloadOf(
+        await client.callTool({ name: "search", arguments: { path: lease, query: "clause 4.2(b)", mode: "hybrid", top_k: 1, min_score: 0.1 } }),
+      );
+      expect(fused.mode).toBe("hybrid");
+      const hits = fused.results as Array<{ page: number; matched_by: string[]; semantic_score: number | null }>;
+      expect(hits.map((hit) => hit.page)).toEqual([1]);
+      expect(hits[0]?.matched_by).toContain("exact");
+    } finally {
+      await client.close();
+    }
+  }, 180_000);
+
+  it("searches the granted library in one call, and stops finding a document once its grant is removed", async () => {
+    const other = realpathSync(mkdtempSync(join(tmpdir(), "markpdf-mcp-other-")));
+    try {
+      const pilot = join(libraryDir, "pilotage.pdf");
+      const berth = join(other, "berths.pdf");
+      writeFileSync(pilot, await buildTextPdf(["The pilotage boarding ground lies north of the breakwater."]));
+      writeFileSync(berth, await buildTextPdf(["Berth nine has a pilotage boarding ladder on the east side."]));
+      const { runCli } = await import("../../cli/journeys/runCli.test-support.js");
+      expect((await runCli(["--allow-read", libraryDir, "--allow-read", other], { dataDir })).code).toBe(0);
+      expect((await runCli(["index", pilot, berth], { dataDir })).code).toBe(0);
+
+      const client = await connect();
+      try {
+        const both = payloadOf(await client.callTool({ name: "search_library", arguments: { query: "pilotage boarding", min_score: 0.1 } }));
+        const names = (both.results as Array<{ name: string; contentHash: string; page: number }>).map((hit) => hit.name);
+        expect(new Set(names)).toEqual(new Set(["pilotage.pdf", "berths.pdf"]));
+        expect(both.documentsSearched).toBe(2);
+        // Agents get hashes and names, never the paths behind them.
+        expect(JSON.stringify(both)).not.toContain(libraryDir);
+        expect(JSON.stringify(both)).not.toContain(other);
+
+        // Consent is withdrawn out of band, while the session is still open.
+        expect((await runCli(["--revoke-read", other], { dataDir })).code).toBe(0);
+
+        const one = payloadOf(await client.callTool({ name: "search_library", arguments: { query: "pilotage boarding", min_score: 0.1 } }));
+        expect(new Set((one.results as Array<{ name: string }>).map((hit) => hit.name))).toEqual(new Set(["pilotage.pdf"]));
+        expect(one.documentsNotDiscoverable).toBe(1);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
+  }, 240_000);
 
   it("searches the active indexed PDF by its open-document reference without disclosing its path", async () => {
     const { jsonOf, runCli } = await import("../../cli/journeys/runCli.test-support.js");

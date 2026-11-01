@@ -4,6 +4,10 @@
 
 ### Added
 
+- Search the whole library in one query. `markpdf search "<query>" --library` and the new MCP tool `search_library` rank passages across every PDF that `markpdf index` read from a folder you still grant, and say how many indexed documents they left out without naming them. Withdrawing a folder's grant takes its documents out of library results. A document already named by its hash is still answered. In the app, the Semantic Search pane has a Library scope: a hit from a document that is not open opens it at the page with the passage highlighted, and a hit from an open document switches to its tab.
+- Search for exact words next to search by meaning. `--mode exact` (MCP `mode: "exact"`) returns only passages that contain every word or quoted phrase of the query, such as "clause 4.2(b)" or an invoice number, ignoring case and accents. The new default, `hybrid`, fuses the exact-word ranking with the ranking by meaning. `semantic` keeps the previous ranking. Every search reply now states its `mode`, and each passage carries `matchedBy` and `semanticScore`. `--min-score` now filters the ranking by meaning only, and is refused in exact mode. The Library scope in the app offers the same three modes as Both, Meaning and Words.
+- Search replies on the command line are now bounded like MCP replies, and say how many passages did not fit.
+
 - Agents can prepare a PDF through `markpdf prepare` or MCP `prepare_document`: open it in MarkPDF, save eligible generated outline metadata, and retrieve from the final saved document using existing storage and separate read/write grants.
 - Preparation, search and open-document listings report extraction completeness so agents can identify missing content and use a disclosed fallback.
 
@@ -14,6 +18,9 @@
 - The toolbar now says which part of preparing a document is actually running: `Checking text` while the text layer is examined, `Native text detected` for a moment when it turns out no recognition is needed, `OCR 2/4` with a progress bar while pages are read by recognition — in the window or in the main process — and `Index 12/32` only once that is done. Recognition inside the index job used to be reported as "Checking index", which is how the slowest part of preparing a scanned document became invisible.
 
 ### Fixed
+
+- Opening an index written by an earlier version of MarkPDF upgrades it in place and adds its existing passages to the exact-word index in small batches. The upgrade waits until no other MarkPDF window, command or agent session has the index open, and says so instead of upgrading beside a process that still follows the old rules. Two MarkPDF processes that opened an old or new index at the same moment can no longer both try the same upgrade.
+- Forgetting a document or clearing the index now also erases its words from the exact-word index, in the file and in its log, and an erase that was interrupted is finished by the next forget or clear.
 
 - Printing a PDF now keeps the exported document loaded until the print dialog finishes instead of removing it after two seconds.
 - Comments written in another application are now readable. A document marked up in Acrobat, Preview or by a script opens with a pin beside every line a reviewer commented on: click the pin or the marked words and the note opens in a pane on the right, with the name of whoever wrote it. The pane lists every comment in page order, scrolls to whichever one you pick on the page, has its own control beside the search box, and can be dragged to half the window's width; when a document has no comments the control is disabled and no pane appears. These comments are shown, not taken over: nothing in MarkPDF will edit or delete one — not the pane, not the Selection inspector, not the Delete key — and saving the document leaves each one exactly as its author wrote it rather than copying it or replacing their name with MarkPDF's.

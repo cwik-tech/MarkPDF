@@ -141,6 +141,14 @@ export interface SemanticIndexedResult {
  */
 export type SemanticIndexResult = SemanticIndexedResult | { status: "cancelled" };
 
+export interface LibrarySearchRequest {
+  query: string;
+  mode: import("./types").SearchMode;
+  chunkingProfile: SemanticChunkingProfile;
+  minScore: number;
+  topK: number;
+}
+
 export interface SemanticSearchRequest {
   contentHash: string;
   query: string;
@@ -383,6 +391,9 @@ declare global {
         search: (
           request: SemanticSearchRequest,
         ) => Promise<import("./types").SemanticSearchResult[]>;
+        searchLibrary: (
+          request: LibrarySearchRequest,
+        ) => Promise<import("./types").LibrarySearchReply>;
         getDocument: (
           contentHash: string,
         ) => Promise<SemanticIndexedDocument | null>;

@@ -1,7 +1,7 @@
 import { readDocumentPages, type OcrPageCandidate, type ReadPage, type ResolveOcrRequest } from "../extract/readDocumentPages.js";
 import { contentHash as hashBytes } from "../hash.js";
 import type { SemanticChunkingProfile } from "../models.js";
-import type { SemanticStore } from "../store/index.js";
+import type { PathProvenance, SemanticStore } from "../store/index.js";
 import type { PageText } from "./chunking.js";
 import type { Embedder } from "./embeddings.js";
 import { indexDocument, type IndexDocumentResult, type IndexProgress } from "./indexDocument.js";
@@ -20,6 +20,8 @@ export interface IndexPdfDocumentInput {
   bytes: Uint8Array;
   name: string;
   filePath: string | null;
+  /** `resolved` only when the caller resolved `filePath` through the consent check and read `bytes` from it. */
+  pathProvenance?: PathProvenance;
   chunkingProfile: SemanticChunkingProfile;
   /**
    * Read the pages the structural extractor could not, and the qualifying pictures on pages it
@@ -129,6 +131,7 @@ export async function indexPdfDocument(
       contentHash,
       name: input.name,
       filePath: input.filePath,
+      ...(input.pathProvenance === undefined ? {} : { pathProvenance: input.pathProvenance }),
       fileSize: input.bytes.byteLength,
       // The stored document's own account of itself. These bytes were read to produce it, and this
       // path has read nothing, so it has nothing of its own to say.
@@ -245,6 +248,7 @@ export async function indexPdfDocument(
     bytes: input.bytes,
     name: input.name,
     filePath: input.filePath,
+    ...(input.pathProvenance === undefined ? {} : { pathProvenance: input.pathProvenance }),
     pages,
     pageCount: read.pageCount,
     chunkingProfile: input.chunkingProfile,

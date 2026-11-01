@@ -121,6 +121,35 @@ export const modelVersion = "hf-transformers-js";
 export const defaultSemanticScoreThreshold = 0.3;
 export const defaultSemanticTopK = 12;
 
+/**
+ * How a search ranks passages: by meaning, by exact words, or by both fused together.
+ *
+ * One list, read by the command table, the MCP schema and the IPC parser, so the three surfaces
+ * cannot offer different modes.
+ */
+export const searchModes = ["hybrid", "semantic", "exact"] as const;
+export type SearchMode = (typeof searchModes)[number];
+export const defaultSearchMode: SearchMode = "hybrid";
+
+/** At most this many passages from one document in a library answer, so one long book cannot fill it. */
+export const libraryHitsPerDocument = 3;
+
+/**
+ * How many candidates each ranking reads before fusion, and the most it will read.
+ *
+ * The depth starts at four answers' worth, at least 50, and doubles while the per-document cap
+ * leaves the answer short and a ranking filled its depth. It stops at the maximum, and the reply
+ * then says that candidates were cut.
+ */
+export const searchCandidateDepthMax = 1_600;
+export function initialSearchCandidateDepth(topK: number): number {
+  return Math.min(400, Math.max(50, 4 * topK));
+}
+
+export function isSearchMode(value: unknown): value is SearchMode {
+  return typeof value === "string" && searchModes.some((mode) => mode === value);
+}
+
 export const semanticScoreThresholdPresets: readonly SemanticScoreThresholdPreset[] = [
   { id: "loose", name: "Loose", description: "Shows broader, weaker related passages.", value: 0.24 },
   { id: "balanced", name: "Balanced", description: "Default cutoff for related passages.", value: defaultSemanticScoreThreshold },

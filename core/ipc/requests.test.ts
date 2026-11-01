@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseIndexRequest, parseSearchRequest, parseDownloadRequest, parseContentHash } from "./requests.js";
+import { parseIndexRequest, parseSearchRequest, parseDownloadRequest, parseContentHash, parseLibrarySearchRequest } from "./requests.js";
 
 const HASH = "a".repeat(64);
 const validIndex = {
@@ -144,5 +144,33 @@ describe("validating a search request", () => {
     const base = { contentHash: HASH, query: "x", chunkingProfile: "balanced" };
     expect(() => parseSearchRequest({ ...base, topK: 0 })).toThrow(/between 1 and 200/);
     expect(() => parseSearchRequest({ ...base, topK: 2.5 })).toThrow(/between 1 and 200/);
+  });
+});
+
+describe("validating a library search request", () => {
+  const valid = { query: "pilotage boarding", mode: "hybrid", chunkingProfile: "balanced", minScore: 0.3, topK: 12 };
+
+  it("accepts a well-formed request", () => {
+    expect(parseLibrarySearchRequest(valid)).toEqual(valid);
+  });
+
+  it("refuses a mode that is not one of the search modes", () => {
+    expect(() => parseLibrarySearchRequest({ ...valid, mode: "fuzzy" })).toThrow(/mode/);
+  });
+
+  it("refuses a control character in the query, which the exact ranking cannot read", () => {
+    expect(() => parseLibrarySearchRequest({ ...valid, query: "pilot\u0000age" })).toThrow(/control character/);
+  });
+
+  it("refuses an empty query", () => {
+    expect(() => parseLibrarySearchRequest({ ...valid, query: "" })).toThrow(/query/);
+  });
+
+  it.each([0, 101, 2.5])("refuses topK %s, outside the range the command table allows", (topK) => {
+    expect(() => parseLibrarySearchRequest({ ...valid, topK })).toThrow(/topK/);
+  });
+
+  it.each([-0.1, 0.96])("refuses minScore %s", (minScore) => {
+    expect(() => parseLibrarySearchRequest({ ...valid, minScore })).toThrow(/minScore/);
   });
 });

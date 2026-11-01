@@ -1,4 +1,4 @@
-import { curatedEmbeddingModels, type SemanticChunkingProfile } from "../models.js";
+import { curatedEmbeddingModels, isSearchMode, type SearchMode, type SemanticChunkingProfile } from "../models.js";
 
 /**
  * Validation for everything arriving from the renderer.
@@ -132,6 +132,40 @@ export function parseSearchRequest(raw: unknown): ParsedSearchRequest {
     topK: typeof topK === "number" ? topK : undefined,
     minScore: typeof minScore === "number" ? minScore : undefined,
   };
+}
+
+export interface ParsedLibrarySearchRequest {
+  query: string;
+  mode: SearchMode;
+  chunkingProfile: SemanticChunkingProfile;
+  minScore: number;
+  topK: number;
+}
+
+/** C0, DEL and C1 apart from tab, line feed and carriage return: what the exact ranking refuses. */
+const CONTROL_CHARACTER = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
+
+/**
+ * A library search from the window.
+ *
+ * `topK` follows the command table's range rather than the per-document request's, because the
+ * library answer is the one bounded like a tool reply. The mode always arrives explicitly: the
+ * window decides it, so the command table's default never applies to the app.
+ */
+export function parseLibrarySearchRequest(raw: unknown): ParsedLibrarySearchRequest {
+  const request = requireObject(raw, "library search request");
+  const query = requireText(request.query, "query");
+  if (CONTROL_CHARACTER.test(query)) throw new SemanticRequestError("query contains a control character.");
+  if (!isSearchMode(request.mode)) throw new SemanticRequestError("mode must be hybrid, semantic or exact.");
+  const topK = request.topK;
+  if (typeof topK !== "number" || !Number.isInteger(topK) || topK < 1 || topK > 100) {
+    throw new SemanticRequestError("topK must be an integer between 1 and 100.");
+  }
+  const minScore = request.minScore;
+  if (typeof minScore !== "number" || !Number.isFinite(minScore) || minScore < 0 || minScore > 0.95) {
+    throw new SemanticRequestError("minScore must be between 0 and 0.95.");
+  }
+  return { query, mode: request.mode, chunkingProfile: requireChunkingProfile(request.chunkingProfile), minScore, topK };
 }
 
 export interface ParsedDownloadRequest {

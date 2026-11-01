@@ -39,10 +39,12 @@ import {
   parseCuratedModelId,
   parseDownloadRequest,
   parseIndexRequest,
+  parseLibrarySearchRequest,
   parseSearchRequest,
   parseSemanticSettings,
   parseSemanticSettingsPatch,
   runIndexJob,
+  runLibrarySearch,
   runSearch,
   type SemanticSearchSettings,
 } from "./semantic.js";
@@ -805,6 +807,10 @@ ipcMain.handle("semantic:cancel", async (_event, jobId: unknown) => cancelSemant
 
 ipcMain.handle("semantic:search", async (_event, raw: unknown) =>
   runSearch(parseSearchRequest(raw), currentSemanticSettings()),
+);
+
+ipcMain.handle("semantic:search-library", async (_event, raw: unknown) =>
+  runLibrarySearch(parseLibrarySearchRequest(raw), currentSemanticSettings()),
 );
 
 ipcMain.handle("semantic:get-document", async (_event, contentHash: unknown) =>

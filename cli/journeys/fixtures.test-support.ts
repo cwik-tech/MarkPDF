@@ -44,6 +44,32 @@ export async function buildReportPdf(): Promise<Uint8Array> {
 }
 
 /**
+ * Three pages where only word order tells the clauses apart.
+ *
+ * Page 1 has the phrase "Clause 4.2(b)" inside a longer sentence. Page 2 has only "Clause 2.4(b)":
+ * the same four words and nothing else. A ranking by vocabulary alone therefore puts page 2 first —
+ * it is all query words — and cannot see that page 1 is the one with the phrase. An exact search
+ * returns page 1 only, and a fused ranking has to lift page 1 above page 2. The expected pages are
+ * properties of this builder, written down before any extractor runs.
+ */
+export const EXACT_CLAUSE_LINES = [
+  "Clause 4.2(b) governs the renewal of the lease,",
+  "together with the schedule of fees and the annex on parking.",
+] as const;
+export const REORDERED_CLAUSE = "Clause 2.4(b)";
+export const UNRELATED_PAGE = "Schedule of fees for parking and storage";
+
+export async function buildClausePdf(): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  for (const lines of [EXACT_CLAUSE_LINES, [REORDERED_CLAUSE], [UNRELATED_PAGE]]) {
+    const page = pdf.addPage([612, 792]);
+    lines.forEach((line, index) => page.drawText(line, { x: 60, y: 700 - index * 18, size: 12, font }));
+  }
+  return pdf.save();
+}
+
+/**
  * A phrase that exists in the scanned fixture only as pixels.
  *
  * Deliberately ordinary words in an unusual arrangement: OCR has to read them, and no text layer
@@ -72,4 +98,14 @@ export async function buildScannedPdf(): Promise<Uint8Array> {
   const image = await pdf.embedPng(canvas.toBuffer("image/png"));
   page.drawImage(image, { x: 0, y: 0, width: 612, height: 792 });
   return await pdf.save();
+}
+
+/** A PDF with one line of text on each page, in order. Built at test time like the other fixtures. */
+export async function buildTextPdf(pages: readonly string[]): Promise<Uint8Array> {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  for (const line of pages) {
+    pdf.addPage([612, 792]).drawText(line, { x: 60, y: 700, size: 12, font });
+  }
+  return pdf.save();
 }

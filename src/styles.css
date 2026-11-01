@@ -2716,3 +2716,26 @@ select {
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 }
+
+.sidebar-switch.two-way {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.library-result-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-result-words {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.library-message {
+  color: var(--muted);
+  font-size: 12px;
+}

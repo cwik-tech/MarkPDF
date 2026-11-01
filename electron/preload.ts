@@ -98,6 +98,7 @@ contextBridge.exposeInMainWorld("pdfReader", {
       ipcRenderer.invoke("semantic:index", request),
     cancelIndex: (jobId: string) => ipcRenderer.invoke("semantic:cancel", jobId),
     search: (request: unknown) => ipcRenderer.invoke("semantic:search", request),
+    searchLibrary: (request: unknown) => ipcRenderer.invoke("semantic:search-library", request),
     getDocument: (contentHash: string) =>
       ipcRenderer.invoke("semantic:get-document", contentHash),
     deleteDocument: (contentHash: string) =>

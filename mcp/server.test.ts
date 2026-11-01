@@ -182,7 +182,11 @@ describe("how much work a client can start at once", () => {
 const control = (code: number): string => String.fromCharCode(code);
 
 /** Put a document in the index with exactly the Markdown a test wants to get back out. */
-async function indexed(name: string, markdown: readonly string[]): Promise<{ path: string; hash: string }> {
+async function indexed(
+  name: string,
+  markdown: readonly string[],
+  options: { discoverable?: boolean } = {},
+): Promise<{ path: string; hash: string }> {
   const path = join(libraryDir, name);
   const bytes = new TextEncoder().encode(name);
   // `to_markdown` verifies the live file before using its cache, so the fixture on disk must be the
@@ -193,6 +197,8 @@ async function indexed(name: string, markdown: readonly string[]): Promise<{ pat
     bytes,
     name,
     filePath: path,
+    // As the command records it, so a library search may discover it under the test's grant.
+    ...(options.discoverable === true ? { pathProvenance: "resolved" as const } : {}),
     pageCount: pages.length,
     chunkingProfile: "balanced",
     pages: pages.map((page) => ({ page: page.page, text: page.markdown, source: "pdf" as const })),
@@ -237,6 +243,23 @@ describe("how much text one call can hand back", () => {
       const reply = await callTool(context, call.name, call.args);
       expect(replyBytesOf(reply)).toBeLessThanOrEqual(DEFAULT_REPLY_BUDGET);
     }
+  }, 60_000);
+
+  it("holds the bound for a library search across documents that escape badly", async () => {
+    // Where the hits are cut is proved in `core/output/searchReply.test.ts`. This proves the tool's
+    // reply goes through that bound and through the server's last check, with escape-heavy text.
+    const nasty = `${control(0x01)}"quoted"\\backslash\n${control(0x07)} harbour `.repeat(40);
+    for (let index = 0; index < 4; index += 1) await indexed(`library-${index}.pdf`, [nasty], { discoverable: true });
+    const context = readingContext();
+
+    const reply = await callTool(context, "search_library", { query: "quoted backslash harbour", min_score: 0, top_k: 100 });
+
+    expect(reply.isError).toBeUndefined();
+    expect(replyBytesOf(reply)).toBeLessThanOrEqual(DEFAULT_REPLY_BUDGET);
+    const payload = JSON.parse(reply.content[0]!.text) as { results: unknown[]; documentsSearched: number; totalBytes: number };
+    expect(payload.documentsSearched).toBe(4);
+    expect(payload.results.length).toBeGreaterThan(0);
+    expect(payload.totalBytes).toBeGreaterThan(0);
   }, 60_000);
 
   it("holds the bound for a document that is almost entirely headings", async () => {

@@ -20,6 +20,12 @@ Call `list_open_documents` and select the exact document by stable ref. Use `ref
 
 Use `read_open_document` for a visible page, page-specific request or open Markdown buffer. Do not reveal paths when a ref works. If preparation is needed, use the user-supplied path; do not invent one. Existing user edits, multiple copies or an in-flight save can require user action.
 
+## A question across the library
+
+When the user asks where something is in their documents, without naming one, call `search_library` with `top_k: 5` and no explicit `min_score`. It searches every PDF that `markpdf index` read from a folder the user still grants. Each hit names its document by `contentHash` and `name`. Read the supporting pages with `read_pages` by that `id`. If `documentsNotDiscoverable` is above zero, say that some indexed documents were not searched and that granting their folder and running `markpdf index` on it includes them. Do not ask for paths to work around it.
+
+For an exact string such as a clause number, an invoice number or a name, use `mode: "exact"` on `search` or `search_library`. The default `hybrid` mode already ranks exact words and meaning together. `score` depends on the mode. Compare `semantic_score` when you need the similarity by meaning.
+
 ## Incomplete results and fallback
 
 - `incomplete`: identify missing pages and use your ordinary PDF parser for those pages or unsupported content. Disclose which route supplied each part of the answer. More than one reply may be needed for truncated coverage.
@@ -37,6 +43,7 @@ Read and write grants are separate and are given out of band by the user. MCP ca
 
 ```bash
 markpdf search "<query>" --id "<contentHash>" --top-k 3 --json
+markpdf search "<query>" --library --top-k 5 --json
 markpdf convert "<pdf>" --pages "<pages>" --mode page-preserving --json
 ```
 

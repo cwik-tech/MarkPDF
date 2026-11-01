@@ -7,6 +7,11 @@ import { parsePageSelection } from "../dist-core/documents/pageSelection.js";
 import { findIndexedDocument } from "../dist-core/index/documentLookup.js";
 import type { Embedder } from "../dist-core/index/embeddings.js";
 import { searchChunkScope, searchDocument } from "../dist-core/index/search.js";
+import { planSearch, type SearchPlan } from "../dist-core/index/searchMode.js";
+import { searchLibrary, type LibrarySearchHit } from "../dist-core/index/librarySearch.js";
+import { agentDiscovery } from "../dist-core/consent/discovery.js";
+import { boundSearchReply } from "../dist-core/output/searchReply.js";
+import { isSearchMode } from "../dist-core/models.js";
 import type { BoundedScheduler } from "../dist-core/index/boundedScheduler.js";
 import { outlineFromPages } from "../dist-core/outline/documentOutline.js";
 import {
@@ -185,6 +190,11 @@ function resolving(
   };
 }
 
+/** The backfill listener, as an optional property, so an absent one is not passed as `undefined`. */
+function withProgress(listener: ((indexed: number) => void) | undefined): { onExactIndexProgress?: (indexed: number) => void } {
+  return listener === undefined ? {} : { onExactIndexProgress: listener };
+}
+
 /** Add this call's MCP progress listener without replacing a resolver's own listener. */
 export function resolveOcrWithProgress(context: ToolContext): ToolContext["resolveOcr"] {
   const resolveOcr = context.resolveOcr;
@@ -234,6 +244,37 @@ export async function runOutline(
   return { ok: true, payload: fitted.payload };
 }
 
+/**
+ * The mode, threshold and exact expression for one search call, or the sentence refusing it.
+ *
+ * The threshold goes in as the client sent it. Folding the setting in first — which both adapters
+ * used to do — would make an explicit `min_score` in exact mode indistinguishable from the setting.
+ */
+function planToolSearch(
+  args: Record<string, ArgumentValue>,
+  settings: SemanticSearchSettings,
+): { ok: true; plan: SearchPlan } | { ok: false; message: string } {
+  const mode = args.mode;
+  // Validation has already applied the table's default and refused anything outside its choices.
+  if (!isSearchMode(mode)) throw new Error("mode reached an operation without the default its schema declares.");
+  return planSearch({
+    mode,
+    query: text(args, "query") ?? "",
+    explicitMinScore: optionalCount(args, "min_score"),
+    settingsMinScore: settings.minSemanticScore,
+  });
+}
+
+/** Progress for an exact-word backfill that a search had to finish first. */
+function backfillProgress(context: ToolContext): ((indexed: number) => void) | undefined {
+  if (context.progress === undefined) return undefined;
+  let total = 0;
+  return (indexed) => {
+    total += indexed;
+    context.progress?.({ progress: total, message: "Adding older passages to the exact-word index" });
+  };
+}
+
 export async function runSearch(
   context: ToolContext,
   args: Record<string, ArgumentValue>,
@@ -274,6 +315,9 @@ export async function runSearch(
   // the search runs under all come from the same reading — and a settings file rewritten a
   // moment ago takes effect on this call, not the session after a restart.
   const settings = context.settings();
+  const planned = planToolSearch(args, settings);
+  if (!planned.ok) return { ok: false, message: planned.message };
+  const plan = planned.plan;
   const embedder = context.embedder(
     settings.activeModelId,
     context.progress === undefined
@@ -289,9 +333,10 @@ export async function runSearch(
     query: text(args, "query") ?? "",
     chunkingProfile: settings.chunkingProfile,
     topK: count(args, "top_k"),
-    // An explicit argument outranks the setting; absence falls back to it.
-    minScore: optionalCount(args, "min_score") ?? settings.minSemanticScore,
+    mode: plan.mode,
+    minScore: plan.minScore,
     ...(signal === undefined ? {} : { signal }),
+    ...withProgress(backfillProgress(context)),
   });
   const snapshotRecordedAt = store.chunksWrittenAt(
     searchChunkScope(lookup.document.id, embedder, settings.chunkingProfile),
@@ -311,11 +356,16 @@ export async function runSearch(
     headings: hit.headings.map((heading) => ({ title: heading.title, page: heading.page })),
     heading_inherited: hit.headingInherited,
     snippet: hit.snippet,
+    // The value the list is ranked by, which depends on the mode; `semantic_score` is the cosine
+    // whenever the ranking by meaning found the passage.
     score: hit.score,
+    semantic_score: hit.semanticScore,
+    matched_by: hit.matchedBy,
     chunk_id: hit.id,
   }));
 
   const fitted = fitReply(rendered.length, context.replyBudget, (keep) => ({
+    mode: plan.mode,
     ...describeCoverage(store.getMarkdown(lookup.document.id, MARKDOWN_ENGINE_ID, MARKDOWN_VERSION)),
     contentHash: lookup.document.contentHash,
     name: lookup.document.name,
@@ -329,6 +379,76 @@ export async function runSearch(
   }));
 
   return { ok: true, payload: fitted.payload };
+}
+
+/**
+ * Search every document this agent may discover, in one call.
+ *
+ * Index only, like `search`. The grants are read for this call and decide what is discovered: a
+ * document MarkPDF read from a folder that is still granted. No path leaves in the reply — the hash
+ * is what the other tools take — and the documents left out are a count, never a list.
+ */
+export async function runSearchLibrary(
+  context: ToolContext,
+  args: Record<string, ArgumentValue>,
+  signal?: AbortSignal,
+): Promise<ToolOutcome> {
+  const store = context.store();
+  const settings = context.settings();
+  const planned = planToolSearch(args, settings);
+  if (!planned.ok) return { ok: false, message: planned.message };
+  const plan = planned.plan;
+  const embedder = context.embedder(
+    settings.activeModelId,
+    context.progress === undefined
+      ? undefined
+      : ({ loaded, total }) => context.progress?.({ progress: loaded, total, message: "Downloading embedding model" }),
+  );
+
+  const found = await searchLibrary(store, embedder, {
+    query: text(args, "query") ?? "",
+    chunkingProfile: settings.chunkingProfile,
+    mode: plan.mode,
+    minScore: plan.minScore,
+    topK: count(args, "top_k"),
+    discover: agentDiscovery(context.allowlist()),
+    ...(signal === undefined ? {} : { signal }),
+    ...withProgress(backfillProgress(context)),
+  });
+  if (signal?.aborted === true) return { ok: false, message: "The request was cancelled." };
+
+  // The name counts as document text: it came from the filesystem and is as variable as a snippet.
+  const libraryTextOf = (hit: LibrarySearchHit): string => hit.snippet + hit.headingPath.join("") + hit.name;
+  const { payload } = boundSearchReply({
+    hits: found.hits,
+    textOf: libraryTextOf,
+    budget: context.budget,
+    replyBudget: context.replyBudget,
+    render: (hits, omission) => ({
+      mode: found.mode,
+      indexSnapshot: true,
+      documentsSearched: found.documentsSearched,
+      documentsNotDiscoverable: found.documentsNotDiscoverable,
+      documentsOutsideActiveScope: found.documentsOutsideActiveScope,
+      candidatesTruncated: found.candidatesTruncated,
+      ...omission,
+      results: hits.map((hit) => ({
+        contentHash: hit.contentHash,
+        name: hit.name,
+        page: hit.page,
+        heading_path: hit.headingPath,
+        headings: hit.headings.map((heading) => ({ title: heading.title, page: heading.page })),
+        heading_inherited: hit.headingInherited,
+        snippet: hit.snippet,
+        score: hit.score,
+        semantic_score: hit.semanticScore,
+        matched_by: hit.matchedBy,
+        chunk_id: hit.id,
+        snapshotRecordedAt: hit.snapshotRecordedAt,
+      })),
+    }),
+  });
+  return { ok: true, payload };
 }
 
 /** The pages a caller asked for, or a sentence saying why that selection cannot be honoured. */

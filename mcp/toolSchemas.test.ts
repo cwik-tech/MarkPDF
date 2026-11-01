@@ -66,11 +66,12 @@ const NAMED_DOCUMENT_TOOLS = ["outline", "search", "read_pages", "to_markdown"];
 const PATH_OR_HASH_DOCUMENT_TOOLS = ["outline", "read_pages", "to_markdown"];
 
 describe("the tools this server offers", () => {
-  it("offers preparation alongside the six existing retrieval tools", () => {
+  it("offers preparation alongside the retrieval tools, including a search of the whole library", () => {
     expect(TOOLS.map((tool) => tool.name)).toEqual([
       "prepare_document",
       "outline",
       "search",
+      "search_library",
       "read_pages",
       "to_markdown",
       "list_open_documents",
@@ -117,6 +118,18 @@ describe("the tools this server offers", () => {
     ]);
   });
 
+  it("asks the library search for no document identity, and takes its options from the command table", () => {
+    const library = TOOLS.find((tool) => tool.name === "search_library");
+
+    expect(Object.keys(library?.inputSchema.properties ?? {}).sort()).toEqual(["min_score", "mode", "query", "top_k"]);
+    expect(library?.inputSchema.oneOf).toBeUndefined();
+    expect(library?.inputSchema.properties.top_k).toEqual(propertyFromOption("search", "top-k"));
+    expect(library?.inputSchema.properties.min_score).toEqual(propertyFromOption("search", "min-score"));
+    expect(library?.inputSchema.properties.mode).toEqual(propertyFromOption("search", "mode"));
+    expect(library?.description).toMatch(/index/);
+    expect(library?.description).toMatch(/grant/);
+  });
+
   it("asks the open-document tools for no document identity at all", () => {
     // Naming a path is exactly what these two exist to avoid, so publishing a path argument would
     // invite the call the feature is for.
@@ -157,6 +170,7 @@ describe("the tools this server offers", () => {
 
     expect(required.outline).toEqual([]);
     expect(required.search).toEqual(["query"]);
+    expect(required.search_library).toEqual(["query"]);
     expect(required.read_pages).toEqual(["pages"]);
     expect(required.to_markdown).toEqual([]);
     expect(required.list_open_documents).toEqual([]);
@@ -178,6 +192,8 @@ describe("the tools this server offers", () => {
 
     expect(search?.inputSchema.properties.top_k).toEqual(propertyFromOption("search", "top-k"));
     expect(search?.inputSchema.properties.min_score).toEqual(propertyFromOption("search", "min-score"));
+    expect(search?.inputSchema.properties.mode).toEqual(propertyFromOption("search", "mode"));
+    expect(search?.inputSchema.properties.mode).toMatchObject({ enum: ["hybrid", "semantic", "exact"], default: "hybrid" });
   });
 
   it("says which tools touch the filesystem and which only read the index", () => {

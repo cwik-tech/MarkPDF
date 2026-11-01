@@ -16,6 +16,10 @@ import { scheduleIndexJob } from "../dist-core/index/scheduleIndexJob.js";
 import { ModelProgressHub } from "../dist-core/index/modelProgress.js";
 import { filterCachedModels, isModelCached } from "../dist-core/index/modelCache.js";
 import { clearSemanticIndex } from "../dist-core/index/clearIndex.js";
+import { completeExactIndex } from "../dist-core/index/exactIndexBackfill.js";
+import { searchLibrary, type LibrarySearchHit } from "../dist-core/index/librarySearch.js";
+import { DEFAULT_CONTENT_BUDGET, DEFAULT_REPLY_BUDGET } from "../dist-core/output/budget.js";
+import { boundSearchReply } from "../dist-core/output/searchReply.js";
 import type { PageText } from "../dist-core/index/chunking.js";
 import {
   parseSemanticSettings,
@@ -25,9 +29,11 @@ import {
   parseContentHash,
   parseDownloadRequest,
   parseIndexRequest,
+  parseLibrarySearchRequest,
   parseSearchRequest,
   SemanticRequestError,
   type ParsedIndexRequest,
+  type ParsedLibrarySearchRequest,
   type ParsedSearchRequest,
 } from "../dist-core/ipc/requests.js";
 
@@ -35,6 +41,7 @@ export {
   parseContentHash,
   parseDownloadRequest,
   parseIndexRequest,
+  parseLibrarySearchRequest,
   parseSearchRequest,
   SemanticRequestError,
 };
@@ -68,6 +75,12 @@ let storeHandle: SemanticStore | null = null;
 export function getSemanticStore(): SemanticStore {
   if (storeHandle === null) {
     storeHandle = openSemanticStore({ dataDir: resolveDataDir(app.getPath("userData")) });
+    // An index written before the exact-word index existed fills it in the background, once, so the
+    // first library search does not wait for it. Started on the next turn: the caller that opened the
+    // store came here to do something else first.
+    setImmediate(() => {
+      ensureExactIndex().catch(() => undefined);
+    });
   }
   return storeHandle;
 }
@@ -287,4 +300,85 @@ export function deleteSemanticDocument(contentHash: unknown): boolean {
 
 export function getSemanticDocument(contentHash: unknown) {
   return getSemanticStore().getDocument(parseContentHash(contentHash));
+}
+
+/* ------------------------------------------------- *
+ * The exact-word index backfill, and library search
+ * ------------------------------------------------- */
+
+const EXACT_INDEX_JOB_ID = "exact-index-backfill";
+let exactIndexJob: Promise<void> | null = null;
+
+/**
+ * Finish the exact-word backfill, as one shared job.
+ *
+ * Registered with the job registry like an index job, so clearing the index cancels it and waits for
+ * it before anything is wiped, and quitting cancels it. A search that needs it joins the job already
+ * running rather than starting a second one beside it.
+ */
+function ensureExactIndex(): Promise<void> {
+  if (exactIndexJob !== null) return exactIndexJob;
+  const store = getSemanticStore();
+  if (store.exactIndexState() === "complete") return Promise.resolve();
+  const token = jobs.start(EXACT_INDEX_JOB_ID);
+  const run = completeExactIndex(store, { signal: token.signal }).finally(() => {
+    jobs.finish(token);
+    if (exactIndexJob === run) exactIndexJob = null;
+  });
+  exactIndexJob = run;
+  return run;
+}
+
+export interface LibrarySearchReply {
+  mode: ParsedLibrarySearchRequest["mode"];
+  documentsSearched: number;
+  documentsNotDiscoverable: number;
+  documentsOutsideActiveScope: number;
+  candidatesTruncated: boolean;
+  truncated: boolean;
+  omittedResults: number;
+  omittedBytes: number;
+  totalBytes: number;
+  results: LibrarySearchHit[];
+}
+
+/**
+ * Search the whole index for the person at the window.
+ *
+ * Every indexed document is searched: this is the person looking at their own index, and the app
+ * has no consent gate of its own to apply. The reply is bounded like a tool reply, because headings,
+ * names and paths are as variable as the snippets beside them.
+ */
+export async function runLibrarySearch(
+  request: ParsedLibrarySearchRequest,
+  settings: SemanticSearchSettings,
+): Promise<LibrarySearchReply> {
+  if (request.mode !== "semantic") await ensureExactIndex();
+  const found = await searchLibrary(getSemanticStore(), getEmbedder(settings.activeModelId), {
+    query: request.query,
+    chunkingProfile: request.chunkingProfile,
+    mode: request.mode,
+    minScore: request.minScore,
+    topK: request.topK,
+    discover: () => true,
+  });
+  const { payload, kept } = boundSearchReply({
+    hits: found.hits,
+    textOf: (hit: LibrarySearchHit) => hit.snippet + hit.headingPath.join("") + hit.name + (hit.path ?? ""),
+    budget: DEFAULT_CONTENT_BUDGET,
+    replyBudget: DEFAULT_REPLY_BUDGET,
+    render: (hits, omission) => ({ ...omission, results: hits }),
+  });
+  return {
+    mode: found.mode,
+    documentsSearched: found.documentsSearched,
+    documentsNotDiscoverable: found.documentsNotDiscoverable,
+    documentsOutsideActiveScope: found.documentsOutsideActiveScope,
+    candidatesTruncated: found.candidatesTruncated,
+    truncated: payload.truncated === true,
+    omittedResults: typeof payload.omittedResults === "number" ? payload.omittedResults : 0,
+    omittedBytes: typeof payload.omittedBytes === "number" ? payload.omittedBytes : 0,
+    totalBytes: typeof payload.totalBytes === "number" ? payload.totalBytes : 0,
+    results: kept,
+  };
 }

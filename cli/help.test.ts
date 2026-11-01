@@ -69,7 +69,7 @@ describe("a command's help", () => {
 
 describe("the synopsis a usage error prints", () => {
   it("shows the mutually exclusive options as a choice", () => {
-    expect(renderSynopsis(findCommand("search")!)).toBe("markpdf search <query> (--path | --id) [options]");
+    expect(renderSynopsis(findCommand("search")!)).toBe("markpdf search <query> (--path | --id | --library) [options]");
   });
 
   it("shows a variadic argument as repeatable", () => {

@@ -150,6 +150,9 @@ export async function runIndexCommand(
         bytes,
         name: basename(target),
         filePath: target,
+        // Every target was resolved through the consent check, and its bytes were read from that
+        // resolved path just above — both halves of what `resolved` vouches for.
+        pathProvenance: "resolved",
         chunkingProfile: context.settings.chunkingProfile,
         force,
         signal: context.signal,

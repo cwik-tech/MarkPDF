@@ -14,7 +14,7 @@ export interface ExtractionProvenance extends MarkdownCacheInput {
   /** Recorded on `documents.ocr_extraction_version`. */
   ocrExtractionVersion: number;
 }
-import type { ChunkInsert, ChunkScope, SemanticStore, TextSource } from "../store/index.js";
+import type { ChunkInsert, ChunkScope, PathProvenance, SemanticStore, TextSource } from "../store/index.js";
 import type { PageText } from "./chunking.js";
 import { chunkPagesForIndex, type IndexableChunk } from "./structuredChunking.js";
 import type { Embedder } from "./embeddings.js";
@@ -92,6 +92,12 @@ export interface IndexDocumentInput {
   bytes: Uint8Array;
   name: string;
   filePath: string | null;
+  /**
+   * `resolved` when the caller resolved `filePath` through the consent check and read these bytes from
+   * that resolved path. Absent otherwise. It decides whether an agent's library search may discover
+   * the document, so a caller that cannot vouch for both halves must leave it out.
+   */
+  pathProvenance?: PathProvenance;
   /** Page text, already extracted. Phase 2 moves extraction into core. */
   pages: readonly PageText[];
   pageCount: number;
@@ -270,6 +276,7 @@ async function indexDocumentExclusive(
     contentHash,
     name: input.name,
     filePath: input.filePath,
+    ...(input.pathProvenance === undefined ? {} : { pathProvenance: input.pathProvenance }),
     fileSize: input.bytes.byteLength,
     pageCount: input.pageCount,
     textSource,
