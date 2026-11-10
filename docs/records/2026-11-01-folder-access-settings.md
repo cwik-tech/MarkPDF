@@ -107,3 +107,23 @@ A section-specific grid keeps the R/RW group and Remove in consistent columns
 when folder path lengths differ. Folder icons retain their size and long paths
 can wrap. This is presentational work; no test asserts CSS classes or row markup.
 Rendered inspection checks alignment. Hidden-window mode is unchanged.
+
+## Verification and merge authorization, 2026-11-10
+
+Source: the user's request, "run any necessary tests and merge it to main."
+The authorized scope is verification and local integration of
+`cwik-tech/folder-access-settings` into `main`; no push was requested.
+
+Correction to the opening historical entry: the implementation is committed in
+`6843770`, the alignment and tooltip correction in `0b5c656`, and the MCP runtime
+troubleshooting documentation in `a50feec`. The working tree was clean at the
+start of this verification. No production code or tests were changed, so this
+task adds no new Red/Green cycle or mutation proof.
+
+The document impact audit checked the changelog, README, agent troubleshooting,
+requirements, plan, ADR amendments and this record against the branch diff and
+source. The historical uncommitted statement needed this dated correction;
+the existing feature and troubleshooting descriptions needed no change.
+Current gate results and static-analysis limits have one home in
+[verification status](../status.md). The manual acceptance boundary above
+remains in effect.
