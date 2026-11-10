@@ -281,6 +281,16 @@ button {
   width: 32px;
 }
 
+.refresh-file-icon {
+  transition: transform 320ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refresh-file-icon {
+    transition: none;
+  }
+}
+
 .text-button {
   padding: 0 10px;
 }

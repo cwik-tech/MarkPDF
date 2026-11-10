@@ -31,6 +31,7 @@ On top of typical pdf reader features (view, rotate, zoom etc.) the app contains
 
 ### Viewing
 - Light and dark themes with a theme switcher; defaults to the OS theme on first launch and remembers your choice.
+- To see edits saved by another app, open the Markdown tab and click **Refresh file** beside **Sign**. The arrows turn once the tab has loaded the latest content from disk.
 
 ### Editing & Annotation
 - Add, move, resize, edit, and delete text overlays (with font-size control).

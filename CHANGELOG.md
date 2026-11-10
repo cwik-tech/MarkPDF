@@ -4,6 +4,7 @@
 
 ### Added
 
+- A **Refresh file** button beside **Sign** reloads an open Markdown file from disk in the same tab. The arrows turn half a revolution on success, and a failed read leaves the current preview visible.
 - Settings > General now lists agent folder grants, shows inherited access and unavailable roots, and lets you add read-only folders, choose R or RW, and confirm removal without restarting MCP. When an agent is refused access to an open document, the refusal now asks the person to grant its folder in Settings > General or with `markpdf --allow-read`.
 
 - An agent can show you the passage it cites. `reveal` (MCP) and `markpdf reveal` bring the document forward in MarkPDF at the page and mark the quoted words in violet for a few seconds, with "Shown by AI agent · <name>" beside them. Nothing about the document changes. A document within your read grants opens if it is not open, and MarkPDF starts if it is closed. For an indexed document the agent also gets a signed `markpdf://` link to put in its answer: clicking it opens the same passage. MarkPDF ignores any link it did not make, a link inside a PDF or a Markdown file does nothing, and a link never opens a file outside your read grants.

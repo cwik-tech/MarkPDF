@@ -29,6 +29,7 @@ import {
   PenLine,
   Plus,
   Printer,
+  RefreshCw,
   RotateCw,
   Save,
   ScanText,
@@ -458,6 +459,10 @@ const NATIVE_TEXT_NOTICE_MS = 6000;
 export default function App() {
   const [tabs, setTabs] = useState<DocumentTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [markdownRefresh, setMarkdownRefresh] = useState<{
+    phase: "idle" | "reading" | "done";
+    turns: number;
+  }>({ phase: "idle", turns: 0 });
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [tool, setTool] = useState<ToolMode>("select");
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(
@@ -543,6 +548,7 @@ export default function App() {
   );
   const activePdfTab = isPdfTab(activeTab) ? activeTab : null;
   const activeMarkdownTab = isMarkdownTab(activeTab) ? activeTab : null;
+  const refreshingMarkdown = markdownRefresh.phase === "reading";
   const activeZoomTab = activePdfTab ?? activeMarkdownTab;
   const activePdfViewTab = useMemo(
     () => (activePdfTab === null ? null : withoutPdfBytes(activePdfTab)),
@@ -696,6 +702,37 @@ export default function App() {
     },
     [],
   );
+
+  const refreshActiveMarkdown = async () => {
+    const tab = activeMarkdownTab;
+    const reader = window.pdfReader;
+    if (!tab?.path || !reader || refreshingMarkdown) return;
+
+    setMarkdownRefresh((current) => ({ ...current, phase: "reading" }));
+    try {
+      const result: unknown = await reader.readMarkdown(tab.path);
+      if (
+        typeof result !== "object" ||
+        result === null ||
+        !("path" in result) ||
+        result.path !== tab.path ||
+        !("markdown" in result) ||
+        typeof result.markdown !== "string"
+      ) {
+        throw new Error("The file reader returned an invalid Markdown response.");
+      }
+      // The tab ID stays valid if the reader switches tabs. A closed tab is not recreated.
+      updateMarkdownTab(tab.id, { markdown: result.markdown });
+      setMarkdownRefresh((current) => ({
+        phase: "done",
+        turns: current.turns + 1,
+      }));
+    } catch (error) {
+      const detail = error instanceof Error ? `\n${error.message}` : "";
+      window.alert(`Could not refresh “${tab.name}”.${detail}`);
+      setMarkdownRefresh((current) => ({ ...current, phase: "idle" }));
+    }
+  };
 
   // Both document kinds zoom; a PDF zoom also pins the fit mode to actual size,
   // because a chosen scale and a computed fit cannot both be true.
@@ -3328,6 +3365,28 @@ export default function App() {
         >
           <Signature size={18} />
         </ToolButton>
+        <button
+          type="button"
+          className="icon-button"
+          title={refreshingMarkdown ? "Refreshing file…" : "Refresh file"}
+          aria-label="Refresh file"
+          aria-busy={refreshingMarkdown}
+          disabled={!activeMarkdownTab?.path || !window.pdfReader || refreshingMarkdown}
+          onClick={() => {
+            // The refresh handler reports read failures without discarding the preview.
+            void refreshActiveMarkdown();
+          }}
+        >
+          <RefreshCw
+            className="refresh-file-icon"
+            size={18}
+            aria-hidden="true"
+            style={{ transform: `rotate(${markdownRefresh.turns * 180}deg)` }}
+          />
+        </button>
+        <span className="visually-hidden" aria-live="polite">
+          {refreshingMarkdown ? "Refreshing Markdown…" : markdownRefresh.phase === "done" ? "Markdown refreshed." : ""}
+        </span>
         <div className="toolbar-center">
           <button
             className="icon-button"
